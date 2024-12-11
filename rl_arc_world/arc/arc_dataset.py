@@ -13,8 +13,7 @@ class ArcDataset(Dataset):
     def __init__(
         self,
         arc_dataset_dir: str,
-        training_subdir: str = "training",
-        testing_subdir: str = "evaluation",
+        keep_in_memory: bool = False,
         transform=None,
     ):
         """
@@ -24,58 +23,61 @@ class ArcDataset(Dataset):
                 on a sample.
         """
         self.arc_dir = arc_dataset_dir
-        self.training_subdir = training_subdir
-        self.testing_subdir = testing_subdir
+        self.keep_in_memory = keep_in_memory
         self.transform = transform
-        self.load_dataset_indexes()
+        self.load_dataset()
 
-    def load_dataset_indexes(self):
+    def open_file(self, file_key: str, test_index: int = None):
         """
-        Create list of indexes for training and testing.
-        """
-        # Get training file indexes
-        self.training_file_indexes = os.listdir(
-            os.path.join(self.arc_dir, self.training_subdir)
-        )
-        # Get testing file indexes
-        self.testing_file_indexes = os.listdir(
-            os.path.join(self.arc_dir, self.testing_subdir)
-        )
-
-    def __len__(self):
-        return len(self.training_file_indexes) + len(self.testing_file_indexes)
-
-    def open_file(self, file_key: str):
-        """
-        Open file and return train and test sample with grids as numpy arrays.
+        Open file and return train and test samples.
         """
         with open(file_key, "r") as file:
-            sample_json = json.load(file)
-            sample = {}
-            sample["train"] = [
-                (np.array(p_grids["input"]), np.array(p_grids["output"]))
-                for p_grids in sample_json["train"]
-            ]
-            sample["test"] = [
-                (np.array(p_grids["input"]), np.array(p_grids["output"]))
-                for p_grids in sample_json["test"]
-            ]
+            sample = json.load(file)
+        if test_index is not None:
+            sample["test"] = sample["test"][test_index]
         return sample
 
-    def __getitem__(self, idx, train: bool = True):
+    def load_dataset(self):
+        """
+        Creates a dictionary of file location or samples from the dataset.
+        For the samples with more than one test pair,
+        the key for the dictionary is additioned and undersocere plus test pair index.
+
+        Two behaviours:
+        If "self.keep_in_memory" is False (default) create dictionary of file_id[key]:file_dir[value] pairs.
+        If "self.keep_in_memory" is True create dictionary of file_id[key]:[value] pairs.
+
+        Returns:
+            None
+        """
+        # Get training file indexes
+        file_indexes = os.listdir(self.arc_dir)
+        self.samples = {}
+        for i, file in enumerate(file_indexes):
+            sample = self.open_file(os.path.join(self.arc_dir, file))
+            for i, s_test in enumerate(sample["test"]):
+                key = "{file_id}{underscore}{sample_number}".format(
+                    file_id=file.split(".")[0],
+                    underscore="_" * int(i > 0),
+                    sample_number=i * int(i > 0),
+                )
+                if self.keep_in_memory:
+                    self.samples[key] = {"train": sample["train"], "test": s_test}
+                else:
+                    self.samples[key] = os.path.join(self.arc_dir, file)
+
+    def __len__(self):
+        return len(self.file_indexes)
+
+    def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        if train:
-            self.file_key = os.path.join(
-                self.arc_dir, self.training_subdir, self.training_file_indexes[idx]
-            )
-        else:
-            self.file_key = os.path.join(
-                self.arc_dir, self.testing_subdir, self.testing_file_indexes[idx]
-            )
+        sample = self.samples[idx]
 
-        sample = self.open_file(self.file_key)
+        if isinstance(sample, str):
+            test_index = int(sample.split("_")[-1]) if "_" in sample else 0
+            sample = self.open_file(sample, test_index=test_index)
 
         if self.transform:
             sample = self.transform(sample)
