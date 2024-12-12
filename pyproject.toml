@@ -1,18 +1,18 @@
 [tool.poetry]
-name = "rl_arc_world"
+name = "rlarcworld"
 version = "0.1.0"
-description = ""
+description = "An enviroment to train on arc dataset a model-based reinforcement learning agent"
 authors = ["atellou <andresfe.t.u@gmail.com>"]
+license = "http://www.apache.org/licenses/"
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-gymnasium = "^1.0.0"
 torch = "^2.5.1"
+gymnasium = "^1.0.0"
+matplotlib = "^3.9.3"
+numpy = "^2.2.0"
 
-
-[tool.poetry.group.dev.dependencies]
-ipykernel = "^6.29.5"
 
 [build-system]
 requires = ["poetry-core"]
