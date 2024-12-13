@@ -21,14 +21,28 @@ class ArcSampleManager(object):
             to output_size keeping aspect ratio the same.
     """
 
-    def __init__(self, output_size, examples_stack_dim=10):
+    def __init__(self, output_size: tuple[int], examples_stack_dim: int = 10):
+        """
+        Transformations for ARC samples dataset, specific to dimension transformations.
+        Args:
+            output_size (tuple): The desired output size for the grids.
+            examples_stack_dim (int, optional): The dimension of the stack of examples. Defaults to 10.
+        """
         assert isinstance(
             output_size, (tuple)
         ), "The output size should be tuple with the last two elements being the height, width."
         self.output_size = output_size
         self.examples_stack_dim = examples_stack_dim
 
-    def pad_to_size(self, grid):
+    def pad_to_size(self, grid: torch.Tensor) -> torch.Tensor:
+        """
+        Pad the grid to the given size.
+        Args:
+            grid (torch.Tensor): The grid to be padded.
+        Returns:
+            torch.Tensor: The padded grid.
+        """
+        assert len(grid.shape) == 2, "The grid should be a 2D array."
         height, width = [
             target - current
             for current, target in zip(grid.shape, self.output_size[-2:])
@@ -41,10 +55,30 @@ class ArcSampleManager(object):
         )
         return torch.nn.functional.pad(grid, (0, width, 0, height), value=-1)
 
-    def concat_input_output(self, input_grid, output_grid):
+    def concat_input_output(
+        self, input_grid: torch.Tensor, output_grid: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Concatenate the input and output grids in a third dimension.
+        Args:
+            input_grid (torch.Tensor): The input grid.
+            output_grid (torch.Tensor): The output grid.
+        Returns:
+            torch.Tensor: The concatenated grid.
+        """
+        assert input_grid.shape == output_grid.shape, (
+            "The input and output grids should have the same shape." ""
+        )
         return torch.cat((input_grid.unsqueeze(0), output_grid.unsqueeze(0)), dim=0)
 
-    def concat_examples(self, train_examples):
+    def concat_examples(self, train_examples: list[dict]) -> torch.Tensor:
+        """
+        Stack the train examples into a single tensor.
+        Args:
+            train_examples (list): A list of dictionaries containing the input and output grids.
+        Returns:
+            torch.Tensor: The concatenated tensor of train examples of shape (Examples, Stages, Grid Height, Grid Width).
+        """
         return torch.cat(
             [
                 self.concat_input_output(
@@ -56,7 +90,14 @@ class ArcSampleManager(object):
             dim=0,
         )
 
-    def __call__(self, sample):
+    def __call__(self, sample: dict[list]) -> torch.Tensor:
+        """
+        Apply the transformations to the sample.
+        Args:
+            sample (dict): A dictionary containing the input and output grids.
+        Returns:
+            dict: The transformed sample.
+        """
         sample["train"] = self.concat_examples(sample["train"])
         n_examples = sample["train"].shape[0]
         if n_examples < self.examples_stack_dim:
@@ -87,9 +128,10 @@ class ArcDataset(Dataset):
         self,
         arc_dataset_dir: str,
         keep_in_memory: bool = False,
-        transform=None,
+        transform: callable = None,
     ):
         """
+        Creates a Torch Dataset from the ARC dataset.
         Args:
             arc_dataset_dir (string): Directory with all the dataset samples.
             transform (callable, optional): Optional transform to be applied
@@ -100,7 +142,7 @@ class ArcDataset(Dataset):
         self.transform = transform
         self.load_dataset()
 
-    def open_file(self, file_key: str, test_index: int = None):
+    def open_file(self, file_key: str, test_index: int = None) -> dict:
         """
         Open file and return train and test samples.
         """
@@ -143,7 +185,14 @@ class ArcDataset(Dataset):
     def __len__(self):
         return len(self.file_ids)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict:
+        """
+        Returns extracted and transformed sample from the dataset.
+        Args:
+            idx (int): Index of the sample to be returned.
+        Returns:
+            dict: The transformed sample.
+        """
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
