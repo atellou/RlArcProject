@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 import logging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 class ArcSampleManager(object):
@@ -79,6 +79,7 @@ class ArcSampleManager(object):
         Returns:
             torch.Tensor: The concatenated tensor of train examples of shape (Examples, Stages, Grid Height, Grid Width).
         """
+        logger.debug("Concat examples...")
         return torch.cat(
             [
                 self.concat_input_output(
@@ -98,25 +99,26 @@ class ArcSampleManager(object):
         Returns:
             dict: The transformed sample.
         """
-        sample["train"] = self.concat_examples(sample["train"])
-        n_examples = sample["train"].shape[0]
+        logger.debug("Perform {} transformations...".format(self.__class__.__name__))
+        sample["examples"] = self.concat_examples(sample["examples"])
+        n_examples = sample["examples"].shape[0]
         if n_examples < self.examples_stack_dim:
-            pad_size = np.zeros(len(sample["train"].shape) * 2, dtype=int)
+            pad_size = np.zeros(len(sample["examples"].shape) * 2, dtype=int)
             pad_size[-1] = self.examples_stack_dim - n_examples
             logger.debug(
                 "Train Examples shape: {},Padding size: {}".format(
-                    sample["train"].shape, pad_size
+                    sample["examples"].shape, pad_size
                 )
             )
-            sample["train"] = torch.nn.functional.pad(
-                sample["train"], tuple(pad_size), value=-1
+            sample["examples"] = torch.nn.functional.pad(
+                sample["examples"], tuple(pad_size), value=-1
             )
 
-        sample["test"]["input"] = self.pad_to_size(
-            torch.tensor(sample["test"]["input"])
+        sample["task"]["input"] = self.pad_to_size(
+            torch.tensor(sample["task"]["input"])
         )
-        sample["test"]["output"] = self.pad_to_size(
-            torch.tensor(sample["test"]["output"])
+        sample["task"]["output"] = self.pad_to_size(
+            torch.tensor(sample["task"]["output"])
         )
         return sample
 
@@ -141,16 +143,25 @@ class ArcDataset(Dataset):
         self.keep_in_memory = keep_in_memory
         self.transform = transform
         self.load_dataset()
+        self.transformed = set()
 
     def open_file(self, file_key: str, test_index: int = None) -> dict:
         """
         Open file and return train and test samples.
         """
+        logger.debug("Open file: {}".format(file_key))
         with open(file_key, "r") as file:
             sample = json.load(file)
         if test_index is not None:
-            sample["test"] = sample["test"][test_index]
-        return sample
+            sample["test"] = {
+                "input": np.array(sample["test"][test_index]["input"]),
+                "output": np.array(sample["test"][test_index]["output"]),
+            }
+        sample["train"] = [
+            {"input": np.array(t["input"]), "output": np.array(t["output"])}
+            for t in sample["train"]
+        ]
+        return {"train": sample["train"], "test": sample["test"]}
 
     def load_dataset(self):
         """
@@ -166,6 +177,7 @@ class ArcDataset(Dataset):
             None
         """
         # Get training file indexes
+        logger.debug("Load Dataset")
         file_indexes = os.listdir(self.arc_dir)
         self.samples = {}
         for i, file in enumerate(file_indexes):
@@ -177,7 +189,7 @@ class ArcDataset(Dataset):
                     sample_number=i * int(i > 0),
                 )
                 if self.keep_in_memory:
-                    self.samples[key] = {"train": sample["train"], "test": s_test}
+                    self.samples[key] = {"examples": sample["train"], "task": s_test}
                 else:
                     self.samples[key] = os.path.join(self.arc_dir, file)
         self.file_ids = list(self.samples.keys())
@@ -193,18 +205,26 @@ class ArcDataset(Dataset):
         Returns:
             dict: The transformed sample.
         """
+        logger.debug("Sample index: {}".format(idx))
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        sample = self.samples[self.file_ids[idx]]
+        file_id = self.file_ids[idx]
+        logger.debug("File id: {}".format(file_id))
+        sample = self.samples[file_id]
 
         if isinstance(sample, str):
             test_index = int(sample.split("_")[-1]) if "_" in sample else 0
             sample = self.open_file(sample, test_index=test_index)
 
+        sample.setdefault("examples", sample.pop("train", None))
+        sample.setdefault("task", sample.pop("test", None))
         if self.transform:
-            sample = self.transform(sample)
+            logger.debug("Transform data")
+            if self.keep_in_memory and file_id not in self.transformed:
+                sample = self.transform(sample)
+                self.transformed.add(file_id)
+            elif not self.keep_in_memory:
+                sample = self.transform(sample)
 
-        sample["examples"] = sample.pop("train")
-        sample["task"] = sample.pop("test")
         return sample
