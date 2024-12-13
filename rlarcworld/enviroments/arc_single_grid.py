@@ -10,26 +10,30 @@ class ArcSingleGrid(gym.Env):
     # Possibly multiple test grids.
     # Return two samples to evaluate.
 
-    def __init__(self, max_size: int, color_values: int = 9):
-        # Color value extra for resizing
-        self.color_values = color_values + 1
+    def __init__(self, size: int, color_values: int = 9):
+        # 9 possible values from arc and extras for resizing and no action.
+        self.color_values = color_values + 2
 
-        # Observations are dictionaries with the agent's and the target's location.
-        # Each location is encoded as an element of {0, ..., `size`-1}^2
-        self.observation_space = gym.spaces.MultiDiscrete([max_size, max_size])
+        # Size of the grid, assumed to be a MxM grid
+        self.size = size
+
+        # Here, the observations will be positions on the grid. Used mainly to add stochasticity
+        self.observation_space = gym.spaces.Sequence(
+            gym.spaces.MultiDiscrete([size, size]), stack=True
+        )
 
         # We have actions corresponding to "X Location", "Y Location", "Color Value" and "submission"
-        self.action_space = gym.spaces.MultiDiscrete(
-            [max_size, max_size, color_values, 1]
+        self.action_space = gym.spaces.Sequence(
+            gym.spaces.MultiDiscrete([size, size, color_values + 1, 2]), stack=True
         )
 
     def _get_obs(self):
-        return {"current": self._current_grid, "target": self._target_grid}
+        return {"current": self._current_grids, "target": self._target_grids}
 
     def _get_info(self):
         return {
-            "intial": self._initial_grid,
-            "index": self._index_grid,
+            "intial": self._initial_grids,
+            "index": self._index_grids,
         }
 
     def random_grid_generator(self):
@@ -38,69 +42,66 @@ class ArcSingleGrid(gym.Env):
         """
         return tuple(self.observation_space.sample())
 
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+    def reset(self, options: dict, seed: Optional[int] = None) -> tuple:
+        """
+        Resets the environment to an initial internal state, returning an initial observation and info.
+        Args:
+            options (dict): A dictionary containing the batch of samples to be used in the environment.
+            seed (int, optional): The seed for the random number generator. Defaults to None.
+        Returns:
+            tuple: A tuple containing the initial observation and info.
+        """
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
 
+        # The sample for every episode is a batch of ARC Samples
         batch = options["batch"]
+        n_samples = batch.shape[0]
 
         # State of initial reward
-        self._reward_storage = 0
-        self._last_reward = self._compute_reward()
+        self._reward_storage = np.zeros(n_samples, dtype=int)
+        self._last_reward = self._reward_storage.copy()
 
-        # Get initial grid
-        # TODO: Get sample from dataset. Currently just random grid.
-        self._initial_grid = self.random_grid_generator()
-        self._current_grid = self._initial_grid.copy()
+        # Get batch of input grids
+        self._initial_grids = batch["input"]
+        self._current_grids = self._initial_grids.copy()
 
         # Index grid: provides information of the order of the modifications to comply with Markov Assumptions
         self._timestep = 0
-        self._index_grid = np.zeros((self.size, self.size), dtype=np.int32)
+        self._index_grids = np.zeros((n_samples, self.size, self.size), dtype=np.int32)
 
         # We will sample the target's location randomly until it does not coincide with the agent's location
-        self._target_grid = self.random_grid_generator()
-        while np.array_equal(self._current_grid, self._target_grid):
-            self._target_grid = self.random_grid_generator()
+        self._target_grids = batch["output"]
 
         observation = self._get_obs()
         info = self._get_info()
 
         return observation, info
 
-    def compute_pixel_correctnes(self):
-        return np.sum(np.abs(self._current_grid - self._target_grid))
-
     def reward(self, terminated: bool):
-        reward = -1 * int(not terminated)
-        if terminated:
-            logger.info("Successfully completed environment.")
-            # Maximum reward: expected to encourage exploration
-            reward = abs(self._reward_storage)
-        elif reward != 0 and submission:
-            logger.warning("Attempting to submit with reward equal {}.".format(reward))
-            # Maximum penalization
-            reward = -1 * self.size * self.size * self.color_values
+        return np.array_equal(self._current_grids, self._target_grids) * terminated
 
-    def step(self, action):
+    def step(self, actions: list):
 
-        if self.action_space.contains(action):
-            logger.debug("Action is valid")
+        if self.action_space.contains(actions):
+            logger.debug("Actions are valid")
             # Update the grid with the action.
-            x, y, color, submission = action
+            x, y, color, submission = actions
             self._timestep += 1
             self._current_grid[x, y] = color
             self._index_grid[x, y] = self._timestep
         else:
             logger.error(
+                "No action performed due to invalid action, sequence of values"
+                + " within {} are valid, not inclusive. Given: {}.".format(
+                    self.action_space.feature_space.nvec, actions
+                )
+            )
+            raise ValueError(
                 "The specified action do not comply with the action space constraints."
             )
-            logger.warning(
-                "No action performed due to invalid action: {}.".format(action)
-            )
 
-        # An environment is completed if and only if the grids overlap
-        # np.sum(np.abs(self._current_grid - self._target_grid))
-        terminated = bool(submission)
+        terminated = np.all(submission == 1, axis=-1)
         reward = self.reward(terminated)
 
         self._reward_storage += reward
