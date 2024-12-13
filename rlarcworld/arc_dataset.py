@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-class ArcSampleManager(object):
+class ArcSampleTransformer(object):
     """
     Resize and Concatenate the grids in a sample to a given size.
 
@@ -21,7 +21,12 @@ class ArcSampleManager(object):
             to output_size keeping aspect ratio the same.
     """
 
-    def __init__(self, output_size: tuple[int], examples_stack_dim: int = 10):
+    def __init__(
+        self,
+        output_size: tuple[int],
+        examples_stack_dim: int = 10,
+        constant_value: int = -1,
+    ):
         """
         Transformations for ARC samples dataset, specific to dimension transformations.
         Args:
@@ -31,6 +36,7 @@ class ArcSampleManager(object):
         assert isinstance(
             output_size, (tuple)
         ), "The output size should be tuple with the last two elements being the height, width."
+        self.constant_value = constant_value
         self.output_size = output_size
         self.examples_stack_dim = examples_stack_dim
 
@@ -53,23 +59,25 @@ class ArcSampleManager(object):
                 np.shape(grid), height, width
             )
         )
-        return torch.nn.functional.pad(grid, (0, width, 0, height), value=-1)
+        return torch.nn.functional.pad(
+            grid, (0, width, 0, height), value=self.constant_value
+        )
 
-    def concat_input_output(
-        self, input_grid: torch.Tensor, output_grid: torch.Tensor
+    def concat_unsqueezed(
+        self, grid_one: torch.Tensor, grid_two: torch.Tensor
     ) -> torch.Tensor:
         """
-        Concatenate the input and output grids in a third dimension.
+        Concatenate two grids in a third dimension.
         Args:
-            input_grid (torch.Tensor): The input grid.
-            output_grid (torch.Tensor): The output grid.
+            grid_one (torch.Tensor): The first grid.
+            output_grid (torch.Tensor): The second grid.
         Returns:
             torch.Tensor: The concatenated grid.
         """
-        assert input_grid.shape == output_grid.shape, (
+        assert grid_one.shape == grid_two.shape, (
             "The input and output grids should have the same shape." ""
         )
-        return torch.cat((input_grid.unsqueeze(0), output_grid.unsqueeze(0)), dim=0)
+        return torch.cat((grid_one.unsqueeze(0), grid_two.unsqueeze(0)), dim=0)
 
     def concat_examples(self, train_examples: list[dict]) -> torch.Tensor:
         """
@@ -82,7 +90,7 @@ class ArcSampleManager(object):
         logger.debug("Concat examples...")
         return torch.cat(
             [
-                self.concat_input_output(
+                self.concat_unsqueezed(
                     self.pad_to_size(torch.tensor(example["input"])),
                     self.pad_to_size(torch.tensor(example["output"])),
                 ).unsqueeze(0)
@@ -111,7 +119,7 @@ class ArcSampleManager(object):
                 )
             )
             sample["examples"] = torch.nn.functional.pad(
-                sample["examples"], tuple(pad_size), value=-1
+                sample["examples"], tuple(pad_size), value=self.constant_value
             )
 
         sample["task"]["input"] = self.pad_to_size(
@@ -142,8 +150,8 @@ class ArcDataset(Dataset):
         self.arc_dir = arc_dataset_dir
         self.keep_in_memory = keep_in_memory
         self.transform = transform
-        self.load_dataset()
         self.transformed = set()
+        self.load_dataset()
 
     def open_file(self, file_key: str, test_index: int = None) -> dict:
         """
@@ -157,6 +165,14 @@ class ArcDataset(Dataset):
                 "input": np.array(sample["test"][test_index]["input"]),
                 "output": np.array(sample["test"][test_index]["output"]),
             }
+        else:
+            sample["test"] = [
+                {
+                    "input": np.array(t["input"]),
+                    "output": np.array(t["output"]),
+                }
+                for t in sample["test"]
+            ]
         sample["train"] = [
             {"input": np.array(t["input"]), "output": np.array(t["output"])}
             for t in sample["train"]
@@ -183,11 +199,7 @@ class ArcDataset(Dataset):
         for i, file in enumerate(file_indexes):
             sample = self.open_file(os.path.join(self.arc_dir, file))
             for i, s_test in enumerate(sample["test"]):
-                key = "{file_id}{underscore}{sample_number}".format(
-                    file_id=file.split(".")[0],
-                    underscore="_" * int(i > 0),
-                    sample_number=i * int(i > 0),
-                )
+                key = (file.split(".")[0], i)
                 if self.keep_in_memory:
                     self.samples[key] = {"examples": sample["train"], "task": s_test}
                 else:
@@ -214,7 +226,7 @@ class ArcDataset(Dataset):
         sample = self.samples[file_id]
 
         if isinstance(sample, str):
-            test_index = int(sample.split("_")[-1]) if "_" in sample else 0
+            test_index = file_id[-1]
             sample = self.open_file(sample, test_index=test_index)
 
         sample.setdefault("examples", sample.pop("train", None))
