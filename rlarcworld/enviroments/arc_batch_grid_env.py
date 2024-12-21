@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 import torch
 import numpy as np
 import gymnasium as gym
@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class ArcGridEnv(gym.Env):
+class ArcBatchGridEnv(gym.Env):
 
     def __init__(self, size: int, color_values: int):
         # 9 possible values from arc and extras for resizing and no action.
@@ -122,7 +122,7 @@ class ArcGridEnv(gym.Env):
         """
         return self._current_grids - self._target_grids
 
-    def reward(self, terminated: bool):
+    def reward(self, terminated: List[bool]):
         """
         Computes the reward for the current state of the environment.
 
@@ -174,7 +174,7 @@ class ArcGridEnv(gym.Env):
                 raise TypeError(
                     "The current grid is not of type torch.Tensor or np.ndarray."
                 )
-            logger.info(
+            logger.debug(
                 "Action performed shapes: Y={}, X={}, Color={}, Submission={}".format(
                     y.shape, x.shape, color.shape, submission.shape
                 )

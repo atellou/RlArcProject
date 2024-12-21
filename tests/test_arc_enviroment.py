@@ -1,11 +1,11 @@
-from rlarcworld.enviroments.arc_grid_env import ArcGridEnv
+from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
 import numpy as np
 import torch
 import unittest
 import logging
 
 logger = logging.getLogger(__name__)
-logger.info("Testing ArcGridEnv")
+logger.info("Testing ArcBatchGridEnv")
 
 
 class ArcBatchGridsEnv(unittest.TestCase):
@@ -13,7 +13,12 @@ class ArcBatchGridsEnv(unittest.TestCase):
         batch_size = np.random.randint(1, 50)
         size = np.random.randint(1, 50)
         color_values = np.random.randint(1, 50)
-        env = ArcGridEnv(size=size, color_values=color_values)
+        logger.info(
+            "Testing Episodes with random batches. Batch size: {}, Grid Size: {}, Color values: {}".format(
+                batch_size, size, color_values
+            )
+        )
+        env = ArcBatchGridEnv(size=size, color_values=color_values)
         for episode in range(3):
             logger.info("Episode: {}".format(episode))
             dummy_batch = {
@@ -82,38 +87,63 @@ class ArcBatchGridsEnv(unittest.TestCase):
                         assert not terminated, "The episode should not terminate"
 
     def test_action_space(self):
-        grid_size = 15
-        values = 5
-        env = ArcGridEnv(size=grid_size, color_values=values)
+        grid_size = np.random.randint(5, 20)
+        values = np.random.randint(2, 20)
+        logger.info(
+            "Testing Action Space. Grid Size: {}, Color values: {}".format(
+                grid_size, values
+            )
+        )
+        env = ArcBatchGridEnv(size=grid_size, color_values=values)
         assert values == env.color_values and grid_size == env.size
         # Valid
         assert env.action_space.contains([[0, 0, 0, 0]])
-        assert env.action_space.contains([[14, 14, 4, 1]])
-        assert env.action_space.contains([[0, 14, 4, 0] for __ in range(2)])
-        assert env.action_space.contains([[0, 14, 0, 0] for __ in range(3)])
-        assert env.action_space.contains([[14, 0, 0, 0] for __ in range(4)])
+        assert env.action_space.contains(
+            [[grid_size - 1, grid_size - 1, values - 1, 1]]
+        )
+        assert env.action_space.contains(
+            [[0, grid_size - 1, values - 1, 0] for __ in range(2)]
+        )
+        assert env.action_space.contains([[0, grid_size - 1, 0, 0] for __ in range(3)])
+        assert env.action_space.contains([[grid_size - 1, 0, 0, 0] for __ in range(4)])
         # Not valid
-        assert not env.action_space.contains([[0, 0, 0, 0], [0, 14, 4, -1]])
-        assert not env.action_space.contains([[0, 0, 0, 0], [0, 14, 4, 2]])
-        assert not env.action_space.contains([[0, 0, 0, 0], [0, 14, 5, 1]])
-        assert not env.action_space.contains([[0, 0, 0, 0], [0, 14, -1, 1]])
-        assert not env.action_space.contains([[14, 14, 4, 1], [0, 15, 4, 1]])
-        assert not env.action_space.contains([[14, 14, 4, 1], [15, -1, 4, 1]])
+        assert not env.action_space.contains(
+            [[0, 0, 0, 0], [0, grid_size - 1, values - 1, -1]]
+        )
+        assert not env.action_space.contains(
+            [[0, 0, 0, 0], [0, grid_size - 1, values - 1, 2]]
+        )
+        assert not env.action_space.contains(
+            [[0, 0, 0, 0], [0, grid_size - 1, values, 1]]
+        )
+        assert not env.action_space.contains([[0, 0, 0, 0], [0, grid_size - 1, -1, 1]])
         assert not env.action_space.contains(
             [
-                [14, 14, 4, 1],
-                [-1, 14, 4, 1],
+                [grid_size - 1, grid_size - 1, values - 1, 1],
+                [0, grid_size, values - 1, 1],
             ]
         )
         assert not env.action_space.contains(
             [
-                [14, 14, 4, 1],
-                [15, 14, 4, 1],
+                [grid_size - 1, grid_size - 1, values - 1, 1],
+                [grid_size, -1, values - 1, 1],
+            ]
+        )
+        assert not env.action_space.contains(
+            [
+                [grid_size - 1, grid_size - 1, values - 1, 1],
+                [-1, grid_size - 1, values - 1, 1],
+            ]
+        )
+        assert not env.action_space.contains(
+            [
+                [grid_size - 1, grid_size - 1, values - 1, 1],
+                [grid_size, grid_size - 1, values - 1, 1],
             ]
         )
         # Not valid shape
-        assert not env.action_space.contains([0, 14, 4, 2])
-        assert not env.action_space.contains([[14, 4, 2]])
+        assert not env.action_space.contains([0, grid_size - 1, values - 1, 2])
+        assert not env.action_space.contains([[grid_size - 1, values - 1, 2]])
 
 
 if __name__ == "__main__":
