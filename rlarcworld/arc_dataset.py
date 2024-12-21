@@ -25,18 +25,22 @@ class ArcSampleTransformer(object):
         self,
         output_size: tuple[int],
         examples_stack_dim: int = 10,
-        constant_value: int = -1,
+        padding_constant_value: int = -1,
+        zero_based_correction: int = 1,
     ):
         """
         Transformations for ARC samples dataset, specific to dimension transformations.
         Args:
             output_size (tuple): The desired output size for the grids.
             examples_stack_dim (int, optional): The dimension of the stack of examples. Defaults to 10.
+            padding_constant_value (int, optional): The constant value to pad the grids. Defaults to -1.
+            zero_based_correction (int, optional): The correction to apply to make the grids minimum value 0. Defaults to 1 (grid+1).
         """
         assert isinstance(
             output_size, (tuple)
         ), "The output size should be tuple with the last two elements being the height, width."
-        self.constant_value = constant_value
+        self.zero_based_correction = zero_based_correction
+        self.constant_value = padding_constant_value
         self.output_size = output_size
         self.examples_stack_dim = examples_stack_dim
 
@@ -120,14 +124,14 @@ class ArcSampleTransformer(object):
             )
             sample["examples"] = torch.nn.functional.pad(
                 sample["examples"], tuple(pad_size), value=self.constant_value
-            )
+            )+self.zero_based_correction
 
         sample["task"]["input"] = self.pad_to_size(
             torch.tensor(sample["task"]["input"])
-        )
+        )+self.zero_based_correction
         sample["task"]["output"] = self.pad_to_size(
             torch.tensor(sample["task"]["output"])
-        )
+        )+self.zero_based_correction
         return sample
 
 

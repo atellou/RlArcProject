@@ -10,9 +10,12 @@ class TestArcSampleTransformer(unittest.TestCase):
     def setUp(self):
         self.grid_size = (15, 10)
         self.n_examples = 5
-        self.constant_value = -1
+        self.padding_constant_value = -1
         self.transform = ArcSampleTransformer(
-            self.grid_size, self.n_examples, constant_value=self.constant_value
+            self.grid_size,
+            self.n_examples,
+            padding_constant_value=self.padding_constant_value,
+            zero_based_correction=0,
         )
 
     def test_padding_method(self):
@@ -24,7 +27,7 @@ class TestArcSampleTransformer(unittest.TestCase):
         padded = self.transform.pad_to_size(task["input"])
         assert isinstance(padded, torch.Tensor)
         assert padded.shape == self.grid_size
-        assert torch.min(padded) == self.constant_value
+        assert torch.min(padded) == self.padding_constant_value
         assert torch.max(padded) == 1
         assert torch.max(padded[:5, :5]) == 1
         assert torch.min(padded[:5, :5]) == 1
@@ -83,7 +86,9 @@ class TestArcDataset(unittest.TestCase):
         dataset_t = ArcDataset(
             arc_dataset_dir=self.arc_dataset_dir,
             keep_in_memory=False,
-            transform=ArcSampleTransformer(grid_size, n_examples),
+            transform=ArcSampleTransformer(
+                grid_size, n_examples, zero_based_correction=0
+            ),
         )
         dataloader = torch.utils.data.DataLoader(
             dataset_t, batch_size=batch_size, shuffle=True, num_workers=0
@@ -114,7 +119,9 @@ class TestArcDataset(unittest.TestCase):
         dataset_t = ArcDataset(
             arc_dataset_dir=self.arc_dataset_dir,
             keep_in_memory=False,
-            transform=ArcSampleTransformer(grid_size, n_examples),
+            transform=ArcSampleTransformer(
+                grid_size, n_examples, zero_based_correction=0
+            ),
         )
         assert len(dataset_t) == 4
         for d in dataset_t:
