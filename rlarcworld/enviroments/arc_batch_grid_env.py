@@ -26,14 +26,16 @@ class ArcBatchGridEnv(gym.Env):
             gym.spaces.MultiDiscrete([size, size, color_values, 2]), stack=True
         )
 
-    def _get_obs(self):
+    @property
+    def observations(self):
         """
         Returns:
             dict: grids with current state and targets
         """
-        return {"current": self._current_grids, "target": self._target_grids}
+        return {"current": self._current_grids, "target": self._target_grids}.copy()
 
-    def _get_info(self):
+    @property
+    def information(self):
         """
         Returns:
             dict:
@@ -43,7 +45,7 @@ class ArcBatchGridEnv(gym.Env):
         return {
             "intial": self._initial_grids,
             "index": self._index_grids,
-        }
+        }.copy()
 
     def random_location_generator(self) -> tuple:
         """
@@ -53,6 +55,14 @@ class ArcBatchGridEnv(gym.Env):
             tuple:  x and y location within the observation space defined in init
         """
         return tuple(self.observation_space.sample())
+
+    @property
+    def reward_storage(self):
+        return self._reward_storage
+
+    @property
+    def last_reward(self):
+        return self._last_reward
 
     def reset(self, options: dict, seed: Optional[int] = None) -> tuple:
         """
@@ -108,8 +118,8 @@ class ArcBatchGridEnv(gym.Env):
         self._target_grids = batch_out
 
         self._timestep = 0
-        observation = self._get_obs()
-        info = self._get_info()
+        observation = self.observations
+        info = self.information
 
         return observation, info
 
@@ -122,7 +132,11 @@ class ArcBatchGridEnv(gym.Env):
         """
         return self._current_grids - self._target_grids
 
-    def reward(self, terminated: List[bool]):
+    def reward(
+        self,
+        grid_diffs: torch.Tensor | np.ndarray,
+        terminated: List[int],
+    ):
         """
         Computes the reward for the current state of the environment.
 
@@ -131,15 +145,13 @@ class ArcBatchGridEnv(gym.Env):
         Returns:
             float: The reward for the current state of the environment.
         """
-        if isinstance(self._current_grids, torch.Tensor):
-            return torch.sum(
-                torch.abs(self.get_difference()), dim=(1, 2)
-            ) * torch.tensor(
+        if isinstance(grid_diffs, torch.Tensor):
+            return torch.sum(torch.abs(grid_diffs), dim=(1, 2)) * torch.tensor(
                 terminated,
-                device=self._current_grids.device,
-                dtype=self._current_grids.dtype,
+                device=grid_diffs.device,
+                dtype=grid_diffs.dtype,
             )
-        elif isinstance(self._current_grids, np.ndarray):
+        elif isinstance(grid_diffs, np.ndarray):
             return np.sum(np.abs(self.get_difference()), axis=(1, 2)) * terminated
         else:
             raise TypeError(
@@ -196,7 +208,7 @@ class ArcBatchGridEnv(gym.Env):
             )
 
         terminated = np.all(submission == 1, axis=-1).astype(dtype=int)
-        reward = self.reward(terminated)
+        reward = self.reward(self.get_difference(), terminated)
         if isinstance(self._reward_storage, torch.Tensor) and isinstance(
             reward, np.ndarray
         ):
@@ -214,7 +226,7 @@ class ArcBatchGridEnv(gym.Env):
 
         # TODO: No truncate version, evaluate time constraints
         truncated = False
-        observation = self._get_obs()
-        info = self._get_info()
+        observation = self.observations
+        info = self.information
 
         return observation, reward, terminated, truncated, info
