@@ -135,24 +135,29 @@ class ArcBatchGridEnv(gym.Env):
     def reward(
         self,
         grid_diffs: torch.Tensor | np.ndarray,
-        terminated: List[int],
+        submission: List[int],
     ):
         """
         Computes the reward for the current state of the environment.
 
         Args:
-            terminated (bool): Indicates whether the agent indicated a submission.
+            grid_diffs torch.Tensor | np.ndarray: Batch of grids representing the difference between current and target.
+            submission List(int): Indicates whether the agent indicated a submission to grade.
         Returns:
             float: The reward for the current state of the environment.
         """
         if isinstance(grid_diffs, torch.Tensor):
-            return torch.sum(torch.abs(grid_diffs), dim=(1, 2)) * torch.tensor(
-                terminated,
+            return (
+                torch.sum(torch.abs(grid_diffs), dim=(1, 2)) == 0
+            ).long() * torch.tensor(
+                submission,
                 device=grid_diffs.device,
                 dtype=grid_diffs.dtype,
             )
         elif isinstance(grid_diffs, np.ndarray):
-            return np.sum(np.abs(self.get_difference()), axis=(1, 2)) * terminated
+            return (np.sum(np.abs(self.get_difference()), axis=(1, 2)) == 0).astype(
+                int
+            ) * submission
         else:
             raise TypeError(
                 "The current grid is not of type torch.Tensor or np.ndarray."
@@ -208,7 +213,7 @@ class ArcBatchGridEnv(gym.Env):
             )
 
         terminated = np.all(submission == 1, axis=-1).astype(dtype=int)
-        reward = self.reward(self.get_difference(), terminated)
+        reward = self.reward(self.get_difference(), submission)
         if isinstance(self._reward_storage, torch.Tensor) and isinstance(
             reward, np.ndarray
         ):
@@ -230,3 +235,11 @@ class ArcBatchGridEnv(gym.Env):
         info = self.information
 
         return observation, reward, terminated, truncated, info
+
+
+print("Registering gymnasium environment")
+gym.envs.registration.register(
+    id="ArcBatchGrid-v0",
+    entry_point="rlarcworld.enviroments.arc_batch_grid_env:ArcBatchGridEnv",
+    nondeterministic=True,
+)

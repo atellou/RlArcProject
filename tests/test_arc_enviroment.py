@@ -35,20 +35,21 @@ class ArcBatchGridsEnv(unittest.TestCase):
             initial_diff_grid = torch.abs(
                 dummy_batch["batch"]["input"] - dummy_batch["batch"]["output"]
             )
-            initial_diff = torch.sum(initial_diff_grid)
-            last_diff = initial_diff.clone()
+            last_diff = torch.sum(initial_diff_grid)
             step = 0
             for y_loc in range(size):
                 for x_loc in range(size):
-                    last_step = int(y_loc == size - 1 and x_loc == size - 1)
-                    value = env._target_grids[:, y_loc, x_loc].numpy(force=False)
+                    target_grids = env.observations["target"]
+                    is_last_step = int(y_loc == size - 1 and x_loc == size - 1)
+                    value = target_grids[:, y_loc, x_loc].numpy(force=False)
                     action = np.zeros(
                         (batch_size, len(env.action_space.feature_space.nvec))
                     )
                     action[:, 0] = y_loc
                     action[:, 1] = x_loc
                     action[:, 2] = value
-                    action[:, 3] = last_step
+                    last_step = torch.randint(is_last_step, 2, (batch_size,)).long()
+                    action[:, 3] = last_step.numpy()
                     assert env.action_space.contains(action), ValueError(
                         "Action not in action space: {}".format(action)
                     )
@@ -59,6 +60,9 @@ class ArcBatchGridsEnv(unittest.TestCase):
                     current_diff = torch.sum(torch.abs(env.get_difference()))
                     sum_changed_values = torch.sum(torch.abs(last_diff - current_diff))
                     sum_init_diff_values = torch.sum(initial_diff_grid[:, y_loc, x_loc])
+                    obs = env.observations
+                    target_grids = obs["target"]
+                    current_grids = obs["current"]
                     assert (
                         sum_changed_values == sum_init_diff_values
                     ), "Difference change is not the expected value. The change is: {} and the expected change is: {}".format(
@@ -78,12 +82,26 @@ class ArcBatchGridsEnv(unittest.TestCase):
                     ), "Index grid incorrectly updated. Expected: {} in X[{}],Y[{}] and got: {}".format(
                         step, x_loc, y_loc, info["index"][y_loc, x_loc]
                     )
-                    if last_step:
+                    if is_last_step:
+                        assert torch.equal(
+                            reward, torch.ones_like(reward)
+                        ), "The last step should have a reward of 1"
                         assert terminated, "The last step should terminate the episode"
                         assert (
                             current_diff == 0
                         ), "The last step should have zero difference"
                     else:
+                        assert torch.equal(
+                            reward,
+                            (
+                                torch.sum(
+                                    torch.abs(current_grids - target_grids),
+                                    dim=(1, 2),
+                                )
+                                == 0
+                            ).long()
+                            * last_step,
+                        ), "The step should have a reward of 0"
                         assert not terminated, "The episode should not terminate"
 
     def test_action_space(self):
