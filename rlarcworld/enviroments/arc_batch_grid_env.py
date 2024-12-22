@@ -132,6 +132,17 @@ class ArcBatchGridEnv(gym.Env):
         """
         return self._current_grids - self._target_grids
 
+    def episode_terminated(self):
+        diff = self.get_difference()
+        if isinstance(diff, torch.Tensor):
+            return torch.sum(torch.abs(diff)) == 0
+        elif isinstance(diff, np.ndarray):
+            return np.sum(np.abs(self.get_difference())) == 0
+        else:
+            raise TypeError(
+                "The current grid is not of type torch.Tensor or np.ndarray."
+            )
+
     def reward(
         self,
         grid_diffs: torch.Tensor | np.ndarray,
@@ -211,8 +222,7 @@ class ArcBatchGridEnv(gym.Env):
                     self.action_space.feature_space.nvec, actions
                 )
             )
-
-        terminated = np.all(submission == 1, axis=-1).astype(dtype=int)
+        terminated = self.episode_terminated()
         reward = self.reward(self.get_difference(), submission)
         if isinstance(self._reward_storage, torch.Tensor) and isinstance(
             reward, np.ndarray
