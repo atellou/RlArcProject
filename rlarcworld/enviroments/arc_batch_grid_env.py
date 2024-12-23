@@ -47,6 +47,9 @@ class ArcBatchGridEnv(gym.Env):
             "index": self._index_grids,
         }.copy()
 
+    def __len__(self):
+        return len(self._current_grids)
+
     def random_location_generator(self) -> tuple:
         """
         Generate a random location in the grid
@@ -132,12 +135,16 @@ class ArcBatchGridEnv(gym.Env):
         """
         return self._current_grids - self._target_grids
 
-    def episode_terminated(self):
+    def episode_terminated(self, submission):
         diff = self.get_difference()
         if isinstance(diff, torch.Tensor):
-            return torch.sum(torch.abs(diff)) == 0
+            return (torch.sum(torch.abs(diff), dim=(1, 2)) == 0) * torch.tensor(
+                submission,
+                device=diff.device,
+                dtype=diff.dtype,
+            )
         elif isinstance(diff, np.ndarray):
-            return np.sum(np.abs(self.get_difference())) == 0
+            return np.sum(np.abs(diff), axis=(1, 2)) == 0 * submission
         else:
             raise TypeError(
                 "The current grid is not of type torch.Tensor or np.ndarray."
@@ -222,7 +229,7 @@ class ArcBatchGridEnv(gym.Env):
                     self.action_space.feature_space.nvec, actions
                 )
             )
-        terminated = self.episode_terminated()
+
         reward = self.reward(self.get_difference(), submission)
         if isinstance(self._reward_storage, torch.Tensor) and isinstance(
             reward, np.ndarray
@@ -244,7 +251,8 @@ class ArcBatchGridEnv(gym.Env):
         observation = self.observations
         info = self.information
 
-        return observation, reward, terminated, truncated, info
+        terminated = self.episode_terminated(submission)
+        return observation, reward, torch.sum(terminated) == len(self), truncated, info
 
 
 print("Registering gymnasium environment")
