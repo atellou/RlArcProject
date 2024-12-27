@@ -57,18 +57,19 @@ class ArcBatchGridsEnv(unittest.TestCase):
                     logger.debug(f"\n>>>>>>>Step {step}/{size**2} <<<<<<<<<<<")
                     target_grids = env.observations["target"]
                     is_last_step = int(y_loc == size - 1 and x_loc == size - 1)
-                    value = target_grids[:, y_loc, x_loc].numpy(force=False)
-                    action = np.zeros(
+                    value = target_grids[:, y_loc, x_loc]
+                    action = torch.zeros(
                         (batch_size, len(env.action_space.feature_space.nvec))
                     )
                     action[:, 0] = y_loc
                     action[:, 1] = x_loc
                     action[:, 2] = value
                     submission = torch.randint(is_last_step, 2, (batch_size,)).long()
-                    action[:, 3] = submission.numpy()
-                    assert env.action_space.contains(action), ValueError(
-                        "Action not in action space: {}".format(action)
-                    )
+                    action[:, 3] = submission
+                    action = action.long()
+                    assert env.action_space.contains(
+                        action.numpy(force=True)
+                    ), ValueError("Action not in action space: {}".format(action))
                     last_diff = env.get_difference()
                     observation, reward, terminated, truncated, info = env.step(action)
                     current_diff = env.get_difference()
@@ -176,16 +177,17 @@ class ArcBatchGridsEnv(unittest.TestCase):
         ), "Difference change is not the expected value. The change is: {} and the expected change is: {}".format(
             sum_changed_values, sum_init_diff_values
         )
-        assert torch.equal(
+        torch.testing.assert_close(
             observation["target"],
             dummy_batch["batch"]["output"],
         ), "Target grid should not change"
 
-        assert torch.equal(
+        torch.testing.assert_close(
             info["intial"], dummy_batch["batch"]["input"]
         ), "Initial grid should not change"
-        assert np.array_equal(
-            info["index"][:, y_loc, x_loc], np.ones(batch_size) * step
+        torch.testing.assert_close(
+            info["index"][:, y_loc, x_loc],
+            torch.ones(batch_size, dtype=torch.int64) * step,
         ), "Index grid incorrectly updated. Expected: {} in X[{}],Y[{}] locations for every sample.".format(
             step, x_loc, y_loc
         )
@@ -207,11 +209,11 @@ class ArcBatchGridsEnv(unittest.TestCase):
         """
 
         if is_last_step:
-            assert torch.equal(
+            torch.testing.assert_close(
                 reward, torch.ones_like(reward)
             ), "The last step should have a reward of 1"
         else:
-            assert torch.equal(
+            torch.testing.assert_close(
                 reward,
                 (
                     torch.sum(
@@ -248,7 +250,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
             color_values (int): The number of color values.
         """
         if is_last_step:
-            assert torch.equal(
+            torch.testing.assert_close(
                 reward, torch.zeros_like(reward)
             ), "The last step should have a reward of 0"
         else:
@@ -257,7 +259,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
                 dim=(1, 2),
             )
             reference = (change - 1) * (current_diff != 0).long()
-            assert torch.equal(
+            torch.testing.assert_close(
                 reward,
                 reference + (-1 * current_diff * submission * size**2 * color_values),
             ), "The step do not have the expected reward."

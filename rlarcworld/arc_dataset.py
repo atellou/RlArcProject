@@ -95,8 +95,8 @@ class ArcSampleTransformer(object):
         return torch.cat(
             [
                 self.concat_unsqueezed(
-                    self.pad_to_size(torch.tensor(example["input"])),
-                    self.pad_to_size(torch.tensor(example["output"])),
+                    self.pad_to_size(torch.as_tensor(example["input"])),
+                    self.pad_to_size(torch.as_tensor(example["output"])),
                 ).unsqueeze(0)
                 for example in train_examples
             ],
@@ -115,23 +115,28 @@ class ArcSampleTransformer(object):
         sample["examples"] = self.concat_examples(sample["examples"])
         n_examples = sample["examples"].shape[0]
         if n_examples < self.examples_stack_dim:
-            pad_size = np.zeros(len(sample["examples"].shape) * 2, dtype=int)
+            pad_size = torch.zeros(len(sample["examples"].shape) * 2, dtype=int)
             pad_size[-1] = self.examples_stack_dim - n_examples
             logger.debug(
                 "Train Examples shape: {},Padding size: {}".format(
                     sample["examples"].shape, pad_size
                 )
             )
-            sample["examples"] = torch.nn.functional.pad(
-                sample["examples"], tuple(pad_size), value=self.constant_value
-            )+self.zero_based_correction
+            sample["examples"] = (
+                torch.nn.functional.pad(
+                    sample["examples"], tuple(pad_size), value=self.constant_value
+                )
+                + self.zero_based_correction
+            )
 
-        sample["task"]["input"] = self.pad_to_size(
-            torch.tensor(sample["task"]["input"])
-        )+self.zero_based_correction
-        sample["task"]["output"] = self.pad_to_size(
-            torch.tensor(sample["task"]["output"])
-        )+self.zero_based_correction
+        sample["task"]["input"] = (
+            self.pad_to_size(torch.as_tensor(sample["task"]["input"]))
+            + self.zero_based_correction
+        )
+        sample["task"]["output"] = (
+            self.pad_to_size(torch.as_tensor(sample["task"]["output"]))
+            + self.zero_based_correction
+        )
         return sample
 
 
@@ -166,19 +171,22 @@ class ArcDataset(Dataset):
             sample = json.load(file)
         if test_index is not None:
             sample["test"] = {
-                "input": np.array(sample["test"][test_index]["input"]),
-                "output": np.array(sample["test"][test_index]["output"]),
+                "input": torch.as_tensor(sample["test"][test_index]["input"]),
+                "output": torch.as_tensor(sample["test"][test_index]["output"]),
             }
         else:
             sample["test"] = [
                 {
-                    "input": np.array(t["input"]),
-                    "output": np.array(t["output"]),
+                    "input": torch.as_tensor(t["input"]),
+                    "output": torch.as_tensor(t["output"]),
                 }
                 for t in sample["test"]
             ]
         sample["train"] = [
-            {"input": np.array(t["input"]), "output": np.array(t["output"])}
+            {
+                "input": torch.as_tensor(t["input"]),
+                "output": torch.as_tensor(t["output"]),
+            }
             for t in sample["train"]
         ]
         return {"train": sample["train"], "test": sample["test"]}

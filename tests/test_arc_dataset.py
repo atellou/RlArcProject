@@ -1,6 +1,5 @@
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 import json
-import numpy as np
 import torch
 import unittest
 
@@ -32,7 +31,7 @@ class TestArcSampleTransformer(unittest.TestCase):
         assert torch.max(padded[:5, :5]) == 1
         assert torch.min(padded[:5, :5]) == 1
         with self.assertRaises(AssertionError):
-            self.transform.pad_to_size(np.ones((30, 30)))
+            self.transform.pad_to_size(torch.ones((30, 30)))
 
     def test_concat_unsqueezed(self):
         """
@@ -58,11 +57,11 @@ class TestArcSampleTransformer(unittest.TestCase):
         )
         assert len(dataset_t) == 4
         for d in dataset_t:
-            np.testing.assert_array_equal(
+            torch.testing.assert_close(
                 d["examples"].shape, [self.n_examples, 2] + [*self.grid_size]
             )
-            np.testing.assert_array_equal(d["task"]["input"].shape, [*self.grid_size])
-            np.testing.assert_array_equal(d["task"]["output"].shape, [*self.grid_size])
+            torch.testing.assert_close(d["task"]["input"].shape, [*self.grid_size])
+            torch.testing.assert_close(d["task"]["output"].shape, [*self.grid_size])
             assert isinstance(d["examples"], torch.Tensor)
             assert isinstance(d["task"]["input"], torch.Tensor)
             assert isinstance(d["task"]["output"], torch.Tensor)
@@ -94,15 +93,15 @@ class TestArcDataset(unittest.TestCase):
             dataset_t, batch_size=batch_size, shuffle=True, num_workers=0
         )
         for sample_batched in dataloader:
-            np.testing.assert_array_equal(
+            torch.testing.assert_close(
                 sample_batched["examples"].shape,
                 [batch_size, n_examples, 2] + [*grid_size],
             )
-            np.testing.assert_array_equal(
+            torch.testing.assert_close(
                 sample_batched["task"]["input"].shape,
                 [batch_size] + [*grid_size],
             )
-            np.testing.assert_array_equal(
+            torch.testing.assert_close(
                 sample_batched["task"]["input"].shape,
                 sample_batched["task"]["output"].shape,
             )
@@ -125,11 +124,11 @@ class TestArcDataset(unittest.TestCase):
         )
         assert len(dataset_t) == 4
         for d in dataset_t:
-            np.testing.assert_array_equal(
+            torch.testing.assert_close(
                 d["examples"].shape, [n_examples, 2] + [*grid_size]
             )
-            np.testing.assert_array_equal(d["task"]["input"].shape, [*grid_size])
-            np.testing.assert_array_equal(d["task"]["output"].shape, [*grid_size])
+            torch.testing.assert_close(d["task"]["input"].shape, [*grid_size])
+            torch.testing.assert_close(d["task"]["output"].shape, [*grid_size])
             assert isinstance(d["examples"], torch.Tensor)
             assert isinstance(d["task"]["input"], torch.Tensor)
             assert isinstance(d["task"]["output"], torch.Tensor)
@@ -171,8 +170,8 @@ class TestArcDataset(unittest.TestCase):
         for item in result["train"]:
             assert "input" in item
             assert "output" in item
-            assert isinstance(item["input"], np.ndarray)
-            assert isinstance(item["output"], np.ndarray)
+            assert isinstance(item["input"], torch.Tensor)
+            assert isinstance(item["output"], torch.Tensor)
 
         # Check the test data
         assert isinstance(result["test"], list)
@@ -180,20 +179,24 @@ class TestArcDataset(unittest.TestCase):
         for item in result["test"]:
             assert "input" in item
             assert "output" in item
-            assert isinstance(item["input"], np.ndarray)
-            assert isinstance(item["output"], np.ndarray)
+            assert isinstance(item["input"], torch.Tensor)
+            assert isinstance(item["output"], torch.Tensor)
 
         # Verify the content of the first train item
-        np.testing.assert_array_equal(
-            result["train"][0]["input"], np.array([[1, 2], [3, 4]])
+        torch.testing.assert_close(
+            result["train"][0]["input"], torch.tensor([[1, 2], [3, 4]])
         )
-        np.testing.assert_array_equal(
-            result["train"][0]["output"], np.array([[5, 6], [7, 8]])
+        torch.testing.assert_close(
+            result["train"][0]["output"], torch.tensor([[5, 6], [7, 8]])
         )
 
         # Verify the content of the test item
-        np.testing.assert_array_equal(result["test"][0]["input"], [[17, 18], [19, 20]])
-        np.testing.assert_array_equal(result["test"][0]["output"], [[21, 22], [23, 24]])
+        torch.testing.assert_close(
+            result["test"][0]["input"], torch.tensor([[17, 18], [19, 20]])
+        )
+        torch.testing.assert_close(
+            result["test"][0]["output"], torch.tensor([[21, 22], [23, 24]])
+        )
 
     def test_open_file_with_test_index(self):
         """
@@ -209,26 +212,26 @@ class TestArcDataset(unittest.TestCase):
 
         # Check train data
         assert len(result["train"]) == 2
-        np.testing.assert_array_equal(
-            result["train"][0]["input"], np.array([[1, 2], [3, 4]])
+        torch.testing.assert_close(
+            result["train"][0]["input"], torch.tensor([[1, 2], [3, 4]])
         )
-        np.testing.assert_array_equal(
-            result["train"][0]["output"], np.array([[5, 6], [7, 8]])
+        torch.testing.assert_close(
+            result["train"][0]["output"], torch.tensor([[5, 6], [7, 8]])
         )
-        np.testing.assert_array_equal(
-            result["train"][1]["input"], np.array([[9, 10], [11, 12]])
+        torch.testing.assert_close(
+            result["train"][1]["input"], torch.tensor([[9, 10], [11, 12]])
         )
-        np.testing.assert_array_equal(
-            result["train"][1]["output"], np.array([[13, 14], [15, 16]])
+        torch.testing.assert_close(
+            result["train"][1]["output"], torch.tensor([[13, 14], [15, 16]])
         )
 
         # Check test data
         assert isinstance(result["test"], dict)
-        np.testing.assert_array_equal(
-            result["test"]["input"], np.array([[25, 26], [27, 28]])
+        torch.testing.assert_close(
+            result["test"]["input"], torch.tensor([[25, 26], [27, 28]])
         )
-        np.testing.assert_array_equal(
-            result["test"]["output"], np.array([[29, 30], [31, 32]])
+        torch.testing.assert_close(
+            result["test"]["output"], torch.tensor([[29, 30], [31, 32]])
         )
 
 

@@ -101,22 +101,12 @@ class ArcBatchGridEnv(gym.Env):
 
         # Get batch of input grids
         self._initial_grids = batch_in
-        if isinstance(self._initial_grids, torch.Tensor):
-            self._current_grids = self._initial_grids.clone()
-            # State of initial reward
-            self._reward_storage = torch.zeros(self.batch_size, dtype=int)
-            self._last_reward = self._reward_storage.clone()
-            # Index grid: provides information of the order of the modifications to comply with Markov Assumptions
-            self._index_grids = self._initial_grids.clone() * 0
-        elif isinstance(self._initial_grids, np.ndarray):
-            self._current_grids = self._initial_grids.copy()
-
-            self._reward_storage = np.zeros(self.batch_size, dtype=int)
-            self._last_reward = self._reward_storage.copy()
-
-            self._index_grids = self._initial_grids.copy() * 0
-        else:
-            ValueError("The current grid is not of type torch.Tensor or np.ndarray.")
+        self._current_grids = self._initial_grids.clone()
+        # State of initial reward
+        self._reward_storage = torch.zeros(self.batch_size, dtype=int)
+        self._last_reward = self._reward_storage.clone()
+        # Index grid: provides information of the order of the modifications to comply with Markov Assumptions
+        self._index_grids = self._initial_grids.clone() * 0
 
         self._target_grids = batch_out
 
@@ -131,59 +121,43 @@ class ArcBatchGridEnv(gym.Env):
         Compute the difference between the current grid and the target grid.
 
         Returns:
-            np.ndarray | torch.Tensor: The difference between the current grid and the target grid.
+            torch.Tensor: The difference between the current grid and the target grid.
         """
         return self._current_grids - self._target_grids
 
     def episode_terminated(self, submission):
         diff = self.get_difference()
-        if isinstance(diff, torch.Tensor):
-            return (torch.sum(torch.abs(diff), dim=(1, 2)) == 0) * torch.tensor(
-                submission,
-                device=diff.device,
-                dtype=diff.dtype,
-            )
-        elif isinstance(diff, np.ndarray):
-            return np.sum(np.abs(diff), axis=(1, 2)) == 0 * submission
-        else:
-            raise TypeError(
-                "The current grid is not of type torch.Tensor or np.ndarray."
-            )
+        return (torch.sum(torch.abs(diff), dim=(1, 2)) == 0) * torch.as_tensor(
+            submission,
+            device=diff.device,
+            dtype=diff.dtype,
+        )
 
     def reward(
         self,
-        grid_diffs: torch.Tensor | np.ndarray,
+        grid_diffs: torch.Tensor,
         submission: List[int],
     ):
         """
         Computes the reward for the current state of the environment.
 
         Args:
-            grid_diffs torch.Tensor | np.ndarray: Batch of grids representing the difference between current and target.
+            grid_diffs torch.Tensor: Batch of grids representing the difference between current and target.
             submission List(int): Indicates whether the agent indicated a submission to grade.
         Returns:
             float: The reward for the current state of the environment.
         """
-        if isinstance(grid_diffs, torch.Tensor):
-            return (
-                torch.sum(torch.abs(grid_diffs), dim=(1, 2)) == 0
-            ).long() * torch.tensor(
-                submission,
-                device=grid_diffs.device,
-                dtype=grid_diffs.dtype,
-            )
-        elif isinstance(grid_diffs, np.ndarray):
-            return (np.sum(np.abs(self.get_difference()), axis=(1, 2)) == 0).astype(
-                int
-            ) * submission
-        else:
-            raise TypeError(
-                "The current grid is not of type torch.Tensor or np.ndarray."
-            )
+        return (
+            torch.sum(torch.abs(grid_diffs), dim=(1, 2)) == 0
+        ).long() * torch.as_tensor(
+            submission,
+            device=grid_diffs.device,
+            dtype=grid_diffs.dtype,
+        )
 
     def step(self, actions: list):
 
-        if self.action_space.contains(actions):
+        if self.action_space.contains(actions.numpy(force=True)):
             logger.debug("Actions are valid")
             # Update the grid with the action.
             y, x, color, submission = (
@@ -193,22 +167,11 @@ class ArcBatchGridEnv(gym.Env):
                 actions[:, 3],
             )
             self._timestep += 1
-            if isinstance(self._current_grids, torch.Tensor) and isinstance(
-                color, np.ndarray
-            ):
-                color = torch.tensor(
-                    color,
-                    device=self._current_grids.device,
-                    dtype=self._current_grids.dtype,
-                )
-            elif isinstance(self._current_grids, np.ndarray) and isinstance(
-                color, torch.Tensor
-            ):
-                color = color.numpy(force=True)
-            else:
-                raise TypeError(
-                    "The current grid is not of type torch.Tensor or np.ndarray."
-                )
+            color = torch.as_tensor(
+                color,
+                device=self._current_grids.device,
+                dtype=self._current_grids.dtype,
+            )
             logger.debug(
                 "Action performed shapes: Y={}, X={}, Color={}, Submission={}".format(
                     y.shape, x.shape, color.shape, submission.shape
@@ -231,18 +194,11 @@ class ArcBatchGridEnv(gym.Env):
             )
 
         reward = self.reward(self.get_difference(), submission)
-        if isinstance(self._reward_storage, torch.Tensor) and isinstance(
-            reward, np.ndarray
-        ):
-            reward = torch.tensor(
-                reward,
-                device=self._reward_storage.device,
-                dtype=self._reward_storage.dtype,
-            )
-        elif isinstance(self._reward_storage, np.ndarray) and isinstance(
-            reward, torch.Tensor
-        ):
-            reward = reward.numpy(force=True)
+        reward = torch.as_tensor(
+            reward,
+            device=self._reward_storage.device,
+            dtype=self._reward_storage.dtype,
+        )
         self._reward_storage += reward
         self._last_reward = reward
 

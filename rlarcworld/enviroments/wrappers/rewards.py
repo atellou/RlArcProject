@@ -1,5 +1,4 @@
 from typing import List, Optional
-import numpy as np
 import torch
 import gymnasium as gym
 import logging
@@ -25,7 +24,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Compute the difference between the current grid and the target grid and return ones for differences.
 
         Returns:
-            np.ndarray | torch.Tensor: The difference between the current grid and the target grid.
+            torch.Tensor: The difference between the current grid and the target grid.
         """
         obs = self.observations
         current_grids = obs["current"]
@@ -34,14 +33,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             diff = (current_grids - target_grids) != 0
         else:
             return current_grids - target_grids
-        if isinstance(current_grids, torch.Tensor):
-            return diff.long()
-        elif isinstance(current_grids, np.ndarray):
-            return diff.astype(int)
-        else:
-            raise TypeError(
-                "The current grid is not of type torch.Tensor or np.ndarray."
-            )
+        return diff.long()
 
     def __len__(self):
         return len(self.env)
@@ -54,8 +46,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
     def reward(
         self,
-        last_diffs: torch.Tensor | np.ndarray,
-        grid_diffs: torch.Tensor | np.ndarray,
+        last_diffs: torch.Tensor,
+        grid_diffs: torch.Tensor,
         submission: List[int],
     ):
         """
@@ -67,22 +59,13 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             3. On each step, the reward is the difference between the last difference and the current difference minus 1 (improvement).
         """
         penalization = submission * self.max_manality()
-        if isinstance(grid_diffs, torch.Tensor):
-            last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
-            current_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2))
-            if not isinstance(penalization, torch.Tensor):
-                penalization = torch.tensor(
-                    penalization, device=grid_diffs.device, dtype=grid_diffs.dtype
-                )
-            penalization = (current_diff > 0).long() * penalization
-        elif isinstance(grid_diffs, np.ndarray):
-            last_diffs = np.sum(np.abs(last_diffs), axis=(1, 2))
-            current_diff = np.sum(np.abs(grid_diffs), axis=(1, 2))
-            penalization = (current_diff > 0).astype(int) * penalization
-        else:
-            raise TypeError(
-                "The current grid is not of type torch.Tensor or np.ndarray."
+        last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
+        current_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2))
+        if not isinstance(penalization, torch.Tensor):
+            penalization = torch.tensor(
+                penalization, device=grid_diffs.device, dtype=grid_diffs.dtype
             )
+        penalization = (current_diff > 0).long() * penalization
         penalization = current_diff * penalization
         improvement = last_diffs - current_diff
         # The minus one is to avoid the reward to be positive (maximum reward is 0)
