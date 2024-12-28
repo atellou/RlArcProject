@@ -1,5 +1,6 @@
 from typing import Optional, List
 import torch
+from tensordict import TensorDict
 import numpy as np
 import gymnasium as gym
 import logging
@@ -26,29 +27,8 @@ class ArcBatchGridEnv(gym.Env):
             gym.spaces.MultiDiscrete([size, size, color_values, 2]), stack=True
         )
 
-    @property
-    def observations(self):
-        """
-        Returns:
-            dict: grids with current state and targets
-        """
-        return {"current": self._current_grids, "target": self._target_grids}.copy()
-
-    @property
-    def information(self):
-        """
-        Returns:
-            dict:
-                initial: Grids with the initial state of the problem grids.
-                index: Grids with the steps of the modifications performed over the grid.
-        """
-        return {
-            "intial": self._initial_grids,
-            "index": self._index_grids,
-        }.copy()
-
     def __len__(self):
-        return len(self._current_grids)
+        return len(self.observations["current"])
 
     def random_location_generator(self) -> tuple:
         """
@@ -98,7 +78,8 @@ class ArcBatchGridEnv(gym.Env):
             self.size
         )
         self.batch_size = batch_in.shape[0]
-
+        # Tergets
+        self._target_grids = batch_out
         # Get batch of input grids
         self._initial_grids = batch_in
         self._current_grids = self._initial_grids.clone()
@@ -107,14 +88,20 @@ class ArcBatchGridEnv(gym.Env):
         self._last_reward = self._reward_storage.clone()
         # Index grid: provides information of the order of the modifications to comply with Markov Assumptions
         self._index_grids = self._initial_grids.clone() * 0
-
-        self._target_grids = batch_out
-
         self._timestep = 0
-        observation = self.observations
-        info = self.information
 
-        return observation, info
+        self.information = TensorDict(
+            {
+                "initial": self._initial_grids,
+                "index": self._index_grids,
+            }
+        )
+
+        self.observations = TensorDict(
+            {"current": self._current_grids, "target": self._target_grids}
+        )
+
+        return self.observations, self.information
 
     def get_difference(self):
         """
@@ -123,7 +110,7 @@ class ArcBatchGridEnv(gym.Env):
         Returns:
             torch.Tensor: The difference between the current grid and the target grid.
         """
-        return self._current_grids - self._target_grids
+        return self.observations["current"] - self.observations["target"]
 
     def episode_terminated(self, submission):
         diff = self.get_difference()
@@ -177,7 +164,7 @@ class ArcBatchGridEnv(gym.Env):
                     y.shape, x.shape, color.shape, submission.shape
                 )
             )
-            self._current_grids[list(range(self.batch_size)), y, x] = color
+            self.observations["current"][list(range(self.batch_size)), y, x] = color
             self._index_grids[list(range(self.batch_size)), y, x] = self._timestep
         else:
             logger.error(
@@ -204,11 +191,14 @@ class ArcBatchGridEnv(gym.Env):
 
         # TODO: No truncate version, evaluate time constraints
         truncated = False
-        observation = self.observations
-        info = self.information
-
         terminated = self.episode_terminated(submission)
-        return observation, reward, torch.sum(terminated) == len(self), truncated, info
+        return (
+            self.observations,
+            reward,
+            torch.sum(terminated) == len(self),
+            truncated,
+            self.information,
+        )
 
 
 print("Registering gymnasium environment")

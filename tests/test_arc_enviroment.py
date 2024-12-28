@@ -183,7 +183,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
         ), "Target grid should not change"
 
         torch.testing.assert_close(
-            info["intial"], dummy_batch["batch"]["input"]
+            info["initial"], dummy_batch["batch"]["input"]
         ), "Initial grid should not change"
         torch.testing.assert_close(
             info["index"][:, y_loc, x_loc],
