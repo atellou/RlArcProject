@@ -2,6 +2,7 @@ from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
 import numpy as np
 import torch
+from tensordict import TensorDict
 import unittest
 import logging
 
@@ -37,16 +38,18 @@ class ArcBatchGridsEnv(unittest.TestCase):
         episodes = np.random.randint(5, 10)
         for episode in range(episodes):
             logger.info("Episode: {}/{}".format(episode, episodes))
-            dummy_batch = {
-                "batch": {
-                    "input": torch.randint(
-                        0, color_values - 1, size=(batch_size, size, size)
-                    ),
-                    "output": torch.randint(
-                        0, color_values, size=(batch_size, size, size)
-                    ),
+            dummy_batch = TensorDict(
+                {
+                    "batch": {
+                        "input": torch.randint(
+                            0, color_values - 1, size=(batch_size, size, size)
+                        ),
+                        "output": torch.randint(
+                            0, color_values, size=(batch_size, size, size)
+                        ),
+                    }
                 }
-            }
+            )
             # dummy_batch["batch"]["output"] = dummy_batch["batch"]["input"].clone() + 1
             env.reset(dummy_batch)
             initial_diff_grid = env.get_difference()
