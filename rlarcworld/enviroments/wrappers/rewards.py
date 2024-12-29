@@ -8,17 +8,6 @@ logger = logging.getLogger(__name__)
 
 class PixelAwareRewardWrapper(gym.Wrapper):
 
-    def reset(self, options: dict, seed: Optional[int] = None):
-        return self.env.reset(options, seed)
-
-    @property
-    def observations(self):
-        """
-        Returns:
-            dict: grids with current state and targets
-        """
-        return self.env.observations.copy()
-
     def get_difference(self, binary: bool = True):
         """
         Compute the difference between the current grid and the target grid and return ones for differences.
@@ -26,7 +15,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             torch.Tensor: The difference between the current grid and the target grid.
         """
-        obs = self.observations
+        obs = self.get_wrapper_attr("observations")
         current_grids = obs["current"]
         target_grids = obs["target"]
         if binary:
@@ -75,5 +64,5 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.last_diffs = self.get_difference()
         obs, _, terminated, truncated, info = self.env.step(actions)
         self.current_diffs = self.get_difference()
-        reward = self.reward(self.last_diffs, self.current_diffs, actions[:, 3])
+        reward = self.reward(self.last_diffs, self.current_diffs, actions["submit"])
         return obs, reward, terminated, truncated, info

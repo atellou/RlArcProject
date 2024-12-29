@@ -26,6 +26,20 @@ class ArcBatchGridEnv(gym.Env):
         self.action_space = gym.spaces.Sequence(
             gym.spaces.MultiDiscrete([size, size, color_values, 2]), stack=True
         )
+        self.action_space = gym.spaces.Dict(
+            {
+                "x_location": gym.spaces.Sequence(
+                    gym.spaces.Discrete(size), stack=True
+                ),
+                "y_location": gym.spaces.Sequence(
+                    gym.spaces.Discrete(size), stack=True
+                ),
+                "color_values": gym.spaces.Sequence(
+                    gym.spaces.Discrete(color_values), stack=True
+                ),
+                "submit": gym.spaces.Sequence(gym.spaces.Discrete(2), stack=True),
+            }
+        )
 
     def __len__(self):
         return len(self.observations["current"])
@@ -47,7 +61,7 @@ class ArcBatchGridEnv(gym.Env):
     def last_reward(self):
         return self._last_reward
 
-    def reset(self, options: dict, seed: Optional[int] = None) -> tuple:
+    def reset(self, *, options: dict, seed: Optional[int] = None) -> tuple:
         """
         Resets the environment to an initial internal state, returning an initial observation and info.
         Args:
@@ -79,29 +93,29 @@ class ArcBatchGridEnv(gym.Env):
         )
         self.batch_size = batch_in.shape[0]
         # Tergets
-        self._target_grids = batch_out
+        target_grids = batch_out
         # Get batch of input grids
-        self._initial_grids = batch_in
-        self._current_grids = self._initial_grids.clone()
+        initial_grids = batch_in
+        current_grids = initial_grids.clone()
         # State of initial reward
         self._reward_storage = torch.zeros(self.batch_size, dtype=int)
         self._last_reward = self._reward_storage.clone()
         # Index grid: provides information of the order of the modifications to comply with Markov Assumptions
-        self._index_grids = self._initial_grids.clone() * 0
+        index_grids = initial_grids.clone() * 0
         self._timestep = 0
 
         self.information = TensorDict(
             {
-                "initial": self._initial_grids,
-                "index": self._index_grids,
+                "initial": initial_grids,
+                "index": index_grids,
             }
         )
 
         self.observations = TensorDict(
-            {"current": self._current_grids, "target": self._target_grids}
+            {"current": current_grids, "target": target_grids}
         )
 
-        return self.observations, self.information
+        return self.observations.to_dict(), self.information.to_dict()
 
     def get_difference(self):
         """
@@ -144,43 +158,43 @@ class ArcBatchGridEnv(gym.Env):
 
     def step(self, actions: list):
 
-        if self.action_space.contains(actions.numpy(force=True)):
+        if self.action_space.contains(actions.numpy()):
             logger.debug("Actions are valid")
             # Update the grid with the action.
-            y, x, color, submission = (
-                actions[:, 0],
-                actions[:, 1],
-                actions[:, 2],
-                actions[:, 3],
-            )
             self._timestep += 1
-            color = torch.as_tensor(
-                color,
-                device=self._current_grids.device,
-                dtype=self._current_grids.dtype,
-            )
             logger.debug(
                 "Action performed shapes: Y={}, X={}, Color={}, Submission={}".format(
-                    y.shape, x.shape, color.shape, submission.shape
+                    actions["y_location"].shape,
+                    actions["x_location"].shape,
+                    actions["color_values"].shape,
+                    actions["submit"].shape,
                 )
             )
-            self.observations["current"][list(range(self.batch_size)), y, x] = color
-            self._index_grids[list(range(self.batch_size)), y, x] = self._timestep
+            self.observations["current"][
+                list(range(self.batch_size)),
+                actions["y_location"],
+                actions["x_location"],
+            ] = actions["color_values"]
+            self.information["index"][
+                list(range(self.batch_size)),
+                actions["y_location"],
+                actions["x_location"],
+            ] = self._timestep
         else:
             logger.error(
                 "No action performed due to invalid action, sequence of values"
                 + " within {} are valid, not inclusive. Given: {}.".format(
-                    self.action_space.feature_space.nvec, actions
+                    self.action_space.keys(), actions
                 )
             )
             raise ValueError(
                 "The specified action do not comply with the action space constraints."
                 + "Sequence of values within {} are valid, not inclusive. Given: {}.".format(
-                    self.action_space.feature_space.nvec, actions
+                    self.action_space.keys(), actions
                 )
             )
 
-        reward = self.reward(self.get_difference(), submission)
+        reward = self.reward(self.get_difference(), actions["submit"])
         reward = torch.as_tensor(
             reward,
             device=self._reward_storage.device,
@@ -191,7 +205,7 @@ class ArcBatchGridEnv(gym.Env):
 
         # TODO: No truncate version, evaluate time constraints
         truncated = False
-        terminated = self.episode_terminated(submission)
+        terminated = self.episode_terminated(actions["submit"])
         return (
             self.observations,
             reward,
@@ -201,7 +215,7 @@ class ArcBatchGridEnv(gym.Env):
         )
 
 
-print("Registering gymnasium environment")
+logger.info("Registering gymnasium environment")
 gym.envs.registration.register(
     id="ArcBatchGrid-v0",
     entry_point="rlarcworld.enviroments.arc_batch_grid_env:ArcBatchGridEnv",

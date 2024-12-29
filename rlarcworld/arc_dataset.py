@@ -3,6 +3,7 @@ import json
 
 import numpy as np
 
+from tensordict import TensorDict
 import torch
 from torch.utils.data import Dataset
 import logging

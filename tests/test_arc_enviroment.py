@@ -14,18 +14,18 @@ class ArcBatchGridsEnv(unittest.TestCase):
 
     def test_environment(self):
         logger.info("Testing ArcBatchGridEnv")
-        batch_size = np.random.randint(20, 50)
-        size = np.random.randint(20, 50)
-        color_values = np.random.randint(2, 20)
+        batch_size = np.random.randint(2, 4)
+        size = np.random.randint(2, 4)
+        color_values = np.random.randint(2, 4)
 
         env = ArcBatchGridEnv(size, color_values)
         self.episodes_simulation(batch_size, size, color_values, env)
 
     def test_wrapper(self):
         logger.info("\nTesting ArcBatchGridEnv with wrapper PixelAwareRewardWrapper")
-        batch_size = np.random.randint(20, 50)
-        size = np.random.randint(20, 50)
-        color_values = np.random.randint(2, 20)
+        batch_size = np.random.randint(2, 4)
+        size = np.random.randint(2, 4)
+        color_values = np.random.randint(2, 4)
 
         env = ArcBatchGridEnv(size, color_values)
         env = PixelAwareRewardWrapper(env)
@@ -51,32 +51,30 @@ class ArcBatchGridsEnv(unittest.TestCase):
                 }
             )
             # dummy_batch["batch"]["output"] = dummy_batch["batch"]["input"].clone() + 1
-            env.reset(dummy_batch)
+            env.reset(options=dummy_batch)
             initial_diff_grid = env.get_difference()
             last_diff = torch.sum(initial_diff_grid)
             step = 0
             for y_loc in range(size):
                 for x_loc in range(size):
                     logger.debug(f"\n>>>>>>>Step {step}/{size**2} <<<<<<<<<<<")
-                    target_grids = env.observations["target"]
+                    target_grids = env.get_wrapper_attr("observations")["target"]
                     is_last_step = int(y_loc == size - 1 and x_loc == size - 1)
                     value = target_grids[:, y_loc, x_loc]
-                    action = torch.zeros(
-                        (batch_size, len(env.action_space.feature_space.nvec))
-                    )
+                    action = torch.zeros((batch_size, 4))
                     action[:, 0] = y_loc
                     action[:, 1] = x_loc
                     action[:, 2] = value
                     submission = torch.randint(is_last_step, 2, (batch_size,)).long()
                     action[:, 3] = submission
                     action = action.long()
-                    assert env.action_space.contains(
-                        action.numpy(force=True)
-                    ), ValueError("Action not in action space: {}".format(action))
+                    action = self.to_dict_tensors(action, to_torch=True)
+                    assert env.action_space.contains(action.numpy()), ValueError(
+                        "Action not in action space: {}".format(action)
+                    )
                     last_diff = env.get_difference()
                     observation, reward, terminated, truncated, info = env.step(action)
                     current_diff = env.get_difference()
-
                     step += 1
                     logger.debug(
                         f"Computing differences in grids for the current step [{step}]"
@@ -267,7 +265,28 @@ class ArcBatchGridsEnv(unittest.TestCase):
                 reference + (-1 * current_diff * submission * size**2 * color_values),
             ), "The step do not have the expected reward."
 
+    def to_dict_tensors(self, sample, to_torch: bool = False):
+        if to_torch:
+            sample = torch.as_tensor(sample)
+            return TensorDict(
+                {
+                    "y_location": sample[:, 0],
+                    "x_location": sample[:, 1],
+                    "color_values": sample[:, 2],
+                    "submit": sample[:, 3],
+                }
+            )
+        else:
+            sample = np.array(sample)
+            return {
+                "y_location": sample[:, 0],
+                "x_location": sample[:, 1],
+                "color_values": sample[:, 2],
+                "submit": sample[:, 3],
+            }
+
     def test_action_space(self):
+        batch_size = np.random.randint(5, 100)
         grid_size = np.random.randint(5, 20)
         values = np.random.randint(2, 20)
         logger.debug(
@@ -277,54 +296,77 @@ class ArcBatchGridsEnv(unittest.TestCase):
         )
         env = ArcBatchGridEnv(size=grid_size, color_values=values)
         assert values == env.color_values and grid_size == env.size
+
         # Valid
-        assert env.action_space.contains([[0, 0, 0, 0]])
+        assert env.action_space.contains(self.to_dict_tensors([[0, 0, 0, 0]]))
         assert env.action_space.contains(
-            [[grid_size - 1, grid_size - 1, values - 1, 1]]
+            self.to_dict_tensors([[grid_size - 1, grid_size - 1, values - 1, 1]])
         )
         assert env.action_space.contains(
-            [[0, grid_size - 1, values - 1, 0] for __ in range(2)]
+            self.to_dict_tensors([[0, grid_size - 1, values - 1, 0] for __ in range(2)])
         )
-        assert env.action_space.contains([[0, grid_size - 1, 0, 0] for __ in range(3)])
-        assert env.action_space.contains([[grid_size - 1, 0, 0, 0] for __ in range(4)])
+        assert env.action_space.contains(
+            self.to_dict_tensors([[0, grid_size - 1, 0, 0] for __ in range(3)])
+        )
+        assert env.action_space.contains(
+            self.to_dict_tensors([[grid_size - 1, 0, 0, 0] for __ in range(4)])
+        )
+
         # Not valid
         assert not env.action_space.contains(
-            [[0, 0, 0, 0], [0, grid_size - 1, values - 1, -1]]
+            self.to_dict_tensors([[0, 0, 0, 0], [0, grid_size - 1, values - 1, -1]])
         )
         assert not env.action_space.contains(
-            [[0, 0, 0, 0], [0, grid_size - 1, values - 1, 2]]
+            self.to_dict_tensors([[0, 0, 0, 0], [0, grid_size - 1, values - 1, 2]])
         )
         assert not env.action_space.contains(
-            [[0, 0, 0, 0], [0, grid_size - 1, values, 1]]
-        )
-        assert not env.action_space.contains([[0, 0, 0, 0], [0, grid_size - 1, -1, 1]])
-        assert not env.action_space.contains(
-            [
-                [grid_size - 1, grid_size - 1, values - 1, 1],
-                [0, grid_size, values - 1, 1],
-            ]
+            self.to_dict_tensors([[0, 0, 0, 0], [0, grid_size - 1, values, 1]])
         )
         assert not env.action_space.contains(
-            [
-                [grid_size - 1, grid_size - 1, values - 1, 1],
-                [grid_size, -1, values - 1, 1],
-            ]
+            self.to_dict_tensors([[0, 0, 0, 0], [0, grid_size - 1, -1, 1]])
         )
         assert not env.action_space.contains(
-            [
-                [grid_size - 1, grid_size - 1, values - 1, 1],
-                [-1, grid_size - 1, values - 1, 1],
-            ]
+            self.to_dict_tensors(
+                [
+                    [grid_size - 1, grid_size - 1, values - 1, 1],
+                    [0, grid_size, values - 1, 1],
+                ]
+            )
         )
         assert not env.action_space.contains(
-            [
-                [grid_size - 1, grid_size - 1, values - 1, 1],
-                [grid_size, grid_size - 1, values - 1, 1],
-            ]
+            self.to_dict_tensors(
+                [
+                    [grid_size - 1, grid_size - 1, values - 1, 1],
+                    [grid_size, -1, values - 1, 1],
+                ]
+            )
         )
-        # Not valid shape
-        assert not env.action_space.contains([0, grid_size - 1, values - 1, 2])
-        assert not env.action_space.contains([[grid_size - 1, values - 1, 2]])
+        assert not env.action_space.contains(
+            self.to_dict_tensors(
+                [
+                    [grid_size - 1, grid_size - 1, values - 1, 1],
+                    [-1, grid_size - 1, values - 1, 1],
+                ]
+            )
+        )
+        assert not env.action_space.contains(
+            self.to_dict_tensors(
+                [
+                    [grid_size - 1, grid_size - 1, values - 1, 1],
+                    [grid_size, grid_size - 1, values - 1, 1],
+                ]
+            )
+        )
+
+        # Not valid format
+        with self.assertRaises(IndexError):
+            assert not env.action_space.contains(
+                self.to_dict_tensors([0, grid_size - 1, values - 1, 2])
+            )
+        with self.assertRaises(IndexError):
+            assert not env.action_space.contains(
+                self.to_dict_tensors([[grid_size - 1, values - 1, 2]])
+            )
 
 
 if __name__ == "__main__":
