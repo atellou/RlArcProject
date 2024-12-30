@@ -31,7 +31,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         """
         Maximum penality for the current grid.
         """
-        return -1 * self.env.size**2 * self.env.color_values
+        return (
+            -1
+            * self.get_wrapper_attr("size") ** 2
+            * self.get_wrapper_attr("color_values")
+        )
 
     def reward(
         self,

@@ -18,9 +18,17 @@ class ArcBatchGridEnv(gym.Env):
         self.size = size
 
         # Here, the observations will be positions on the grid with a value to set. Used mainly to add stochasticity
-        self.observation_space = gym.spaces.Sequence(
-            gym.spaces.MultiDiscrete([size, size, color_values]), stack=True
+        self.observation_space = gym.spaces.Dict(
+            {
+                "current": gym.spaces.Sequence(
+                    gym.spaces.Box(0, color_values, shape=(size, size)), stack=True
+                ),
+                "target": gym.spaces.Sequence(
+                    gym.spaces.Box(0, color_values, shape=(size, size)), stack=True
+                ),
+            }
         )
+        self.location_space = gym.spaces.MultiDiscrete([size, size, color_values])
 
         # We have actions corresponding to "Y Location", "X Location", "Color Value" and "submission"
         self.action_space = gym.spaces.Sequence(
@@ -44,14 +52,14 @@ class ArcBatchGridEnv(gym.Env):
     def __len__(self):
         return len(self.observations["current"])
 
-    def random_location_generator(self) -> tuple:
+    def random_location_generator(self):
         """
         Generate a random location in the grid
 
         Returns:
-            tuple:  x and y location within the observation space defined in init
+            ndarray: Batch size ndarray with x and y location within the observation space defined in init
         """
-        return tuple(self.observation_space.sample())
+        return np.array([self.location_space.sample() for __ in range(self.batch_size)])
 
     @property
     def reward_storage(self):
@@ -60,6 +68,24 @@ class ArcBatchGridEnv(gym.Env):
     @property
     def last_reward(self):
         return self._last_reward
+
+    def validate_examples(self, examples: torch.Tensor):
+        assert len(examples.shape) == 5, "Examples grids should be 5D"
+        assert (
+            examples.shape[0] == self.batch_size
+        ), "Examples grids should have the same batch size. Expected {} and {} passed.".format(
+            self.batch_size, examples.shape[0]
+        )
+        assert (
+            examples.shape[2] == 2
+        ), "Examples grids should have input and output grids on third dimesion, examples.shape[2] = {}".format(
+            examples.shape[2]
+        )
+        assert (
+            examples.shape[3] == self.size and examples.shape[3] == self.size
+        ), "Examples grids should have the size {}x{}. Example shape 3 and 4: {}x{}".format(
+            self.size, self.size, examples.shape[3], examples.shape[3]
+        )
 
     def reset(self, *, options: dict, seed: Optional[int] = None) -> tuple:
         """
@@ -92,27 +118,25 @@ class ArcBatchGridEnv(gym.Env):
             self.size
         )
         self.batch_size = batch_in.shape[0]
-        # Tergets
-        target_grids = batch_out
-        # Get batch of input grids
-        initial_grids = batch_in
-        current_grids = initial_grids.clone()
+
         # State of initial reward
         self._reward_storage = torch.zeros(self.batch_size, dtype=int)
         self._last_reward = self._reward_storage.clone()
-        # Index grid: provides information of the order of the modifications to comply with Markov Assumptions
-        index_grids = initial_grids.clone() * 0
         self._timestep = 0
 
+        # Validate examples
+        self.validate_examples(options["examples"])
         self.information = TensorDict(
             {
-                "initial": initial_grids,
-                "index": index_grids,
+                "initial": batch_in,
+                "index": batch_in.clone() * 0,
+                "terminated": torch.zeros(self.batch_size, dtype=int),
+                "examples": options["examples"],
             }
         )
 
         self.observations = TensorDict(
-            {"current": current_grids, "target": target_grids}
+            {"current": batch_in.clone(), "target": batch_out.clone()}
         )
 
         return self.observations.to_dict(), self.information.to_dict()
@@ -155,6 +179,12 @@ class ArcBatchGridEnv(gym.Env):
             device=grid_diffs.device,
             dtype=grid_diffs.dtype,
         )
+
+    @property
+    def state(self):
+        state = self.information
+        state.update({"current": self.observations["current"]})
+        return state
 
     def step(self, actions: list):
 
@@ -206,10 +236,11 @@ class ArcBatchGridEnv(gym.Env):
         # TODO: No truncate version, evaluate time constraints
         truncated = False
         terminated = self.episode_terminated(actions["submit"])
+        self.information["terminated"] = terminated
         return (
             self.observations,
             reward,
-            torch.sum(terminated) == len(self),
+            bool(torch.sum(terminated) == len(self)),
             truncated,
             self.information,
         )

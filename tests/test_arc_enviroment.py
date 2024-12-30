@@ -47,7 +47,12 @@ class ArcBatchGridsEnv(unittest.TestCase):
                         "output": torch.randint(
                             0, color_values, size=(batch_size, size, size)
                         ),
-                    }
+                    },
+                    "examples": torch.randint(
+                        0,
+                        color_values,
+                        size=(batch_size, np.random.randint(2, 5), 2, size, size),
+                    ),
                 }
             )
             # dummy_batch["batch"]["output"] = dummy_batch["batch"]["input"].clone() + 1
@@ -110,6 +115,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
 
                     logger.debug(f"Assertions of rewards")
                     if isinstance(env, PixelAwareRewardWrapper):
+                        self.assert_state_property(env.get_wrapper_attr("state"))
                         self.assert_reward_pixel(
                             reward,
                             observation,
@@ -125,12 +131,27 @@ class ArcBatchGridsEnv(unittest.TestCase):
                             color_values,
                         )
                     elif isinstance(env, ArcBatchGridEnv):
+                        self.assert_state_property(env.state)
                         self.assert_reward_arc(
                             reward,
                             observation,
                             submission,
                             is_last_step,
                         )
+
+    def assert_state_property(self, state):
+        """
+        Assertions for the state of the environment.
+        Args:
+            state (TensorDict): The state of the environment.
+        """
+        assert isinstance(state, TensorDict), TypeError(
+            "Input State must be a TensorDict, type {} returned.".format(type(state))
+        )
+        in_keys = {"current", "examples", "initial", "index", "terminated"}
+        assert set(state.keys()) == in_keys, ValueError(
+            "Action keys must be {}".format(in_keys)
+        )
 
     def compute_difference(self, current_diff, last_diff, initial_diff_grid_loc):
         """
@@ -192,6 +213,17 @@ class ArcBatchGridsEnv(unittest.TestCase):
         ), "Index grid incorrectly updated. Expected: {} in X[{}],Y[{}] locations for every sample.".format(
             step, x_loc, y_loc
         )
+
+        torch.testing.assert_close(
+            info["examples"], dummy_batch["examples"]
+        ), "Examples grids should not change"
+        assert len(info["examples"].shape) == 5, "Examples grids should be 5D"
+        assert (
+            info["examples"].shape[0] == batch_size
+        ), "Examples grids should have the same batch size"
+        assert (
+            info["examples"].shape[2] == 2
+        ), "Examples grids should have input and output grids on third dimesion"
 
     def assert_reward_arc(
         self,
