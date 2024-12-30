@@ -20,7 +20,7 @@ class ArcBatchGridEnv(gym.Env):
         # Here, the observations will be positions on the grid with a value to set. Used mainly to add stochasticity
         self.observation_space = gym.spaces.Dict(
             {
-                "current": gym.spaces.Sequence(
+                "state": gym.spaces.Sequence(
                     gym.spaces.Box(0, color_values, shape=(size, size)), stack=True
                 ),
                 "target": gym.spaces.Sequence(
@@ -50,7 +50,7 @@ class ArcBatchGridEnv(gym.Env):
         )
 
     def __len__(self):
-        return len(self.observations["current"])
+        return len(self.observations["state"])
 
     def random_location_generator(self):
         """
@@ -136,19 +136,19 @@ class ArcBatchGridEnv(gym.Env):
         )
 
         self.observations = TensorDict(
-            {"current": batch_in.clone(), "target": batch_out.clone()}
+            {"state": batch_in.clone(), "target": batch_out.clone()}
         )
 
         return self.observations.to_dict(), self.information.to_dict()
 
     def get_difference(self):
         """
-        Compute the difference between the current grid and the target grid.
+        Compute the difference between the state grid and the target grid.
 
         Returns:
-            torch.Tensor: The difference between the current grid and the target grid.
+            torch.Tensor: The difference between the state grid and the target grid.
         """
-        return self.observations["current"] - self.observations["target"]
+        return self.observations["state"] - self.observations["target"]
 
     def episode_terminated(self, submission):
         diff = self.get_difference()
@@ -164,13 +164,13 @@ class ArcBatchGridEnv(gym.Env):
         submission: List[int],
     ):
         """
-        Computes the reward for the current state of the environment.
+        Computes the reward for the state state of the environment.
 
         Args:
-            grid_diffs torch.Tensor: Batch of grids representing the difference between current and target.
+            grid_diffs torch.Tensor: Batch of grids representing the difference between state and target.
             submission List(int): Indicates whether the agent indicated a submission to grade.
         Returns:
-            float: The reward for the current state of the environment.
+            float: The reward for the state state of the environment.
         """
         return (
             torch.sum(torch.abs(grid_diffs), dim=(1, 2)) == 0
@@ -183,7 +183,7 @@ class ArcBatchGridEnv(gym.Env):
     @property
     def state(self):
         state = self.information
-        state.update({"current": self.observations["current"]})
+        state.update({"state": self.observations["state"]})
         return state
 
     def step(self, actions: list):
@@ -200,7 +200,7 @@ class ArcBatchGridEnv(gym.Env):
                     actions["submit"].shape,
                 )
             )
-            self.observations["current"][
+            self.observations["state"][
                 list(range(self.batch_size)),
                 actions["y_location"],
                 actions["x_location"],

@@ -79,13 +79,13 @@ class ArcBatchGridsEnv(unittest.TestCase):
                     )
                     last_diff = env.get_difference()
                     observation, reward, terminated, truncated, info = env.step(action)
-                    current_diff = env.get_difference()
+                    state_diff = env.get_difference()
                     step += 1
                     logger.debug(
-                        f"Computing differences in grids for the current step [{step}]"
+                        f"Computing differences in grids for the state step [{step}]"
                     )
                     sum_changed_values, sum_init_diff_values = self.compute_difference(
-                        current_diff,
+                        state_diff,
                         last_diff,
                         initial_diff_grid[:, y_loc, x_loc],
                     )
@@ -102,15 +102,15 @@ class ArcBatchGridsEnv(unittest.TestCase):
                         dummy_batch,
                     )
                     logger.debug(f"Assertions of termination")
-                    current_diff = torch.sum(torch.abs(current_diff))
+                    state_diff = torch.sum(torch.abs(state_diff))
                     if is_last_step:
                         assert terminated, "The last step should terminate the episode"
                         assert (
-                            current_diff == 0
+                            state_diff == 0
                         ), "The last step should have zero difference"
                     else:
                         assert not terminated or (
-                            terminated and current_diff == 0
+                            terminated and state_diff == 0
                         ), "The episode should not terminate"
 
                     logger.debug(f"Assertions of rewards")
@@ -121,7 +121,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
                             observation,
                             submission,
                             is_last_step,
-                            current_diff,
+                            state_diff,
                             (
                                 dummy_batch["batch"]["input"][:, y_loc, x_loc]
                                 - dummy_batch["batch"]["output"][:, y_loc, x_loc]
@@ -148,24 +148,24 @@ class ArcBatchGridsEnv(unittest.TestCase):
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict, type {} returned.".format(type(state))
         )
-        in_keys = {"current", "examples", "initial", "index", "terminated"}
+        in_keys = {"state", "examples", "initial", "index", "terminated"}
         assert set(state.keys()) == in_keys, ValueError(
             "Action keys must be {}".format(in_keys)
         )
 
-    def compute_difference(self, current_diff, last_diff, initial_diff_grid_loc):
+    def compute_difference(self, state_diff, last_diff, initial_diff_grid_loc):
         """
-        Compute the difference between the current grid and the target grid to validate differences.
+        Compute the difference between the state grid and the target grid to validate differences.
 
         Args:
-            current_diff (torch.Tensor): The absolute difference between the current grid and the target grid.
-            last_diff (torch.Tensor): The last difference (before the last action) between the current grid and the target grid.
-            initial_diff_grid_loc (torch.Tensor): The initial difference between the current grid and the target grid in a [X,Y] location.
+            state_diff (torch.Tensor): The absolute difference between the state grid and the target grid.
+            last_diff (torch.Tensor): The last difference (before the last action) between the state grid and the target grid.
+            initial_diff_grid_loc (torch.Tensor): The initial difference between the state grid and the target grid in a [X,Y] location.
         Returns:
             torch.Tensor: The change since the last action, improvement in grid differences.
             torch.Tensor: The sum of the initial difference values in the locations changed on the last action.
         """
-        sum_changed_values = torch.sum(torch.abs(last_diff - current_diff))
+        sum_changed_values = torch.sum(torch.abs(last_diff - state_diff))
         sum_init_diff_values = torch.sum(torch.abs(initial_diff_grid_loc))
         return sum_changed_values, sum_init_diff_values
 
@@ -185,14 +185,14 @@ class ArcBatchGridsEnv(unittest.TestCase):
         Assertions for the grids.
         Args:
             batch_size (int): The batch size.
-            step (int): The current step.
+            step (int): The state step.
             x_loc (int): The X location.
             y_loc (int): The Y location.
-            observation (dict): The observation for the current step.
-            info (dict): The information for the current step.
+            observation (dict): The observation for the state step.
+            info (dict): The information for the state step.
             sum_changed_values (torch.Tensor): The change since the last action, improvement in grid differences.
             sum_init_diff_values (torch.Tensor): The sum of the initial difference values in the locations changed on the last action.
-            dummy_batch (dict): The dummy batch for the current episode
+            dummy_batch (dict): The dummy batch for the state episode
         """
         assert (
             sum_changed_values == sum_init_diff_values
@@ -235,10 +235,10 @@ class ArcBatchGridsEnv(unittest.TestCase):
         """
         Assertions for the termination and rewards.
         Args:
-            reward (torch.Tensor): The reward for the current step.
-            observation (dict): The observation for the current step.
+            reward (torch.Tensor): The reward for the state step.
+            observation (dict): The observation for the state step.
             submission (torch.Tensor): A tensor indicating the submit action.
-            is_last_step (bool): A boolean indicating if the current step is the last step.
+            is_last_step (bool): A boolean indicating if the state step is the last step.
         """
 
         if is_last_step:
@@ -250,7 +250,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
                 reward,
                 (
                     torch.sum(
-                        torch.abs(observation["current"] - observation["target"]),
+                        torch.abs(observation["state"] - observation["target"]),
                         dim=(1, 2),
                     )
                     == 0
@@ -264,7 +264,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
         observation,
         submission,
         is_last_step,
-        current_diff,
+        state_diff,
         change,
         size,
         color_values,
@@ -272,12 +272,12 @@ class ArcBatchGridsEnv(unittest.TestCase):
         """
         Assertions for the termination and rewards.
         Args:
-            reward (torch.Tensor): The reward for the current step.
-            observation (dict): The observation for the current step.
+            reward (torch.Tensor): The reward for the state step.
+            observation (dict): The observation for the state step.
             submission (torch.Tensor): A tensor indicating the submit action.
             terminated (bool): A boolean indicating if the env returned termination.
-            is_last_step (bool): A boolean indicating if the current step is the last step.
-            current_diff (torch.Tensor): The current difference between the current grid and the target grid.
+            is_last_step (bool): A boolean indicating if the state step is the last step.
+            state_diff (torch.Tensor): The state difference between the state grid and the target grid.
             change (int): The total change in the grid.
             size (int): The size of the grid.
             color_values (int): The number of color values.
@@ -287,14 +287,14 @@ class ArcBatchGridsEnv(unittest.TestCase):
                 reward, torch.zeros_like(reward)
             ), "The last step should have a reward of 0"
         else:
-            current_diff = torch.sum(
-                ((observation["target"] - observation["current"]) != 0).long(),
+            state_diff = torch.sum(
+                ((observation["target"] - observation["state"]) != 0).long(),
                 dim=(1, 2),
             )
-            reference = (change - 1) * (current_diff != 0).long()
+            reference = (change - 1) * (state_diff != 0).long()
             torch.testing.assert_close(
                 reward,
-                reference + (-1 * current_diff * submission * size**2 * color_values),
+                reference + (-1 * state_diff * submission * size**2 * color_values),
             ), "The step do not have the expected reward."
 
     def to_dict_tensors(self, sample, to_torch: bool = False):
