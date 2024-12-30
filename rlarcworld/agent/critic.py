@@ -25,7 +25,7 @@ class ArcCriticNetwork:
             "actions",
         }
         assert set(state.keys()) == in_keys, ValueError(
-            "State keys must be {}".format(in_keys)
+            "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
         )
 
     def predict(self, input_sample: torch.Tensor):

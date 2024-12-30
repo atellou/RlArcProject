@@ -140,7 +140,7 @@ class ArcBatchGridEnv(gym.Env):
             {"grid": batch_in.clone(), "target": batch_out.clone()}
         )
 
-        return self.observations.to_dict(), self.information.to_dict()
+        return self.observations, self.information
 
     def get_difference(self):
         """
@@ -186,7 +186,7 @@ class ArcBatchGridEnv(gym.Env):
         state = self.information
         state.update({"grid": self.observations["grid"]})
         state.update({"last_grid": self.last_grid})
-        return state
+        return state.clone()
 
     def step(self, actions: list):
 
@@ -243,7 +243,7 @@ class ArcBatchGridEnv(gym.Env):
         return (
             self.observations,
             reward,
-            bool(torch.sum(terminated) == len(self)),
+            torch.sum(terminated) == len(self),
             truncated,
             self.information,
         )

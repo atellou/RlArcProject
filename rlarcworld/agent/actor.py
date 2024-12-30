@@ -24,19 +24,19 @@ class ArcActorNetwork:
             "terminated",
         }
         assert set(state.keys()) == in_keys, ValueError(
-            "Action keys must be {}".format(in_keys)
+            "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
         )
 
     def output_val(self, action: TensorDict):
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
         in_keys = {"color_values", "submit", "x_location", "y_location"}
         assert set(action.keys()) == in_keys, ValueError(
-            "Action keys must be {}".format(in_keys)
+            "Action keys must be {}. Keys found {}".format(in_keys, set(action.keys()))
         )
 
     def predict(self, state: TensorDict):
         self.input_val(state)
-        batch_size = state["state"].shape[0]
+        batch_size = state["grid"].shape[0]
         output = TensorDict(
             {
                 "x_location": torch.nn.functional.softmax(
