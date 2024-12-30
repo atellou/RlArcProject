@@ -55,7 +55,7 @@ class ArcSampleTransformer(object):
         """
         assert len(grid.shape) == 2, "The grid should be a 2D array."
         height, width = [
-            target - state for state, target in zip(grid.shape, self.output_size[-2:])
+            target - grid for grid, target in zip(grid.shape, self.output_size[-2:])
         ]
         assert height >= 0 and width >= 0, "The output size is smaller than the grid."
         logger.debug(

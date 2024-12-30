@@ -16,8 +16,8 @@ class ArcActorNetwork:
             "Input State must be a TensorDict"
         )
         in_keys = {
-            "last_state",
-            "state",
+            "last_grid",
+            "grid",
             "examples",
             "initial",
             "index",

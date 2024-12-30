@@ -20,7 +20,7 @@ class ArcBatchGridEnv(gym.Env):
         # Here, the observations will be positions on the grid with a value to set. Used mainly to add stochasticity
         self.observation_space = gym.spaces.Dict(
             {
-                "state": gym.spaces.Sequence(
+                "grid": gym.spaces.Sequence(
                     gym.spaces.Box(0, color_values, shape=(size, size)), stack=True
                 ),
                 "target": gym.spaces.Sequence(
@@ -50,7 +50,7 @@ class ArcBatchGridEnv(gym.Env):
         )
 
     def __len__(self):
-        return len(self.observations["state"])
+        return len(self.observations["grid"])
 
     def random_location_generator(self):
         """
@@ -89,7 +89,7 @@ class ArcBatchGridEnv(gym.Env):
 
     def reset(self, *, options: dict, seed: Optional[int] = None) -> tuple:
         """
-        Resets the environment to an initial internal state, returning an initial observation and info.
+        Resets the environment to an initial internal grid, returning an initial observation and info.
         Args:
             options (dict): A dictionary containing the batch of samples (axis=0) to be used in the environment.
             seed (int, optional): The seed for the random number generator. Defaults to None.
@@ -119,8 +119,8 @@ class ArcBatchGridEnv(gym.Env):
         )
         self.batch_size = batch_in.shape[0]
 
-        # State of initial reward
-        self.last_state = batch_in.clone()
+        # grid of initial reward
+        self.last_grid = batch_in.clone()
         self._reward_storage = torch.zeros(self.batch_size, dtype=int)
         self._last_reward = self._reward_storage.clone()
         self._timestep = 0
@@ -137,19 +137,19 @@ class ArcBatchGridEnv(gym.Env):
         )
 
         self.observations = TensorDict(
-            {"state": batch_in.clone(), "target": batch_out.clone()}
+            {"grid": batch_in.clone(), "target": batch_out.clone()}
         )
 
         return self.observations.to_dict(), self.information.to_dict()
 
     def get_difference(self):
         """
-        Compute the difference between the state grid and the target grid.
+        Compute the difference between the current grid and the target grid.
 
         Returns:
-            torch.Tensor: The difference between the state grid and the target grid.
+            torch.Tensor: The difference between the current grid and the target grid.
         """
-        return self.observations["state"] - self.observations["target"]
+        return self.observations["grid"] - self.observations["target"]
 
     def episode_terminated(self, submission):
         diff = self.get_difference()
@@ -165,13 +165,13 @@ class ArcBatchGridEnv(gym.Env):
         submission: List[int],
     ):
         """
-        Computes the reward for the state state of the environment.
+        Computes the reward for the current grid of the environment.
 
         Args:
-            grid_diffs torch.Tensor: Batch of grids representing the difference between state and target.
+            grid_diffs torch.Tensor: Batch of grids representing the difference between the current grid and target.
             submission List(int): Indicates whether the agent indicated a submission to grade.
         Returns:
-            float: The reward for the state state of the environment.
+            float: The reward for the current grid of the environment.
         """
         return (
             torch.sum(torch.abs(grid_diffs), dim=(1, 2)) == 0
@@ -184,14 +184,14 @@ class ArcBatchGridEnv(gym.Env):
     @property
     def state(self):
         state = self.information
-        state.update({"state": self.observations["state"]})
-        state.update({"last_state": self.last_state})
+        state.update({"grid": self.observations["grid"]})
+        state.update({"last_grid": self.last_grid})
         return state
 
     def step(self, actions: list):
 
         if self.action_space.contains(actions.numpy()):
-            self.last_state = self.observations["state"].clone()
+            self.last_grid = self.observations["grid"].clone()
             logger.debug("Actions are valid")
             # Update the grid with the action.
             self._timestep += 1
@@ -203,7 +203,7 @@ class ArcBatchGridEnv(gym.Env):
                     actions["submit"].shape,
                 )
             )
-            self.observations["state"][
+            self.observations["grid"][
                 list(range(self.batch_size)),
                 actions["y_location"],
                 actions["x_location"],

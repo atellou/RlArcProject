@@ -16,8 +16,8 @@ class ArcCriticNetwork:
             "Input State must be a TensorDict"
         )
         in_keys = {
-            "last_state",
-            "state",
+            "last_grid",
+            "grid",
             "examples",
             "initial",
             "index",
@@ -30,7 +30,7 @@ class ArcCriticNetwork:
 
     def predict(self, input_sample: torch.Tensor):
         self.input_val(input_sample)
-        batch_size = input_sample["state"].shape[0]
+        batch_size = input_sample["grid"].shape[0]
         return TensorDict(
             {
                 reward_type: torch.rand(size=(batch_size, n_atoms))
