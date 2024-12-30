@@ -120,6 +120,7 @@ class ArcBatchGridEnv(gym.Env):
         self.batch_size = batch_in.shape[0]
 
         # State of initial reward
+        self.last_state = batch_in.clone()
         self._reward_storage = torch.zeros(self.batch_size, dtype=int)
         self._last_reward = self._reward_storage.clone()
         self._timestep = 0
@@ -184,11 +185,13 @@ class ArcBatchGridEnv(gym.Env):
     def state(self):
         state = self.information
         state.update({"state": self.observations["state"]})
+        state.update({"last_state": self.last_state})
         return state
 
     def step(self, actions: list):
 
         if self.action_space.contains(actions.numpy()):
+            self.last_state = self.observations["state"].clone()
             logger.debug("Actions are valid")
             # Update the grid with the action.
             self._timestep += 1

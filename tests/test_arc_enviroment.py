@@ -148,7 +148,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict, type {} returned.".format(type(state))
         )
-        in_keys = {"state", "examples", "initial", "index", "terminated"}
+        in_keys = {"last_state", "state", "examples", "initial", "index", "terminated"}
         assert set(state.keys()) == in_keys, ValueError(
             "Action keys must be {}".format(in_keys)
         )
