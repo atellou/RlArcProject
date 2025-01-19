@@ -1,15 +1,53 @@
 import torch
+import torch.nn as nn
 from tensordict import TensorDict
+import torchvision as tv
 
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class ArcActorNetwork:
+class ArcActorNetwork(nn.Module):
     def __init__(self, size: int, color_values):
+        super(ArcActorNetwork, self).__init__()
         self.size = size
         self.color_values = color_values
+        self.inputs_layers = TensorDict(
+            {
+                "last_grid": torch.nn.Conv2d(
+                    in_channels=1, out_channels=1, kernel_size=3
+                ),
+                "grid": torch.nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3),
+                "examples": torch.nn.Conv3d(
+                    in_channels=10, out_channels=1, kernel_size=3
+                ),
+                "initial": torch.nn.Conv2d(
+                    in_channels=1, out_channels=1, kernel_size=3
+                ),
+                "index": torch.nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3),
+                "terminated": torch.nn.Linear(1, 1),
+            }
+        )
+        self.linear1 = torch.nn.Linear(1000, 128)
+        self.gru = torch.nn.GRU(
+            input_size=128,
+            hidden_size=128,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True,
+        )
+        self.outputs_layers = TensorDict(
+            {
+                "x_location": torch.nn.Linear(128, self.size),
+                "y_location": torch.nn.Linear(128, self.size),
+                "color_values": torch.nn.Linear(128, self.color_values),
+                "submit": torch.nn.Linear(128, 2),
+            }
+        )
+
+    def scale_arc_grids(self, x: torch.Tensor):
+        return x / self.color_values
 
     def input_val(self, state: TensorDict):
         assert isinstance(state, TensorDict), TypeError(
@@ -37,6 +75,7 @@ class ArcActorNetwork:
     def predict(self, state: TensorDict):
         self.input_val(state)
         batch_size = state["grid"].shape[0]
+        # Action probabilities
         output = TensorDict(
             {
                 "x_location": torch.nn.functional.softmax(
@@ -60,3 +99,40 @@ class ArcActorNetwork:
         for key, value in action.items():
             action[key] = torch.argmax(value, dim=1)
         return action
+
+    def forward(self, state: TensorDict):
+        mean, std = [0.4914, 0.4822, 0.4465], [0.247, 0.243, 0.261]
+        # Validate input
+        self.input_val(state)
+        # Brodcast the state
+        for key, value in state.items():
+            if key == "terminated":
+                continue
+            if key == "index":
+                value = value / torch.max(value)
+            else:
+                value = self.scale_arc_grids(value)
+            tv.transforms.Normalize(mean, std).apply(value)
+            state[key] = self.inputs_layers[key](value)
+            state[key] = torch.relu(state[key])
+            state[key] = state[key].view(state[key].shape[0], -1)
+
+        # Concatenate flattned states
+        state = torch.cat(
+            state.values(),
+            dim=1,
+        )
+
+        # Feed the state to the network
+        state = self.linear1(state)
+        state, _ = self.gru(state)
+        output = TensorDict(
+            {
+                "x_location": self.outputs_layers["x_location"](state),
+                "y_location": self.outputs_layers["y_location"](state),
+                "color_values": self.outputs_layers["color_values"](state),
+                "submit": self.outputs_layers["submit"](state),
+            }
+        )
+        self.output_val(output)
+        return output

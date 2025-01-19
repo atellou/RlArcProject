@@ -31,6 +31,7 @@ class ArcCriticNetwork:
     def predict(self, input_sample: torch.Tensor):
         self.input_val(input_sample)
         batch_size = input_sample["grid"].shape[0]
+        # Catgorical Distribution over returns per action
         return TensorDict(
             {
                 reward_type: torch.rand(size=(batch_size, n_atoms))
