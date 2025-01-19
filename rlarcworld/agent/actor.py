@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from tensordict import TensorDict
-import torchvision as tv
 
 import logging
 
