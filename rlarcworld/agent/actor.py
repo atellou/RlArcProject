@@ -12,7 +12,7 @@ class ArcActorNetwork(nn.Module):
         super(ArcActorNetwork, self).__init__()
         self.size = size
         self.color_values = color_values
-        self.inputs_layers = TensorDict(
+        self.inputs_layers = torch.nn.ModuleDict(
             {
                 "last_grid": torch.nn.Conv2d(
                     in_channels=1, out_channels=1, kernel_size=3
@@ -36,7 +36,7 @@ class ArcActorNetwork(nn.Module):
             batch_first=True,
             bidirectional=True,
         )
-        self.outputs_layers = TensorDict(
+        self.outputs_layers = torch.nn.ModuleDict(
             {
                 "x_location": torch.nn.Linear(128, self.size),
                 "y_location": torch.nn.Linear(128, self.size),
@@ -100,7 +100,6 @@ class ArcActorNetwork(nn.Module):
         return action
 
     def forward(self, state: TensorDict):
-        mean, std = [0.4914, 0.4822, 0.4465], [0.247, 0.243, 0.261]
         # Validate input
         self.input_val(state)
         # Brodcast the state
@@ -111,7 +110,6 @@ class ArcActorNetwork(nn.Module):
                 value = value / torch.max(value)
             else:
                 value = self.scale_arc_grids(value)
-            tv.transforms.Normalize(mean, std).apply(value)
             state[key] = self.inputs_layers[key](value)
             state[key] = torch.relu(state[key])
             state[key] = state[key].view(state[key].shape[0], -1)
