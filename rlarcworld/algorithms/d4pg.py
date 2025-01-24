@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 
-class d4pg:
+class D4PG:
     def compute_critic_target_distribution(
         self,
         critic_target,
@@ -166,7 +166,6 @@ class d4pg:
             target_update_freq (int): Steps between target network updates.
             steps (int): Total number of training steps.
         """
-        delta_z = (v_max - v_min) / (num_atoms - 1)
 
         for step in range(steps):
             # Sample a batch from the replay buffer

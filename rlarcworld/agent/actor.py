@@ -100,6 +100,12 @@ class ArcActorNetwork(nn.Module):
         return action
 
     def forward(self, state: TensorDict):
+        """
+        Args:
+            state (TensorDict): The input state.
+        Returns:
+            TensorDict: The output actions.
+        """
         # Validate input
         self.input_val(state)
         # Brodcast the state

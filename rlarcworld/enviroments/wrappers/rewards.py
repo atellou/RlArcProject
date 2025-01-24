@@ -12,6 +12,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         """
         Compute the difference between the current grid and the target grid and return ones for differences.
 
+        Args:
+            binary (bool): Whether to return a binary difference or the actual difference.
         Returns:
             torch.Tensor: The difference between the current grid and the target grid.
         """
@@ -50,6 +52,14 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             1. If the agent has submited and exist a difference between the grid and the target, the reward includes the maximum penalty.
             2. If the agent has not submited, the reward do not take into account the maximum penalty.
             3. On each step, the reward is the difference between the last difference and the current difference minus 1 (improvement).
+
+        Args:
+            last_diffs (torch.Tensor): The difference between the last grid and the target grid.
+            grid_diffs (torch.Tensor): The difference between the current grid and the target grid.
+            submission (List[int]): Indicates whether the agent indicated a submission to grade.
+
+        Returns:
+            torch.Tensor: The reward for the current grid of the environment.
         """
         penalization = submission * self.max_manality()
         last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
@@ -65,6 +75,19 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         return (improvement - 1) * (grid_diff != 0).long() + penalization
 
     def step(self, actions: list):
+        """
+        Step through the environment and return the observation, reward, terminated, truncated, and info.
+
+        Args:
+            actions (list): The actions to take in the environment.
+
+        Returns:
+            obs: The observation of the environment.
+            reward: The reward of the environment.
+            terminated: Whether the episode has been terminated.
+            truncated: Whether the episode has been truncated.
+            info: Additional information about the environment.
+        """
         self.last_diffs = self.get_difference()
         obs, _, terminated, truncated, info = self.env.step(actions)
         self.grid_diffs = self.get_difference()
