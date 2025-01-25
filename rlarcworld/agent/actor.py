@@ -28,7 +28,7 @@ class ArcActorNetwork(nn.Module):
                 "terminated": torch.nn.Linear(1, 1),
             }
         )
-        self.linear1 = torch.nn.Linear(1000, 128)
+        self.linear1 = torch.nn.Linear(36849, 128)
         self.gru = torch.nn.GRU(
             input_size=128,
             hidden_size=128,
@@ -38,10 +38,10 @@ class ArcActorNetwork(nn.Module):
         )
         self.outputs_layers = torch.nn.ModuleDict(
             {
-                "x_location": torch.nn.Linear(128, self.size),
-                "y_location": torch.nn.Linear(128, self.size),
-                "color_values": torch.nn.Linear(128, self.color_values),
-                "submit": torch.nn.Linear(128, 2),
+                "x_location": torch.nn.Linear(256, self.size),
+                "y_location": torch.nn.Linear(256, self.size),
+                "color_values": torch.nn.Linear(256, self.color_values),
+                "submit": torch.nn.Linear(256, 2),
             }
         )
 
@@ -122,7 +122,7 @@ class ArcActorNetwork(nn.Module):
 
         # Concatenate flattned states
         state = torch.cat(
-            state.values(),
+            tuple(state.values()),
             dim=1,
         )
 

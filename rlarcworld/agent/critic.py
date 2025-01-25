@@ -37,7 +37,7 @@ class ArcCriticNetwork(torch.nn.Module):
                 "terminated": torch.nn.Linear(1, 1),
             }
         )
-        self.linear1 = torch.nn.Linear(1000, 128)
+        self.linear1 = torch.nn.Linear(36850, 128)
         self.gru = torch.nn.GRU(
             input_size=128,
             hidden_size=128,
@@ -47,7 +47,7 @@ class ArcCriticNetwork(torch.nn.Module):
         )
         self.outputs_layers = torch.nn.ModuleDict(
             {
-                reward_type: torch.nn.Linear(128, n_atoms)
+                reward_type: torch.nn.Linear(256, n_atoms)
                 for reward_type, n_atoms in self.n_atoms.items()
             }
         )
@@ -111,7 +111,9 @@ class ArcCriticNetwork(torch.nn.Module):
                 value = value / torch.max(value)
             elif key == "actions":
                 # x_location, y_location, color_values, submit
-                value = value / [self.size, self.size, self.color_values, 1]
+                value = value / torch.tensor(
+                    [self.size, self.size, self.color_values, 1]
+                )
             else:
                 value = self.scale_arc_grids(value)
             state[key] = self.inputs_layers[key](value)
@@ -120,7 +122,7 @@ class ArcCriticNetwork(torch.nn.Module):
 
         # Concatenate flattned states
         state = torch.cat(
-            state.values(),
+            tuple(state.values()),
             dim=1,
         )
 
