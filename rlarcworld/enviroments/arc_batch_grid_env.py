@@ -8,6 +8,39 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class ArcActionSpace:
+    def __init__(self, size: int, color_values: int):
+        self.size = size
+        self.color_values = color_values
+        self.gym_space = gym.spaces.Dict(
+            {
+                "x_location": gym.spaces.Sequence(
+                    gym.spaces.Discrete(size), stack=True
+                ),
+                "y_location": gym.spaces.Sequence(
+                    gym.spaces.Discrete(size), stack=True
+                ),
+                "color_values": gym.spaces.Sequence(
+                    gym.spaces.Discrete(color_values), stack=True
+                ),
+                "submit": gym.spaces.Sequence(gym.spaces.Discrete(2), stack=True),
+            }
+        )
+        self.plain_space = torch.arange(self.size * self.size * self.color_values * 2)
+        self.multi_squence_space = self.plain_space.reshape(
+            self.size, self.size, self.color_values, 2
+        )
+        self.possible_combinations = np.stack(
+            np.meshgrid(
+                np.arange(self.size),
+                np.arange(self.size),
+                np.arange(self.color_values),
+                np.arange(2),
+            ),
+            -1,
+        ).reshape(-1, 4)
+
+
 class ArcBatchGridEnv(gym.Env):
 
     def __init__(self, size: int, color_values: int):
@@ -34,20 +67,8 @@ class ArcBatchGridEnv(gym.Env):
         self.action_space = gym.spaces.Sequence(
             gym.spaces.MultiDiscrete([size, size, color_values, 2]), stack=True
         )
-        self.action_space = gym.spaces.Dict(
-            {
-                "x_location": gym.spaces.Sequence(
-                    gym.spaces.Discrete(size), stack=True
-                ),
-                "y_location": gym.spaces.Sequence(
-                    gym.spaces.Discrete(size), stack=True
-                ),
-                "color_values": gym.spaces.Sequence(
-                    gym.spaces.Discrete(color_values), stack=True
-                ),
-                "submit": gym.spaces.Sequence(gym.spaces.Discrete(2), stack=True),
-            }
-        )
+        self.arc_action_space = ArcActionSpace(size, color_values)
+        self.action_space = self.arc_action_space.gym_space
 
     def __len__(self):
         return len(self.observations["grid"])
