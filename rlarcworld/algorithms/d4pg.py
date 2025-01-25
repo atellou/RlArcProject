@@ -1,13 +1,12 @@
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+from rlarcworld.utils import categorical_projection
 
 
 class D4PG:
     def compute_critic_target_distribution(
-        self,
         critic_target,
-        actor_target,
         reward,
         next_state,
         done,
@@ -21,7 +20,6 @@ class D4PG:
 
         Args:
             critic_target (nn.Module): Target critic network.
-            actor_target (nn.Module): Target actor network.
             reward (torch.Tensor): Rewards from the batch.
             next_state (TensorDict): TensorDict of next states.
             done (torch.Tensor): Done flags from the batch.
@@ -33,43 +31,30 @@ class D4PG:
         Returns:
             torch.Tensor: Projected target distribution (batch_size, num_atoms).
         """
-        delta_z = (v_max - v_min) / (num_atoms - 1)
         z = torch.linspace(v_min, v_max, num_atoms).to(reward.device)  # Atom values
 
-        # Get next-action probabilities from the target actor
-        next_action_probs = actor_target(next_state).get(
-            "action_probs"
-        )  # Shape: (batch_size, num_actions)
+        # Get next-state Q-distribution from the target critic
         next_q_dist = critic_target(next_state).get(
             "q_dist"
         )  # Shape: (batch_size, num_actions, num_atoms)
 
-        # Compute the expected action distribution
+        # Compute the expected Q-values for each action
         next_q_values = (next_q_dist * z).sum(
             dim=-1
         )  # Shape: (batch_size, num_actions)
+
+        # Select the best action for the next state
         best_next_action = torch.argmax(next_q_values, dim=-1)  # Shape: (batch_size,)
+
+        # Get the Q-distribution corresponding to the best next action
         best_next_q_dist = next_q_dist[
             torch.arange(next_q_dist.size(0)), best_next_action
         ]  # Shape: (batch_size, num_atoms)
 
-        # Bellman backup for distribution
-        tz = reward.unsqueeze(-1) + gamma * (1 - done.unsqueeze(-1)) * z.unsqueeze(0)
-        tz = tz.clamp(v_min, v_max)
-        b = (tz - v_min) / delta_z
-        l, u = b.floor().long(), b.ceil().long()
-        l = l.clamp(0, num_atoms - 1)
-        u = u.clamp(0, num_atoms - 1)
-
-        # Distribute probability mass
-        target_dist = torch.zeros_like(best_next_q_dist)
-        target_dist.scatter_add_(
-            dim=-1, index=l, src=best_next_q_dist * (u.float() - b)
+        # Project the distribution using the categorical projection
+        target_dist = categorical_projection(
+            best_next_q_dist, reward, done, gamma, v_min, v_max, num_atoms
         )
-        target_dist.scatter_add_(
-            dim=-1, index=u, src=best_next_q_dist * (b - l.float())
-        )
-
         return target_dist
 
     def compute_critic_loss(self, critic, state, action, target_dist):
@@ -183,7 +168,6 @@ class D4PG:
             # Compute the target distribution
             target_dist = self.compute_critic_target_distribution(
                 critic_target,
-                actor_target,
                 rewards,
                 next_states,
                 dones,
