@@ -21,7 +21,7 @@ def categorical_projection(next_q_dist, rewards, dones, gamma, v_min, v_max, num
     z = torch.linspace(v_min, v_max, num_atoms).to(rewards.device)  # Atom values
 
     # Compute the target distribution support
-    tz = rewards.unsqueeze(-1) + gamma * (1 - dones.unsqueeze(-1)) * z.unsqueeze(0)
+    tz = rewards + gamma * (1 - dones) * z
     tz = tz.clamp(v_min, v_max)
 
     # Map values to categorical bins

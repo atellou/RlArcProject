@@ -1,12 +1,17 @@
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+
+from tensordict import TensorDict
+
 from rlarcworld.utils import categorical_projection
 
 
 class D4PG:
     def compute_critic_target_distribution(
+        self,
         critic_target,
+        actor_target,
         reward,
         next_state,
         done,
@@ -20,6 +25,7 @@ class D4PG:
 
         Args:
             critic_target (nn.Module): Target critic network.
+            actor_target (nn.Module): Target actor network.
             reward (torch.Tensor): Rewards from the batch.
             next_state (TensorDict): TensorDict of next states.
             done (torch.Tensor): Done flags from the batch.
@@ -31,30 +37,34 @@ class D4PG:
         Returns:
             torch.Tensor: Projected target distribution (batch_size, num_atoms).
         """
-        z = torch.linspace(v_min, v_max, num_atoms).to(reward.device)  # Atom values
+        # Use the target actor to get the best action for each next state
+        next_action_probs = actor_target(next_state)
+        # Get best action
+        best_next_action = torch.cat(
+            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in next_action_probs.values()],
+            dim=-1,
+        )  # Shape: (batch_size, action_space_dim)
 
-        # Get next-state Q-distribution from the target critic
-        next_q_dist = critic_target(next_state).get(
-            "q_dist"
-        )  # Shape: (batch_size, num_actions, num_atoms)
-
-        # Compute the expected Q-values for each action
-        next_q_values = (next_q_dist * z).sum(
-            dim=-1
-        )  # Shape: (batch_size, num_actions)
-
-        # Select the best action for the next state
-        best_next_action = torch.argmax(next_q_values, dim=-1)  # Shape: (batch_size,)
-
-        # Get the Q-distribution corresponding to the best next action
-        best_next_q_dist = next_q_dist[
-            torch.arange(next_q_dist.size(0)), best_next_action
-        ]  # Shape: (batch_size, num_atoms)
+        # Get the Q-distribution for the best action from the target critic
+        next_state["actions"] = best_next_action
+        best_next_q_dist = critic_target(next_state)
 
         # Project the distribution using the categorical projection
-        target_dist = categorical_projection(
-            best_next_q_dist, reward, done, gamma, v_min, v_max, num_atoms
+        target_dist = TensorDict(
+            {
+                key: categorical_projection(
+                    best_next_q_dist[key],
+                    reward[key],
+                    done,
+                    gamma,
+                    v_min[key],
+                    v_max[key],
+                    num_atoms[key],
+                )
+                for key in best_next_q_dist.keys()
+            }
         )
+
         return target_dist
 
     def compute_critic_loss(self, critic, state, action, target_dist):
@@ -70,9 +80,7 @@ class D4PG:
         Returns:
             torch.Tensor: Critic loss.
         """
-        q_dist = critic(state).get(
-            "q_dist"
-        )  # Shape: (batch_size, num_actions, num_atoms)
+        q_dist = critic(state)
         action_q_dist = q_dist[
             torch.arange(q_dist.size(0)), action
         ]  # Shape: (batch_size, num_atoms)
@@ -168,6 +176,7 @@ class D4PG:
             # Compute the target distribution
             target_dist = self.compute_critic_target_distribution(
                 critic_target,
+                actor_target,
                 rewards,
                 next_states,
                 dones,
