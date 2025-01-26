@@ -19,7 +19,7 @@ class ArcActorNetwork(nn.Module):
                 ),
                 "grid": torch.nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3),
                 "examples": torch.nn.Conv3d(
-                    in_channels=10, out_channels=1, kernel_size=3
+                    in_channels=10, out_channels=1, kernel_size=(1, 3, 3)
                 ),
                 "initial": torch.nn.Conv2d(
                     in_channels=1, out_channels=1, kernel_size=3
@@ -28,7 +28,7 @@ class ArcActorNetwork(nn.Module):
                 "terminated": torch.nn.Linear(1, 1),
             }
         )
-        self.linear1 = torch.nn.Linear(36849, 128)
+        self.linear1 = torch.nn.Linear(16465, 128)
         self.gru = torch.nn.GRU(
             input_size=128,
             hidden_size=128,
