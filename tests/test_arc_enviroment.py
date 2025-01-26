@@ -127,8 +127,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
                                 - dummy_batch["batch"]["output"][:, y_loc, x_loc]
                                 != 0
                             ).long(),
-                            size,
-                            color_values,
+                            env.max_penality(),
                         )
                     elif isinstance(env, ArcBatchGridEnv):
                         self.assert_state_property(env.state)
@@ -266,8 +265,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
         is_last_step,
         grid_diff,
         change,
-        size,
-        color_values,
+        max_penality,
     ):
         """
         Assertions for the termination and rewards.
@@ -279,12 +277,11 @@ class ArcBatchGridsEnv(unittest.TestCase):
             is_last_step (bool): A boolean indicating if the current step is the last step.
             grid_diff (torch.Tensor): The grid difference between the current grid and the target grid.
             change (int): The total change in the grid.
-            size (int): The size of the grid.
-            color_values (int): The number of color values.
+            max_penality (int): The maximum penality for the current env.
         """
         if is_last_step:
             torch.testing.assert_close(
-                reward, torch.zeros_like(reward)
+                reward, torch.ones_like(reward)
             ), "The last step should have a reward of 0"
         else:
             grid_diff = torch.sum(
@@ -294,7 +291,9 @@ class ArcBatchGridsEnv(unittest.TestCase):
             reference = (change - 1) * (grid_diff != 0).long()
             torch.testing.assert_close(
                 reward,
-                reference + (-1 * grid_diff * submission * size**2 * color_values),
+                reference
+                + (grid_diff * submission * max_penality)
+                + ((grid_diff == 0).long() * submission),
             ), "The step do not have the expected reward."
 
     def to_dict_tensors(self, sample, to_torch: bool = False):

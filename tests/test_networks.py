@@ -34,7 +34,7 @@ class ArcNetworksTest(unittest.TestCase):
             {
                 "last_grid": torch.randn(batch_size, 1, size, size),
                 "grid": torch.randn(batch_size, 1, size, size),
-                "examples": torch.randn(batch_size, 10, size, size, size),
+                "examples": torch.randn(batch_size, 10, 2, size, size),
                 "initial": torch.randn(batch_size, 1, size, size),
                 "index": torch.randn(batch_size, 1, size, size),
                 "actions": torch.randn(batch_size, 1, 4),
@@ -99,7 +99,7 @@ class ArcNetworksTest(unittest.TestCase):
             {
                 "last_grid": torch.randn(batch_size, 1, size, size),
                 "grid": torch.randn(batch_size, 1, size, size),
-                "examples": torch.randn(batch_size, 10, size, size, size),
+                "examples": torch.randn(batch_size, 10, 2, size, size),
                 "initial": torch.randn(batch_size, 1, size, size),
                 "index": torch.randn(batch_size, 1, size, size),
                 "terminated": torch.randn(batch_size, 1),

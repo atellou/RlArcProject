@@ -29,15 +29,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
     def __len__(self):
         return len(self.env)
 
-    def max_manality(self):
+    def max_penality(self):
         """
         Maximum penality for the current grid.
         """
-        return (
-            -1
-            * self.get_wrapper_attr("size") ** 2
-            * self.get_wrapper_attr("color_values")
-        )
+        return -1
 
     def reward(
         self,
@@ -61,7 +57,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             torch.Tensor: The reward for the current grid of the environment.
         """
-        penalization = submission * self.max_manality()
+        penalization = submission * self.max_penality()
         last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
         grid_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2))
         if not isinstance(penalization, torch.Tensor):
@@ -72,7 +68,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         penalization = grid_diff * penalization
         improvement = last_diffs - grid_diff
         # The minus one is to avoid the reward to be positive (maximum reward is 0)
-        return (improvement - 1) * (grid_diff != 0).long() + penalization
+        return (
+            (improvement - 1) * (grid_diff != 0).long()
+            + penalization
+            + (grid_diff == 0).long() * submission
+        )
 
     def step(self, actions: list):
         """
