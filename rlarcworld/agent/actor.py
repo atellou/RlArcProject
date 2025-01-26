@@ -71,34 +71,6 @@ class ArcActorNetwork(nn.Module):
             "Action keys must be {}. Keys found {}".format(in_keys, set(action.keys()))
         )
 
-    def predict(self, state: TensorDict):
-        self.input_val(state)
-        batch_size = state["grid"].shape[0]
-        # Action probabilities
-        output = TensorDict(
-            {
-                "x_location": torch.nn.functional.softmax(
-                    torch.rand(size=(batch_size, self.size)), dim=1
-                ),
-                "y_location": torch.nn.functional.softmax(
-                    torch.rand(size=(batch_size, self.size)), dim=1
-                ),
-                "color_values": torch.nn.functional.softmax(
-                    torch.rand(size=(batch_size, self.color_values)), dim=1
-                ),
-                "submit": torch.nn.functional.softmax(
-                    torch.rand(size=(batch_size, 2)), dim=1
-                ),
-            }
-        )
-        self.output_val(output)
-        return output
-
-    def get_discrete_actions(self, action: TensorDict):
-        for key, value in action.items():
-            action[key] = torch.argmax(value, dim=1)
-        return action
-
     def forward(self, state: TensorDict):
         """
         Args:
@@ -106,6 +78,7 @@ class ArcActorNetwork(nn.Module):
         Returns:
             TensorDict: The output actions.
         """
+        state = state.clone()
         # Validate input
         self.input_val(state)
         # Brodcast the state

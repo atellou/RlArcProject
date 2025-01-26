@@ -83,17 +83,6 @@ class ArcCriticNetwork(torch.nn.Module):
             )
         )
 
-    def predict(self, input_sample: torch.Tensor):
-        self.input_val(input_sample)
-        batch_size = input_sample["grid"].shape[0]
-        # Catgorical Distribution over returns per action
-        return TensorDict(
-            {
-                reward_type: torch.rand(size=(batch_size, n_atoms))
-                for reward_type, n_atoms in self.n_atoms.items()
-            }
-        )
-
     def forward(self, state: TensorDict):
         """
         Args:
@@ -101,6 +90,7 @@ class ArcCriticNetwork(torch.nn.Module):
         Returns:
             TensorDict: The output distributions.
         """
+        state = state.clone()
         # Validate input
         self.input_val(state)
         # Brodcast the state

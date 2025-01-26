@@ -52,7 +52,11 @@ class ArcNetworksTest(unittest.TestCase):
                 network.input_val(dc)
 
         # Forward pass
+        org_sample = input_sample.clone()
         output = network(input_sample)
+
+        # Validate not inplace changes to input
+        torch.testing.assert_close(input_sample, org_sample)
 
         # Validate the output
         network.output_val(output)
@@ -115,7 +119,11 @@ class ArcNetworksTest(unittest.TestCase):
                 network.input_val(dc)
 
         # Forward pass
+        org_sample = input_sample.clone()
         output = network(input_sample)
+
+        # Validate not inplace changes to input
+        torch.testing.assert_close(input_sample, org_sample)
 
         # Define a loss function and an optimizer
         criterion = torch.nn.MSELoss()
