@@ -8,6 +8,12 @@ from rlarcworld.utils import categorical_projection
 
 
 class D4PG:
+
+    def __init__(self):
+        self.critic_target = None
+        self.actor_target = None
+        self.criterion = torch.nn.KLDivLoss(reduction="batchmean")
+
     def compute_critic_target_distribution(
         self,
         critic_target,
@@ -37,17 +43,21 @@ class D4PG:
         Returns:
             torch.Tensor: Projected target distribution (batch_size, num_atoms).
         """
-        # Use the target actor to get the best action for each next state
-        next_action_probs = actor_target(next_state)
-        # Get best action
-        best_next_action = torch.cat(
-            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in next_action_probs.values()],
-            dim=-1,
-        )  # Shape: (batch_size, action_space_dim)
+        with torch.no_grad():
+            # Use the target actor to get the best action for each next state
+            next_action_probs = actor_target(next_state)
+            # Get best action
+            best_next_action = torch.cat(
+                [
+                    torch.argmax(x, dim=-1).unsqueeze(-1)
+                    for x in next_action_probs.values()
+                ],
+                dim=-1,
+            )  # Shape: (batch_size, action_space_dim)
 
-        # Get the Q-distribution for the best action from the target critic
-        next_state["actions"] = best_next_action
-        best_next_q_dist = critic_target(next_state)
+            # Get the Q-distribution for the best action from the target critic
+            next_state["actions"] = best_next_action
+            best_next_q_dist = critic_target(next_state)
 
         # Project the distribution using the categorical projection
         target_dist = TensorDict(
@@ -80,13 +90,17 @@ class D4PG:
         Returns:
             torch.Tensor: Critic loss.
         """
+        # Get state-action value distribution from the critic
+        state["actions"] = action
         q_dist = critic(state)
-        action_q_dist = q_dist[
-            torch.arange(q_dist.size(0)), action
-        ]  # Shape: (batch_size, num_atoms)
-        loss = -torch.sum(
-            target_dist * torch.log(action_q_dist + 1e-8), dim=-1
-        ).mean()  # KL Divergence
+        # KL Divergence
+        loss = TensorDict(
+            {
+                key: self.criterion(q_dist[key], target_dist[key])
+                for key in q_dist.keys()
+            }
+        )
+
         return loss
 
     def compute_actor_loss(self, actor, critic, state, v_min, v_max):
