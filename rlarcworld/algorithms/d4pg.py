@@ -59,6 +59,16 @@ class D4PG:
             next_state["actions"] = best_next_action
             best_next_q_dist = critic_target(next_state)
 
+        # Assert probability mass function
+        for key, dist in best_next_q_dist.items():
+            torch.testing.assert_close(
+                torch.sum(dist, dim=1), torch.ones(dist.shape[0])
+            ), f"Probability mass function not normalized for key: {key}"
+            assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
+            assert torch.all(
+                dist <= 1
+            ), f"Probability values greater than 1 for key: {key}"
+
         # Project the distribution using the categorical projection
         target_dist = TensorDict(
             {
@@ -70,6 +80,7 @@ class D4PG:
                     v_min[key],
                     v_max[key],
                     num_atoms[key],
+                    apply_softmax=True,
                 )
                 for key in best_next_q_dist.keys()
             }
@@ -92,7 +103,7 @@ class D4PG:
         """
         # Get state-action value distribution from the critic
         state["actions"] = action
-        q_dist = critic(state)
+        q_dist = critic(state)  # Shape: (batch_size, num_atoms)
         # KL Divergence
         loss = TensorDict(
             {

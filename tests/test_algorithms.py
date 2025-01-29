@@ -88,6 +88,15 @@ class TestD4PG(unittest.TestCase):
             self.batch_size,
             self.num_atoms["binary"],
         )
+        # Assert probability mass function
+        for key, dist in target_distribution.items():
+            torch.testing.assert_close(
+                torch.sum(dist, dim=1), torch.ones(self.batch_size)
+            ), f"Probability mass function not normalized for key: {key}"
+            assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
+            assert torch.all(
+                dist <= 1
+            ), f"Probability values greater than 1 for key: {key}"
 
     def test_critic_loss(self):
         reward, v_min, v_max, done, gamma, next_state = self.simmulated_data()

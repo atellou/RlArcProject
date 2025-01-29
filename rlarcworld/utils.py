@@ -1,7 +1,9 @@
 import torch
 
 
-def categorical_projection(next_q_dist, rewards, dones, gamma, v_min, v_max, num_atoms):
+def categorical_projection(
+    next_q_dist, rewards, dones, gamma, v_min, v_max, num_atoms, apply_softmax=True
+):
     """
     Projects the target distribution using the Bellman update.
 
@@ -35,4 +37,4 @@ def categorical_projection(next_q_dist, rewards, dones, gamma, v_min, v_max, num
     projected_dist.scatter_add_(dim=-1, index=l, src=next_q_dist * (u.float() - b))
     projected_dist.scatter_add_(dim=-1, index=u, src=next_q_dist * (b - l.float()))
 
-    return projected_dist
+    return torch.softmax(projected_dist, dim=-1) if apply_softmax else projected_dist
