@@ -47,7 +47,10 @@ class ArcCriticNetwork(torch.nn.Module):
         )
         self.outputs_layers = torch.nn.ModuleDict(
             {
-                reward_type: torch.nn.Linear(256, n_atoms)
+                reward_type: torch.nn.Linear(
+                    256,
+                    n_atoms,
+                )
                 for reward_type, n_atoms in self.n_atoms.items()
             }
         )
@@ -121,7 +124,7 @@ class ArcCriticNetwork(torch.nn.Module):
         state, _ = self.gru(state)
         output = TensorDict(
             {
-                reward_type: layer(state)
+                reward_type: torch.softmax(layer(state), dim=-1)
                 for reward_type, layer in self.outputs_layers.items()
             }
         )

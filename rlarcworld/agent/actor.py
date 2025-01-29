@@ -102,6 +102,9 @@ class ArcActorNetwork(nn.Module):
         # Feed the state to the network
         state = self.linear1(state)
         state, _ = self.gru(state)
+
+        # NOTE: Do not apply Softmax here cause the criterion is categorical cross entropy
+        # In PyTorch that criterion has softmax built-in
         output = TensorDict(
             {
                 "x_location": self.outputs_layers["x_location"](state),

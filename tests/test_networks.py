@@ -62,20 +62,38 @@ class ArcNetworksTest(unittest.TestCase):
         network.output_val(output)
 
         # Define a loss function and an optimizer
-        criterion = torch.nn.MSELoss()
+        criterion = torch.nn.KLDivLoss(reduction="batchmean")
         optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
 
         # Create dummy target tensors
         target = TensorDict(
             {
-                "pixel_wise": torch.randn(batch_size, n_atoms["pixel_wise"]),
-                "binary": torch.randn(batch_size, n_atoms["binary"]),
+                "pixel_wise": torch.softmax(
+                    torch.randn(batch_size, n_atoms["pixel_wise"]), dim=1
+                ),
+                "binary": torch.softmax(
+                    torch.randn(batch_size, n_atoms["binary"]), dim=1
+                ),
             }
         )
+
+        # Assert probability mass function
+        for key, dist in output.items():
+            torch.testing.assert_close(
+                torch.sum(dist, dim=1), torch.ones(batch_size)
+            ), f"Probability mass function not normalized for key: {key}"
+            assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
+            assert torch.all(
+                dist <= 1
+            ), f"Probability values greater than 1 for key: {key}"
 
         # Calculate the loss
         loss = criterion(output["pixel_wise"], target["pixel_wise"]) + criterion(
             output["binary"], target["binary"]
+        )
+
+        assert not torch.isnan(loss), "{} is NaN for Critic network".format(
+            criterion._get_name()
         )
 
         # Backpropagation
@@ -126,29 +144,26 @@ class ArcNetworksTest(unittest.TestCase):
         torch.testing.assert_close(input_sample, org_sample)
 
         # Define a loss function and an optimizer
-        criterion = torch.nn.MSELoss()
+        criterion = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
 
         # Create dummy target tensors
         target = TensorDict(
             {
-                "x_location": torch.nn.functional.softmax(
-                    torch.rand(size=(batch_size, size)), dim=1
-                ),
-                "y_location": torch.nn.functional.softmax(
-                    torch.rand(size=(batch_size, size)), dim=1
-                ),
-                "color_values": torch.nn.functional.softmax(
-                    torch.rand(size=(batch_size, color_values)), dim=1
-                ),
-                "submit": torch.nn.functional.softmax(
-                    torch.rand(size=(batch_size, 2)), dim=1
-                ),
+                "x_location": torch.rand(size=(batch_size, size)),
+                "y_location": torch.rand(size=(batch_size, size)),
+                "color_values": torch.rand(size=(batch_size, color_values)),
+                "submit": torch.rand(size=(batch_size, 2)),
             }
         )
 
         # Calculate the loss
         loss = sum([criterion(o, t) for o, t in zip(output.values(), target.values())])
+
+        # Assert los is not NaN
+        assert not torch.isnan(loss), "{} is NaN for Actor network".format(
+            criterion._get_name()
+        )
 
         # Backpropagation
         optimizer.zero_grad()
