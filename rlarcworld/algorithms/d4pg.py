@@ -45,19 +45,15 @@ class D4PG:
         """
         with torch.no_grad():
             # Use the target actor to get the best action for each next state
-            next_action_probs = actor_target(next_state)
+            action_probs = actor_target(next_state)
             # Get best action
             best_next_action = torch.cat(
-                [
-                    torch.argmax(x, dim=-1).unsqueeze(-1)
-                    for x in next_action_probs.values()
-                ],
+                [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
                 dim=-1,
             )  # Shape: (batch_size, action_space_dim)
 
             # Get the Q-distribution for the best action from the target critic
-            next_state["actions"] = best_next_action
-            best_next_q_dist = critic_target(next_state)
+            best_next_q_dist = critic_target(next_state, best_next_action)
 
         # Assert probability mass function
         for key, dist in best_next_q_dist.items():
@@ -102,9 +98,8 @@ class D4PG:
             torch.Tensor: Critic loss.
         """
         # Get state-action value distribution from the critic
-        state["actions"] = action
-        q_dist = critic(state)  # Shape: (batch_size, num_atoms)
-        # KL Divergence
+        q_dist = critic(state, action)  # Shape: (batch_size, num_atoms)
+        # KL Divergence (TdError)
         loss = TensorDict(
             {
                 key: self.criterion(q_dist[key], target_dist[key])
@@ -127,26 +122,22 @@ class D4PG:
             torch.Tensor: Actor loss (negative expected Q-value).
         """
         # Get action probabilities from the actor
-        action_probs = actor(state).get(
-            "action_probs"
-        )  # Shape: (batch_size, num_actions)
+        action_probs = actor(state)
+        # Get best action
+        best_next_action = torch.cat(
+            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
+            dim=-1,
+        )  # Shape: (batch_size, action_space_dim [4])
 
-        # Get Q-value distributions from the critic
-        q_dist = critic(state).get(
-            "q_dist"
-        )  # Shape: (batch_size, num_actions, num_atoms)
-        z = torch.linspace(v_min, v_max, q_dist.size(-1)).to(
-            q_dist.device
-        )  # Atom values
-        q_values = (q_dist * z).sum(dim=-1)  # Convert distribution to expected Q-values
+        # Compute gradient of expected Q-value w.r.t. actions
+        best_next_action.requires_grad = True
+        probs = critic(state, best_next_action)
+        Q = (probs * critic.z_atoms.to(probs.device)).sum(dim=-1)
+        grad = torch.autograd.grad(Q.sum(), best_next_action, retain_graph=True)[0]
 
-        # Compute expected Q-value weighted by action probabilities
-        expected_q = torch.sum(action_probs * q_values, dim=-1)  # Shape: (batch_size,)
-
-        # Loss is negative expected Q-value (maximize expected Q-value)
-        actor_loss = -expected_q.mean()
-
-        return actor_loss
+        # Policy gradient update
+        loss = -torch.sum(grad * action_probs)
+        return loss
 
     def train_d4pg(
         self,

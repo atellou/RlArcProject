@@ -68,7 +68,6 @@ class ArcCriticNetwork(torch.nn.Module):
             "examples",
             "initial",
             "index",
-            "actions",
             "terminated",
         }
         assert set(state.keys()) == in_keys, ValueError(
@@ -86,7 +85,7 @@ class ArcCriticNetwork(torch.nn.Module):
             )
         )
 
-    def forward(self, state: TensorDict):
+    def forward(self, state: TensorDict, action: torch.Tensor):
         """
         Args:
             state (TensorDict): The input state.
@@ -96,6 +95,7 @@ class ArcCriticNetwork(torch.nn.Module):
         state = state.clone()
         # Validate input
         self.input_val(state)
+        state["actions"] = action
         # Brodcast the state
         for key, value in state.items():
             if key == "terminated":

@@ -37,7 +37,6 @@ class ArcNetworksTest(unittest.TestCase):
                 "examples": torch.randn(batch_size, 10, 2, size, size),
                 "initial": torch.randn(batch_size, 1, size, size),
                 "index": torch.randn(batch_size, 1, size, size),
-                "actions": torch.randn(batch_size, 1, 4),
                 "terminated": torch.randn(batch_size, 1),
             }
         )
@@ -53,7 +52,7 @@ class ArcNetworksTest(unittest.TestCase):
 
         # Forward pass
         org_sample = input_sample.clone()
-        output = network(input_sample)
+        output = network(input_sample, action=torch.randn(batch_size, 1, 4))
 
         # Validate not inplace changes to input
         torch.testing.assert_close(input_sample, org_sample)
