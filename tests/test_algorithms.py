@@ -22,7 +22,11 @@ class TestD4PG(unittest.TestCase):
         self.grid_size = 30
         self.color_values = 11
         self.num_atoms = {"pixel_wise": 50, "binary": 3}
-
+        logger.info(
+            "Setting up D4PG test, with batch size: {}, grid size: {} and color values: {}".format(
+                self.batch_size, self.grid_size, self.color_values
+            )
+        )
         self.d4pg = D4PG()
         self.actor = ArcActorNetwork(
             size=self.grid_size, color_values=self.color_values
@@ -62,6 +66,7 @@ class TestD4PG(unittest.TestCase):
         return reward, v_min, v_max, done, gamma, state
 
     def test_target_distribution(self):
+        logger.info("Testing target distribution computation")
         reward, v_min, v_max, done, gamma, next_state = self.simmulated_data()
         target_distribution = self.d4pg.compute_critic_target_distribution(
             self.critic,
@@ -99,6 +104,7 @@ class TestD4PG(unittest.TestCase):
             ), f"Probability values greater than 1 for key: {key}"
 
     def test_critic_loss(self):
+        logger.info("Testing critic loss computation")
         reward, v_min, v_max, done, gamma, next_state = self.simmulated_data()
         target_distribution = self.d4pg.compute_critic_target_distribution(
             self.critic,
