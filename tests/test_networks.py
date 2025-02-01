@@ -54,7 +54,17 @@ class ArcNetworksTest(unittest.TestCase):
 
         # Forward pass
         org_sample = input_sample.clone()
-        output = network(input_sample, action=torch.randn(batch_size, 1, 4))
+        action_probs = {
+            "x_location": torch.softmax(torch.randn(batch_size, 30), dim=-1),
+            "y_location": torch.softmax(torch.randn(batch_size, 30), dim=-1),
+            "color_values": torch.softmax(torch.randn(batch_size, 11), dim=-1),
+            "submit": torch.softmax(torch.randn(batch_size, 2), dim=-1),
+        }
+        best_next_action = torch.cat(
+            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
+            dim=-1,
+        ).float()
+        output = network(input_sample, action=best_next_action)
 
         # Validate not inplace changes to input
         torch.testing.assert_close(input_sample, org_sample)
@@ -100,6 +110,11 @@ class ArcNetworksTest(unittest.TestCase):
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
+        for name, param in network.named_parameters():
+            if param.grad is None:
+                raise ValueError(
+                    f"Gradient not flowing in ArcCriticNetwork for: {name}"
+                )
         optimizer.step()
 
     def test_train_arc_actor_network(self):
@@ -158,6 +173,16 @@ class ArcNetworksTest(unittest.TestCase):
             }
         )
 
+        # Assert probability mass function
+        for key, dist in output.items():
+            torch.testing.assert_close(
+                torch.sum(dist, dim=1), torch.ones(batch_size)
+            ), f"Probability mass function not normalized for key: {key}"
+            assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
+            assert torch.all(
+                dist <= 1
+            ), f"Probability values greater than 1 for key: {key}"
+
         # Calculate the loss
         loss = sum([criterion(o, t) for o, t in zip(output.values(), target.values())])
 
@@ -169,6 +194,9 @@ class ArcNetworksTest(unittest.TestCase):
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
+        for name, param in network.named_parameters():
+            if param.grad is None:
+                raise ValueError(f"Gradient not flowing in ArcActorNetwork for: {name}")
         optimizer.step()
 
 

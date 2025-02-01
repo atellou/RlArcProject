@@ -112,7 +112,7 @@ class ArcCriticNetwork(torch.nn.Module):
         # Brodcast the state
         for key, value in state.items():
             if key == "terminated":
-                continue
+                pass
             if key == "index":
                 value = value / torch.max(value)
             elif key == "actions":
