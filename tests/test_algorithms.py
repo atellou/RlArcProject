@@ -136,26 +136,40 @@ class TestD4PG(unittest.TestCase):
 
         optimizer.zero_grad()
         loss.backward()
+        for name, param in self.critic.named_parameters():
+            if param.grad is None:
+                raise ValueError(
+                    f"Gradient not flowing in D4PG ArcActorNetwork for: {name}"
+                )
         optimizer.step()
 
-    # def test_actor_loss(self):
-    #     logger.info("Testing actor loss computation")
-    #     reward, done, gamma, state = self.simmulated_data()
-    #     action_probs = self.actor(state)
-    #     # Get best action
-    #     best_action = torch.cat(
-    #         [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
-    #         dim=-1,
-    #     )  # Shape: (batch_size, action_space_dim)
+    def test_actor_loss(self):
+        logger.info("Testing actor loss computation")
+        __, __, __, state = self.simmulated_data()
 
-    #     # Backpropagation
-    #     # Define a loss function and an optimizer
-    #     optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
-    #     loss = self.d4pg.compute_actor_loss(self.actor, state, best_action)
-    #     assert not torch.isnan(loss).any(), "NaN values found in loss"
-    #     optimizer.zero_grad()
-    #     loss.backward()
-    #     optimizer.step()
+        # Backpropagation
+        # Define a loss function and an optimizer
+        optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
+        loss = self.d4pg.compute_actor_loss(self.actor, self.critic, state)
+        assert tuple(loss.keys()) == tuple(["pixel_wise", "binary"])
+        for key, value in loss.items():
+            assert tuple(value.keys()) == tuple(
+                ["x_location", "y_location", "color_values", "submit"]
+            )
+            for k, v in value.items():
+                assert not torch.isnan(
+                    v
+                ).any(), f"NaN values found in loss for key: [{key}][{k}]"
+
+        loss = sum((g for v in loss.values() for g in v.values()))
+        optimizer.zero_grad()
+        loss.backward()
+        for name, param in self.actor.named_parameters():
+            if param.grad is None:
+                raise ValueError(
+                    f"Gradient not flowing in D4PG ArcActorNetwork for: {name}"
+                )
+        optimizer.step()
 
 
 if __name__ == "__main__":

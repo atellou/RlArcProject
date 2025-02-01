@@ -122,16 +122,22 @@ class D4PG:
         best_next_action = torch.cat(
             [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
             dim=-1,
-        )  # Shape: (batch_size, action_space_dim [4])
+        ).float()  # Shape: (batch_size, action_space_dim [4])
 
         # Compute gradient of expected Q-value w.r.t. actions
         best_next_action.requires_grad = True
-        probs = critic(state, best_next_action)
-        Q = (probs * critic.z_atoms.to(probs.device)).sum(dim=-1)
-        grad = torch.autograd.grad(Q.sum(), best_next_action, retain_graph=True)[0]
 
-        # Policy gradient update
-        loss = -torch.sum(grad * action_probs)
+        probs = critic(state, best_next_action)
+        loss = TensorDict({})
+        for key in probs.keys():
+            Q = (probs[key] * critic.z_atoms[key].to(probs[key].device)).sum(dim=-1)
+            grad = torch.autograd.grad(Q.sum(), best_next_action, retain_graph=True)[0]
+            # Policy gradient update
+            loss[key] = {
+                k: -torch.sum(x * grad[: grad.shape[0], i].view(-1, 1))
+                for i, (k, x) in enumerate(action_probs.items())
+            }
+
         return loss
 
     def train_d4pg(
