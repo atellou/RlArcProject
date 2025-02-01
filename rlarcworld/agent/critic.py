@@ -8,18 +8,31 @@ logger = logging.getLogger(__name__)
 
 
 class ArcCriticNetwork(torch.nn.Module):
-    def __init__(self, size: int, color_values: int, n_atoms: Dict[str, int]):
+    def __init__(
+        self,
+        size: int,
+        color_values: int,
+        num_atoms: Dict[str, int],
+        v_min: Dict[str, int],
+        v_max: Dict[str, int],
+    ):
         """
         Args:
             size (int): The size of the grid.
             color_values (int): The number of colors.
-            n_atoms (Dict[str, int]): The number of atoms for the categorical distribution type.
+            num_atoms (Dict[str, int]): The number of atoms for the categorical distribution type.
         """
 
         super(ArcCriticNetwork, self).__init__()
-        self.n_atoms = n_atoms
+        self.num_atoms = num_atoms
         self.size = size
         self.color_values = color_values
+        self.v_min = v_min
+        self.v_max = v_max
+        self.z_atoms = {
+            key: torch.linspace(v_min[key], v_max[key], value)
+            for key, value in num_atoms.items()
+        }
         self.inputs_layers = torch.nn.ModuleDict(
             {
                 "last_grid": torch.nn.Conv2d(
@@ -49,9 +62,9 @@ class ArcCriticNetwork(torch.nn.Module):
             {
                 reward_type: torch.nn.Linear(
                     256,
-                    n_atoms,
+                    num_atoms,
                 )
-                for reward_type, n_atoms in self.n_atoms.items()
+                for reward_type, num_atoms in self.num_atoms.items()
             }
         )
 

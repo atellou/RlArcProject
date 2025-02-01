@@ -22,9 +22,6 @@ class D4PG:
         next_state,
         done,
         gamma,
-        num_atoms,
-        v_min,
-        v_max,
     ):
         """
         Computes the target distribution for the critic network.
@@ -36,9 +33,6 @@ class D4PG:
             next_state (TensorDict): TensorDict of next states.
             done (torch.Tensor): Done flags from the batch.
             gamma (float): Discount factor.
-            num_atoms (int): Number of atoms for the categorical distribution.
-            v_min (float): Minimum value for value distribution.
-            v_max (float): Maximum value for value distribution.
 
         Returns:
             torch.Tensor: Projected target distribution (batch_size, num_atoms).
@@ -73,9 +67,10 @@ class D4PG:
                     reward[key],
                     done,
                     gamma,
-                    v_min[key],
-                    v_max[key],
-                    num_atoms[key],
+                    critic_target.z_atoms[key],
+                    critic_target.v_min[key],
+                    critic_target.v_max[key],
+                    critic_target.num_atoms[key],
                     apply_softmax=True,
                 )
                 for key in best_next_q_dist.keys()
@@ -109,7 +104,7 @@ class D4PG:
 
         return loss
 
-    def compute_actor_loss(self, actor, critic, state, v_min, v_max):
+    def compute_actor_loss(self, actor, critic, state):
         """
         Compute the loss for the actor network.
 

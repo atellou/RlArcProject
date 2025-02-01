@@ -26,8 +26,10 @@ class ArcNetworksTest(unittest.TestCase):
                 batch_size, size, color_values
             )
         )
-        n_atoms = {"pixel_wise": torch.randint(50, 100, size=(1,)), "binary": 1}
-        network = ArcCriticNetwork(size, color_values, n_atoms)
+        num_atoms = {"pixel_wise": int(torch.randint(50, 100, size=(1,))), "binary": 1}
+        v_min = {"pixel_wise": -40, "binary": 0}
+        v_max = {"pixel_wise": 2, "binary": 1}
+        network = ArcCriticNetwork(size, color_values, num_atoms, v_min, v_max)
 
         # Create dummy input tensors
         input_sample = TensorDict(
@@ -68,10 +70,10 @@ class ArcNetworksTest(unittest.TestCase):
         target = TensorDict(
             {
                 "pixel_wise": torch.softmax(
-                    torch.randn(batch_size, n_atoms["pixel_wise"]), dim=1
+                    torch.randn(batch_size, num_atoms["pixel_wise"]), dim=1
                 ),
                 "binary": torch.softmax(
-                    torch.randn(batch_size, n_atoms["binary"]), dim=1
+                    torch.randn(batch_size, num_atoms["binary"]), dim=1
                 ),
             }
         )

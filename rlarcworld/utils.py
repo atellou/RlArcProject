@@ -2,7 +2,15 @@ import torch
 
 
 def categorical_projection(
-    next_q_dist, rewards, dones, gamma, v_min, v_max, num_atoms, apply_softmax=True
+    next_q_dist,
+    rewards,
+    dones,
+    gamma,
+    z_atoms,
+    v_min,
+    v_max,
+    num_atoms,
+    apply_softmax=True,
 ):
     """
     Projects the target distribution using the Bellman update.
@@ -12,6 +20,7 @@ def categorical_projection(
         rewards (torch.Tensor): Rewards from the batch (batch_size, 1).
         dones (torch.Tensor): Done flags from the batch (batch_size, 1).
         gamma (float): Discount factor.
+        z_atoms (torch.Tensor): Z reference distribution Atom values (num_atoms, 1).
         v_min (float): Minimum value for value distribution.
         v_max (float): Maximum value for value distribution.
         num_atoms (int): Number of atoms in the distribution.
@@ -20,10 +29,9 @@ def categorical_projection(
         torch.Tensor: Projected target distribution (batch_size, num_atoms).
     """
     delta_z = (v_max - v_min) / (num_atoms - 1)
-    z = torch.linspace(v_min, v_max, num_atoms).to(rewards.device)  # Atom values
 
     # Compute the target distribution support
-    tz = rewards + gamma * (1 - dones) * z
+    tz = rewards + gamma * (1 - dones) * z_atoms
     tz = tz.clamp(v_min, v_max)
 
     # Map values to categorical bins

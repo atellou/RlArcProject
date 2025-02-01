@@ -14,6 +14,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+logger.info("Setting up D4PG test")
+
 
 class TestD4PG(unittest.TestCase):
 
@@ -22,17 +24,18 @@ class TestD4PG(unittest.TestCase):
         self.grid_size = 30
         self.color_values = 11
         self.num_atoms = {"pixel_wise": 50, "binary": 3}
-        logger.info(
-            "Setting up D4PG test, with batch size: {}, grid size: {} and color values: {}".format(
-                self.batch_size, self.grid_size, self.color_values
-            )
-        )
         self.d4pg = D4PG()
         self.actor = ArcActorNetwork(
             size=self.grid_size, color_values=self.color_values
         )
+        v_min = {"pixel_wise": -40, "binary": 0}
+        v_max = {"pixel_wise": 2, "binary": 1}
         self.critic = ArcCriticNetwork(
-            size=self.grid_size, color_values=self.color_values, n_atoms=self.num_atoms
+            size=self.grid_size,
+            color_values=self.color_values,
+            num_atoms=self.num_atoms,
+            v_min=v_min,
+            v_max=v_max,
         )
 
     def simmulated_data(self):
@@ -40,11 +43,9 @@ class TestD4PG(unittest.TestCase):
             "pixel_wise": torch.randint(-40, 2, size=(self.batch_size, 1)),
             "binary": torch.randint(0, 2, size=(self.batch_size, 1)),
         }
-        v_min = {"pixel_wise": -40, "binary": 0}
-        v_max = {"pixel_wise": 2, "binary": 1}
+
         done = torch.randint(0, 2, size=(self.batch_size, 1))
         gamma = 0.99
-
         state = TensorDict(
             {
                 "last_grid": torch.randn(
@@ -63,11 +64,11 @@ class TestD4PG(unittest.TestCase):
                 "terminated": torch.randn(self.batch_size, 1),
             }
         )
-        return reward, v_min, v_max, done, gamma, state
+        return reward, done, gamma, state
 
     def test_target_distribution(self):
         logger.info("Testing target distribution computation")
-        reward, v_min, v_max, done, gamma, next_state = self.simmulated_data()
+        reward, done, gamma, next_state = self.simmulated_data()
         target_distribution = self.d4pg.compute_critic_target_distribution(
             self.critic,
             self.actor,
@@ -75,9 +76,6 @@ class TestD4PG(unittest.TestCase):
             next_state.clone(),
             done,
             gamma,
-            self.num_atoms,
-            v_min,
-            v_max,
         )
         for key, dist in target_distribution.items():
             assert not torch.isnan(
@@ -105,7 +103,7 @@ class TestD4PG(unittest.TestCase):
 
     def test_critic_loss(self):
         logger.info("Testing critic loss computation")
-        reward, v_min, v_max, done, gamma, next_state = self.simmulated_data()
+        reward, done, gamma, next_state = self.simmulated_data()
         target_distribution = self.d4pg.compute_critic_target_distribution(
             self.critic,
             self.actor,
@@ -113,12 +111,9 @@ class TestD4PG(unittest.TestCase):
             next_state.clone(),
             done,
             gamma,
-            self.num_atoms,
-            v_min,
-            v_max,
         )
 
-        reward, __, __, done, __, state = self.simmulated_data()
+        reward, done, __, state = self.simmulated_data()
         action_probs = self.actor(state)
         # Get best action
         best_action = torch.cat(
@@ -142,6 +137,25 @@ class TestD4PG(unittest.TestCase):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+    # def test_actor_loss(self):
+    #     logger.info("Testing actor loss computation")
+    #     reward, done, gamma, state = self.simmulated_data()
+    #     action_probs = self.actor(state)
+    #     # Get best action
+    #     best_action = torch.cat(
+    #         [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
+    #         dim=-1,
+    #     )  # Shape: (batch_size, action_space_dim)
+
+    #     # Backpropagation
+    #     # Define a loss function and an optimizer
+    #     optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
+    #     loss = self.d4pg.compute_actor_loss(self.actor, state, best_action)
+    #     assert not torch.isnan(loss).any(), "NaN values found in loss"
+    #     optimizer.zero_grad()
+    #     loss.backward()
+    #     optimizer.step()
 
 
 if __name__ == "__main__":
