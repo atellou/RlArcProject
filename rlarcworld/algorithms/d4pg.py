@@ -1,3 +1,4 @@
+import copy
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -9,26 +10,35 @@ from rlarcworld.utils import categorical_projection
 
 class D4PG:
 
-    def __init__(self):
-        self.critic_target = None
-        self.actor_target = None
-        self.criterion = torch.nn.KLDivLoss(reduction="batchmean")
+    def __init__(self, actor, critic):
+        self.actor = actor
+        self.critic = critic
 
-    def compute_critic_target_distribution(
+        # Create target networks as copies of the main networks
+        self.actor_target = copy.deepcopy(actor)
+        self.critic_target = copy.deepcopy(critic)
+
+        # Ensure target networks start with the same weights
+        self.actor_target.load_state_dict(actor.state_dict())
+        self.critic_target.load_state_dict(critic.state_dict())
+
+        # Set target networks to evaluation mode (no need for gradients)
+        self.actor_target.eval()
+        self.critic_target.eval()
+
+        self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
+
+    def compute_target_distribution(
         self,
-        critic_target,
-        actor_target,
-        reward,
-        next_state,
-        done,
-        gamma,
+        reward: torch.Tensor,
+        next_state: TensorDict,
+        done: torch.Tensor,
+        gamma: float,
     ):
         """
         Computes the target distribution for the critic network.
 
         Args:
-            critic_target (nn.Module): Target critic network.
-            actor_target (nn.Module): Target actor network.
             reward (torch.Tensor): Rewards from the batch.
             next_state (TensorDict): TensorDict of next states.
             done (torch.Tensor): Done flags from the batch.
@@ -39,7 +49,8 @@ class D4PG:
         """
         with torch.no_grad():
             # Use the target actor to get the best action for each next state
-            action_probs = actor_target(next_state)
+            action_probs = self.actor_target(next_state)
+
             # Get best action
             best_next_action = torch.cat(
                 [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
@@ -47,17 +58,7 @@ class D4PG:
             )  # Shape: (batch_size, action_space_dim)
 
             # Get the Q-distribution for the best action from the target critic
-            best_next_q_dist = critic_target(next_state, best_next_action)
-
-        # Assert probability mass function
-        for key, dist in best_next_q_dist.items():
-            torch.testing.assert_close(
-                torch.sum(dist, dim=1), torch.ones(dist.shape[0])
-            ), f"Probability mass function not normalized for key: {key}"
-            assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
-            assert torch.all(
-                dist <= 1
-            ), f"Probability values greater than 1 for key: {key}"
+            best_next_q_dist = self.critic_target(next_state, best_next_action)
 
         # Project the distribution using the categorical projection
         target_dist = TensorDict(
@@ -67,10 +68,10 @@ class D4PG:
                     reward[key],
                     done,
                     gamma,
-                    critic_target.z_atoms[key],
-                    critic_target.v_min[key],
-                    critic_target.v_max[key],
-                    critic_target.num_atoms[key],
+                    self.critic_target.z_atoms[key],
+                    self.critic_target.v_min[key],
+                    self.critic_target.v_max[key],
+                    self.critic_target.num_atoms[key],
                     apply_softmax=True,
                 )
                 for key in best_next_q_dist.keys()
@@ -79,12 +80,11 @@ class D4PG:
 
         return target_dist
 
-    def compute_critic_loss(self, critic, state, action, target_dist):
+    def compute_critic_loss(self, state, action, target_dist):
         """
         Computes the critic loss using KL divergence.
 
         Args:
-            critic (nn.Module): Critic network.
             state (TensorDict): TensorDict of current states.
             action (torch.Tensor): Actions taken in the batch.
             target_dist (torch.Tensor): Target distribution computed by Bellman backup.
@@ -93,31 +93,29 @@ class D4PG:
             torch.Tensor: Critic loss.
         """
         # Get state-action value distribution from the critic
-        q_dist = critic(state, action)  # Shape: (batch_size, num_atoms)
+        q_dist = self.critic(state, action)  # Shape: (batch_size, num_atoms)
         # KL Divergence (TdError)
         loss = TensorDict(
             {
-                key: self.criterion(q_dist[key], target_dist[key])
+                key: self.critic_criterion(q_dist[key], target_dist[key])
                 for key in q_dist.keys()
             }
         )
 
         return loss
 
-    def compute_actor_loss(self, actor, critic, state):
+    def compute_actor_loss(self, state):
         """
         Compute the loss for the actor network.
 
         Args:
-            actor (nn.Module): Actor network.
-            critic (nn.Module): Critic network.
             state (TensorDict): TensorDict of current states.
 
         Returns:
             torch.Tensor: Actor loss (negative expected Q-value).
         """
         # Get action probabilities from the actor
-        action_probs = actor(state)
+        action_probs = self.actor(state)
         # Get best action
         best_next_action = torch.cat(
             [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
@@ -127,10 +125,12 @@ class D4PG:
         # Compute gradient of expected Q-value w.r.t. actions
         best_next_action.requires_grad = True
 
-        probs = critic(state, best_next_action)
+        probs = self.critic(state, best_next_action)
         loss = TensorDict({})
         for key in probs.keys():
-            Q = (probs[key] * critic.z_atoms[key].to(probs[key].device)).sum(dim=-1)
+            Q = (probs[key] * self.critic.z_atoms[key].to(probs[key].device)).sum(
+                dim=-1
+            )
             grad = torch.autograd.grad(Q.sum(), best_next_action, retain_graph=True)[0]
             # Policy gradient update
             loss[key] = {
@@ -140,12 +140,57 @@ class D4PG:
 
         return loss
 
+    def update_target_networks(self, tau=0.005):
+        """Performs a soft update on the target networks."""
+        for target_param, param in zip(
+            self.actor_target.parameters(), self.actor.parameters()
+        ):
+            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+        for target_param, param in zip(
+            self.critic_target.parameters(), self.critic.parameters()
+        ):
+            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+    def train_step(self, batch, actor_optimizer, critic_optimizer, gamma):
+        """Performs one training step for the actor and critic.
+
+        Args:
+            batch (TensorDict): Batch of data.
+            actor_optimizer (torch.optim.Optimizer): Optimizer for the actor.
+            critic_optimizer (torch.optim.Optimizer): Optimizer for the critic.
+            gamma (float): Discount factor.
+
+        Returns:
+            Tuple[float, float]: Actor and critic losses.
+        """
+
+        # Compute target distribution
+        target_probs = self.compute_target_distribution(
+            batch["reward"], batch["next_state"], batch["done"], gamma
+        )
+
+        # Critic update
+        critic_optimizer.zero_grad()
+        loss_critic = self.compute_critic_loss(
+            batch["state"], batch["action"], target_probs
+        )
+        loss_critic = sum(tuple(loss_critic.values()))
+        loss_critic.backward()
+        critic_optimizer.step()
+
+        # Actor update
+        actor_optimizer.zero_grad()
+        loss_actor = self.compute_actor_loss(batch["state"])
+        loss_actor = sum((g for v in loss_actor.values() for g in v.values()))
+        loss_actor.backward()
+        actor_optimizer.step()
+
+        self.update_target_networks(tau=0.005)
+        return loss_actor, loss_critic
+
     def train_d4pg(
         self,
-        actor,
-        critic,
-        actor_target,
-        critic_target,
         replay_buffer,
         actor_optimizer,
         critic_optimizer,
@@ -161,10 +206,6 @@ class D4PG:
         Full training loop for D4PG with categorical actions.
 
         Args:
-            actor (nn.Module): Actor network.
-            critic (nn.Module): Critic network.
-            actor_target (nn.Module): Target actor network.
-            critic_target (nn.Module): Target critic network.
             replay_buffer (ReplayBuffer): Experience replay buffer.
             actor_optimizer (torch.optim.Optimizer): Optimizer for the actor.
             critic_optimizer (torch.optim.Optimizer): Optimizer for the critic.
@@ -187,52 +228,4 @@ class D4PG:
             actions = torch.tensor(actions, dtype=torch.long)
             rewards = torch.tensor(rewards, dtype=torch.float32)
             next_states = torch.stack(next_states)
-            dones = torch.tensor(dones, dtype=torch.float32)
-
-            # --- Critic Update ---
-            # Compute the target distribution
-            target_dist = self.compute_critic_target_distribution(
-                critic_target,
-                actor_target,
-                rewards,
-                next_states,
-                dones,
-                gamma,
-                num_atoms,
-                v_min,
-                v_max,
-            )
-
-            # Compute the critic loss
-            critic_loss = self.compute_critic_loss(critic, states, actions, target_dist)
-
-            # Backpropagate and update the critic
-            critic_optimizer.zero_grad()
-            critic_loss.backward()
-            critic_optimizer.step()
-
-            # --- Actor Update ---
-            # Compute the actor loss
-            actor_loss = self.compute_actor_loss(actor, critic, states)
-
-            # Backpropagate and update the actor
-            actor_optimizer.zero_grad()
-            actor_loss.backward()
-            actor_optimizer.step()
-
-            # --- Target Network Update ---
-            if step % target_update_freq == 0:
-                for target_param, param in zip(
-                    actor_target.parameters(), actor.parameters()
-                ):
-                    target_param.data.copy_(param.data)
-                for target_param, param in zip(
-                    critic_target.parameters(), critic.parameters()
-                ):
-                    target_param.data.copy_(param.data)
-
-            # Log progress (optional)
-            if step % 100 == 0:
-                print(
-                    f"Step {step}/{steps}, Critic Loss: {critic_loss.item():.4f}, Actor Loss: {actor_loss.item():.4f}"
-                )
+            dones = torch

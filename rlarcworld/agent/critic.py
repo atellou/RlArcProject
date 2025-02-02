@@ -31,6 +31,10 @@ class ArcCriticNetwork(torch.nn.Module):
         self.color_values = color_values
         self.v_min = v_min
         self.v_max = v_max
+        for key, min_val in v_min.items():
+            assert (
+                min_val < self.v_max[key]
+            ), f"v_min[{key}]={min_val} is not lower than v_max[{key}]={self.v_max[key]}"
         self.z_atoms = {
             key: torch.linspace(v_min[key], v_max[key], value)
             for key, value in num_atoms.items()

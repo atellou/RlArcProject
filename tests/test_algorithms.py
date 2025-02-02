@@ -24,9 +24,9 @@ class TestD4PG(unittest.TestCase):
         self.grid_size = 30
         self.color_values = 11
         self.num_atoms = {"pixel_wise": 50, "binary": 3}
-        self.d4pg = D4PG()
+
         self.actor = ArcActorNetwork(
-            size=self.grid_size, color_values=self.color_values
+            size=self.grid_size, color_values=self.color_values, test=True
         )
         v_min = {"pixel_wise": -40, "binary": 0}
         v_max = {"pixel_wise": 2, "binary": 1}
@@ -36,7 +36,9 @@ class TestD4PG(unittest.TestCase):
             num_atoms=self.num_atoms,
             v_min=v_min,
             v_max=v_max,
+            test=True,
         )
+        self.d4pg = D4PG(actor=self.actor, critic=self.critic)
 
     def simmulated_data(self):
         reward = {
@@ -48,20 +50,32 @@ class TestD4PG(unittest.TestCase):
         gamma = 0.99
         state = TensorDict(
             {
-                "last_grid": torch.randn(
-                    self.batch_size, 1, self.grid_size, self.grid_size
+                "last_grid": torch.randint(
+                    0,
+                    self.color_values,
+                    size=(self.batch_size, 1, self.grid_size, self.grid_size),
                 ),
-                "grid": torch.randn(self.batch_size, 1, self.grid_size, self.grid_size),
-                "examples": torch.randn(
-                    self.batch_size, 10, 2, self.grid_size, self.grid_size
+                "grid": torch.randint(
+                    0,
+                    self.color_values,
+                    size=(self.batch_size, 1, self.grid_size, self.grid_size),
                 ),
-                "initial": torch.randn(
-                    self.batch_size, 1, self.grid_size, self.grid_size
+                "examples": torch.randint(
+                    0,
+                    self.color_values,
+                    size=(self.batch_size, 10, 2, self.grid_size, self.grid_size),
                 ),
-                "index": torch.randn(
-                    self.batch_size, 1, self.grid_size, self.grid_size
+                "initial": torch.randint(
+                    0,
+                    self.color_values,
+                    size=(self.batch_size, 1, self.grid_size, self.grid_size),
                 ),
-                "terminated": torch.randn(self.batch_size, 1),
+                "index": torch.randint(
+                    0,
+                    self.grid_size,
+                    size=(self.batch_size, 1, self.grid_size, self.grid_size),
+                ),
+                "terminated": torch.randint(0, 2, size=(self.batch_size, 1)).float(),
             }
         )
         return reward, done, gamma, state
@@ -69,9 +83,7 @@ class TestD4PG(unittest.TestCase):
     def test_target_distribution(self):
         logger.info("Testing target distribution computation")
         reward, done, gamma, next_state = self.simmulated_data()
-        target_distribution = self.d4pg.compute_critic_target_distribution(
-            self.critic,
-            self.actor,
+        target_distribution = self.d4pg.compute_target_distribution(
             reward,
             next_state.clone(),
             done,
@@ -104,9 +116,7 @@ class TestD4PG(unittest.TestCase):
     def test_critic_loss(self):
         logger.info("Testing critic loss computation")
         reward, done, gamma, next_state = self.simmulated_data()
-        target_distribution = self.d4pg.compute_critic_target_distribution(
-            self.critic,
-            self.actor,
+        target_distribution = self.d4pg.compute_target_distribution(
             reward,
             next_state.clone(),
             done,
@@ -124,9 +134,7 @@ class TestD4PG(unittest.TestCase):
         # Backpropagation
         # Define a loss function and an optimizer
         optimizer = torch.optim.Adam(self.critic.parameters(), lr=0.001)
-        loss = self.d4pg.compute_critic_loss(
-            self.critic, state, best_action, target_distribution
-        )
+        loss = self.d4pg.compute_critic_loss(state, best_action, target_distribution)
         assert tuple(loss.keys()) == tuple(["pixel_wise", "binary"])
         for key, value in loss.items():
             assert not torch.isnan(
@@ -150,7 +158,7 @@ class TestD4PG(unittest.TestCase):
         # Backpropagation
         # Define a loss function and an optimizer
         optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
-        loss = self.d4pg.compute_actor_loss(self.actor, self.critic, state)
+        loss = self.d4pg.compute_actor_loss(state)
         assert tuple(loss.keys()) == tuple(["pixel_wise", "binary"])
         for key, value in loss.items():
             assert tuple(value.keys()) == tuple(
@@ -170,6 +178,44 @@ class TestD4PG(unittest.TestCase):
                     f"Gradient not flowing in D4PG ArcActorNetwork for: {name}"
                 )
         optimizer.step()
+
+    def test_train_step(self):
+        logger.info("Testing train step")
+        reward, done, gamma, state = self.simmulated_data()
+        __, __, __, next_state = self.simmulated_data()
+        action = self.d4pg.actor(state)
+        action = torch.cat(
+            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action.values()],
+            dim=-1,
+        )  # Shape: (batch_size, action_space_dim)
+        batch = TensorDict(
+            {
+                "state": state,
+                "action": action,
+                "reward": reward,
+                "next_state": next_state,
+                "done": done,
+            },
+            batch_size=self.batch_size,
+        )
+        actor_optimizer = torch.optim.Adam(self.d4pg.actor.parameters(), lr=0.001)
+        critic_optimizer = torch.optim.Adam(self.d4pg.critic.parameters(), lr=0.001)
+
+        loss_actor, loss_critic = self.d4pg.train_step(
+            batch, actor_optimizer, critic_optimizer, gamma
+        )
+
+        logger.info(f"Actor loss: {loss_actor}")
+        logger.info(f"Critic loss: {loss_critic}")
+        # Check that losses are not NaN
+        assert not torch.isnan(loss_actor), "Actor loss is NaN"
+        assert not torch.isnan(loss_critic), "Critic loss is NaN"
+
+        # Check that gradients are flowing
+        for name, param in self.d4pg.actor.named_parameters():
+            assert param.grad is not None, f"Gradient not flowing in actor for: {name}"
+        for name, param in self.d4pg.critic.named_parameters():
+            assert param.grad is not None, f"Gradient not flowing in critic for: {name}"
 
 
 if __name__ == "__main__":
