@@ -13,33 +13,77 @@ logger = logging.getLogger(__name__)
 
 class ArcNetworksTest(unittest.TestCase):
 
+    def setUp(self):
+        self.batch_size = torch.randint(1, 20, size=(1,))
+
+    def test_train_arc_actor_network(self):
+        losses = []
+        for i in range(10):
+            losses.append(self.train_arc_actor_network())
+        # Validate that at least 50% of the values in the list are not close or equal
+        self.assertGreaterEqual(
+            sum(
+                [
+                    not torch.isclose(losses[i], losses[i + 1])
+                    for i in range(len(losses) - 1)
+                ]
+            )
+            / (len(losses) - 1),
+            0.5,
+        )
+
     def test_train_arc_critic_network(self):
+        losses = []
+        for i in range(10):
+            losses.append(self.train_arc_critic_network())
+        # Validate that at least 50% of the values in the list are not close or equal
+        self.assertGreaterEqual(
+            sum(
+                [
+                    not torch.isclose(losses[i], losses[i + 1])
+                    for i in range(len(losses) - 1)
+                ]
+            )
+            / (len(losses) - 1),
+            0.5,
+        )
+
+    def train_arc_critic_network(self):
         """
         Test forward and backward pass of the ArcCriticNetwork class.
         """
         # Create an instance of the ArcCriticNetwork
-        batch_size = torch.randint(1, 20, size=(1,))
         size = 30
         color_values = 11
         logger.info(
             "Testing ArcCriticNetwork with batch size: {}, size: {} and color values: {}".format(
-                batch_size, size, color_values
+                self.batch_size, size, color_values
             )
         )
         num_atoms = {"pixel_wise": int(torch.randint(50, 100, size=(1,))), "binary": 1}
         v_min = {"pixel_wise": -40, "binary": 0}
         v_max = {"pixel_wise": 2, "binary": 1}
-        network = ArcCriticNetwork(size, color_values, num_atoms, v_min, v_max)
+        network = ArcCriticNetwork(
+            size, color_values, num_atoms, v_min, v_max, test=True
+        )
 
         # Create dummy input tensors
         input_sample = TensorDict(
             {
-                "last_grid": torch.randn(batch_size, 1, size, size),
-                "grid": torch.randn(batch_size, 1, size, size),
-                "examples": torch.randn(batch_size, 10, 2, size, size),
-                "initial": torch.randn(batch_size, 1, size, size),
-                "index": torch.randn(batch_size, 1, size, size),
-                "terminated": torch.randn(batch_size, 1),
+                "last_grid": torch.randint(
+                    0, color_values, size=(self.batch_size, 1, size, size)
+                ),
+                "grid": torch.randint(
+                    0, color_values, size=(self.batch_size, 1, size, size)
+                ),
+                "examples": torch.randint(
+                    0, color_values, size=(self.batch_size, 10, 2, size, size)
+                ),
+                "initial": torch.randint(
+                    0, color_values, size=(self.batch_size, 1, size, size)
+                ),
+                "index": torch.randint(0, size, size=(self.batch_size, 1, size, size)),
+                "terminated": torch.randint(0, 2, size=(self.batch_size, 1)).float(),
             }
         )
 
@@ -55,10 +99,10 @@ class ArcNetworksTest(unittest.TestCase):
         # Forward pass
         org_sample = input_sample.clone()
         action_probs = {
-            "x_location": torch.softmax(torch.randn(batch_size, 30), dim=-1),
-            "y_location": torch.softmax(torch.randn(batch_size, 30), dim=-1),
-            "color_values": torch.softmax(torch.randn(batch_size, 11), dim=-1),
-            "submit": torch.softmax(torch.randn(batch_size, 2), dim=-1),
+            "x_location": torch.softmax(torch.randn(self.batch_size, 30), dim=-1),
+            "y_location": torch.softmax(torch.randn(self.batch_size, 30), dim=-1),
+            "color_values": torch.softmax(torch.randn(self.batch_size, 11), dim=-1),
+            "submit": torch.softmax(torch.randn(self.batch_size, 2), dim=-1),
         }
         best_next_action = torch.cat(
             [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
@@ -80,18 +124,21 @@ class ArcNetworksTest(unittest.TestCase):
         target = TensorDict(
             {
                 "pixel_wise": torch.softmax(
-                    torch.randn(batch_size, num_atoms["pixel_wise"]), dim=1
+                    torch.randint(
+                        -40, 2, size=(self.batch_size, num_atoms["pixel_wise"])
+                    ).float(),
+                    dim=-1,
                 ),
-                "binary": torch.softmax(
-                    torch.randn(batch_size, num_atoms["binary"]), dim=1
-                ),
+                "binary": torch.randint(
+                    0, 2, size=(self.batch_size, num_atoms["binary"])
+                ).float(),
             }
         )
 
         # Assert probability mass function
         for key, dist in output.items():
             torch.testing.assert_close(
-                torch.sum(dist, dim=1), torch.ones(batch_size)
+                torch.sum(dist, dim=1), torch.ones(self.batch_size)
             ), f"Probability mass function not normalized for key: {key}"
             assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
             assert torch.all(
@@ -115,32 +162,47 @@ class ArcNetworksTest(unittest.TestCase):
                 raise ValueError(
                     f"Gradient not flowing in ArcCriticNetwork for: {name}"
                 )
+            # NOTE: For debugging on update with relevan testing data
+            # else:
+            #     print(name, param.grad.abs().sum())
+            #     assert torch.all(
+            #         param.grad.abs().sum() > 0
+            #     ), f"Gradient of zero for ArcCriticNetwork for: {name}"
         optimizer.step()
 
-    def test_train_arc_actor_network(self):
+        return loss
+
+    def train_arc_actor_network(self):
         """
         Test forward and backward pass of the ArcActorNetwork class.
         """
         # Create an instance of the ArcActorNetwork
-        batch_size = torch.randint(1, 20, size=(1,))
         size = 30
         color_values = 11
-        network = ArcActorNetwork(size, color_values)
+        network = ArcActorNetwork(size, color_values, test=True)
         logger.info(
             "Testing ArcActorNetwork with batch size: {}, size: {} and color values: {}".format(
-                batch_size, size, color_values
+                self.batch_size, size, color_values
             )
         )
 
         # Create dummy input tensors
         input_sample = TensorDict(
             {
-                "last_grid": torch.randn(batch_size, 1, size, size),
-                "grid": torch.randn(batch_size, 1, size, size),
-                "examples": torch.randn(batch_size, 10, 2, size, size),
-                "initial": torch.randn(batch_size, 1, size, size),
-                "index": torch.randn(batch_size, 1, size, size),
-                "terminated": torch.randn(batch_size, 1),
+                "last_grid": torch.randint(
+                    0, color_values, size=(self.batch_size, 1, size, size)
+                ),
+                "grid": torch.randint(
+                    0, color_values, size=(self.batch_size, 1, size, size)
+                ),
+                "examples": torch.randint(
+                    0, color_values, size=(self.batch_size, 10, 2, size, size)
+                ),
+                "initial": torch.randint(
+                    0, color_values, size=(self.batch_size, 1, size, size)
+                ),
+                "index": torch.randint(0, size, size=(self.batch_size, 1, size, size)),
+                "terminated": torch.randint(0, 2, size=(self.batch_size, 1)).float(),
             }
         )
 
@@ -166,17 +228,23 @@ class ArcNetworksTest(unittest.TestCase):
         # Create dummy target tensors
         target = TensorDict(
             {
-                "x_location": torch.rand(size=(batch_size, size)),
-                "y_location": torch.rand(size=(batch_size, size)),
-                "color_values": torch.rand(size=(batch_size, color_values)),
-                "submit": torch.rand(size=(batch_size, 2)),
+                "x_location": torch.softmax(
+                    torch.rand(size=(self.batch_size, size)), dim=1
+                ),
+                "y_location": torch.softmax(
+                    torch.rand(size=(self.batch_size, size)), dim=1
+                ),
+                "color_values": torch.softmax(
+                    torch.rand(size=(self.batch_size, color_values)), dim=1
+                ),
+                "submit": torch.softmax(torch.rand(size=(self.batch_size, 2)), dim=1),
             }
         )
 
         # Assert probability mass function
         for key, dist in output.items():
             torch.testing.assert_close(
-                torch.sum(dist, dim=1), torch.ones(batch_size)
+                torch.sum(dist, dim=1), torch.ones(self.batch_size)
             ), f"Probability mass function not normalized for key: {key}"
             assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
             assert torch.all(
@@ -197,7 +265,13 @@ class ArcNetworksTest(unittest.TestCase):
         for name, param in network.named_parameters():
             if param.grad is None:
                 raise ValueError(f"Gradient not flowing in ArcActorNetwork for: {name}")
+            # NOTE: For debugging on update with relevan testing data
+            # else:
+            #     assert torch.all(
+            #         param.grad.abs().sum() > 0
+            #     ), f"Gradient of zero for ArcActorNetwork for: {name}"
         optimizer.step()
+        return loss
 
 
 if __name__ == "__main__":

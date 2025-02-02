@@ -15,6 +15,7 @@ class ArcCriticNetwork(torch.nn.Module):
         num_atoms: Dict[str, int],
         v_min: Dict[str, int],
         v_max: Dict[str, int],
+        test: bool = False,
     ):
         """
         Args:
@@ -24,6 +25,7 @@ class ArcCriticNetwork(torch.nn.Module):
         """
 
         super(ArcCriticNetwork, self).__init__()
+        self.test = test
         self.num_atoms = num_atoms
         self.size = size
         self.color_values = color_values
@@ -135,11 +137,22 @@ class ArcCriticNetwork(torch.nn.Module):
         # Feed the state to the network
         state = self.linear1(state)
         state, _ = self.gru(state)
-        output = TensorDict(
-            {
-                reward_type: torch.softmax(layer(state), dim=-1)
-                for reward_type, layer in self.outputs_layers.items()
-            }
-        )
+        if self.test:
+            output = TensorDict(
+                {
+                    reward_type: torch.softmax(
+                        layer(state) * 0.1 + torch.linspace(0, 1, layer.out_features),
+                        dim=-1,
+                    )
+                    for reward_type, layer in self.outputs_layers.items()
+                }
+            )
+        else:
+            output = TensorDict(
+                {
+                    reward_type: torch.softmax(layer(state), dim=-1)
+                    for reward_type, layer in self.outputs_layers.items()
+                }
+            )
         self.output_val(output)
         return output

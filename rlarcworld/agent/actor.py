@@ -8,8 +8,9 @@ logger = logging.getLogger(__name__)
 
 
 class ArcActorNetwork(nn.Module):
-    def __init__(self, size: int, color_values):
+    def __init__(self, size: int, color_values, test: bool = False):
         super(ArcActorNetwork, self).__init__()
+        self.test = test
         self.size = size
         self.color_values = color_values
         self.inputs_layers = torch.nn.ModuleDict(
@@ -103,19 +104,22 @@ class ArcActorNetwork(nn.Module):
         state = self.linear1(state)
         state, _ = self.gru(state)
 
-        output = TensorDict(
-            {
-                "x_location": torch.softmax(
-                    self.outputs_layers["x_location"](state), dim=-1
-                ),
-                "y_location": torch.softmax(
-                    self.outputs_layers["y_location"](state), dim=-1
-                ),
-                "color_values": torch.softmax(
-                    self.outputs_layers["color_values"](state), dim=-1
-                ),
-                "submit": torch.softmax(self.outputs_layers["submit"](state), dim=-1),
-            }
-        )
+        if self.test:
+            output = TensorDict(
+                {
+                    reward_type: torch.softmax(
+                        layer(state) * 0.1 + torch.linspace(0, 1, layer.out_features),
+                        dim=-1,
+                    )
+                    for reward_type, layer in self.outputs_layers.items()
+                }
+            )
+        else:
+            output = TensorDict(
+                {
+                    reward_type: torch.softmax(layer(state), dim=-1)
+                    for reward_type, layer in self.outputs_layers.items()
+                }
+            )
         self.output_val(output)
         return output
