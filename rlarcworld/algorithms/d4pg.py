@@ -1,3 +1,4 @@
+import os
 import copy
 import torch
 import torch.nn.functional as F
@@ -7,10 +8,38 @@ from tensordict import TensorDict
 
 from rlarcworld.utils import categorical_projection
 
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
+
 
 class D4PG:
 
-    def __init__(self, actor, critic):
+    def __init__(
+        self,
+        actor,
+        critic,
+        replay_buffer=None,
+        gamma=0.99,
+        tau=0.001,
+        target_update_frequency=10,
+    ):
+        logger.info("Initializing D4PG...")
+
+        # Store parameters
+        self.global_step = 0
+        self.global_episode = 0
+        self.gamma = gamma
+        self.tau = tau
+        self.target_update_frequency = target_update_frequency
+        self.replay_buffer = replay_buffer
+        if self.replay_buffer is not None:
+            logger.info("Replay buffer initialized")
+        else:
+            logger.warning("Replay buffer not set. Skipping experience storage.")
+
+        # Store networks
         self.actor = actor
         self.critic = critic
 
@@ -26,6 +55,11 @@ class D4PG:
         self.actor_target.eval()
         self.critic_target.eval()
 
+        # Create optimizers
+        self.actor_optimizer = optim.Adam(actor.parameters(), lr=3e-4)
+        self.critic_optimizer = optim.Adam(critic.parameters(), lr=3e-4)
+
+        # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
     def compute_target_distribution(
@@ -160,6 +194,7 @@ class D4PG:
             actor_optimizer (torch.optim.Optimizer): Optimizer for the actor.
             critic_optimizer (torch.optim.Optimizer): Optimizer for the critic.
             gamma (float): Discount factor.
+            target_update_frequency (int): Frequency of target network updates.
 
         Returns:
             Tuple[float, float]: Actor and critic losses.
@@ -186,46 +221,80 @@ class D4PG:
         loss_actor.backward()
         actor_optimizer.step()
 
-        self.update_target_networks(tau=0.005)
+        if self.global_step % self.target_update_frequency == 0:
+            self.update_target_networks(tau=0.005)
         return loss_actor, loss_critic
 
     def train_d4pg(
-        self,
-        replay_buffer,
-        actor_optimizer,
-        critic_optimizer,
-        gamma,
-        num_atoms,
-        v_min,
-        v_max,
-        batch_size,
-        target_update_freq,
-        steps,
+        self, env, train_samples, batch_size, n_steps=-1, warmup_buffer_ratio=0.2
     ):
-        """
-        Full training loop for D4PG with categorical actions.
+        """Performs one full training step for the actor and critic in D4PG."""
+        assert (
+            self.replay_buffer is None or self.replay_buffer.max_size >= batch_size
+        ), "Replay buffer size is too small for the given batch size. Must grater or equal to batch_size"
+        self.global_step = 0
+        self.global_episode = 0
+        for episode, samples in enumerate(train_samples):
+            self.global_episode += 1
+            episode_reward = 0
+            state = env.reset(
+                options={"batch": samples["task"], "examples": samples["examples"]},
+                seed=episode,
+            )
+            done = False
 
-        Args:
-            replay_buffer (ReplayBuffer): Experience replay buffer.
-            actor_optimizer (torch.optim.Optimizer): Optimizer for the actor.
-            critic_optimizer (torch.optim.Optimizer): Optimizer for the critic.
-            gamma (float): Discount factor.
-            num_atoms (int): Number of atoms for critic distribution.
-            v_min (float): Minimum value of the value distribution.
-            v_max (float): Maximum value of the value distribution.
-            batch_size (int): Batch size for updates.
-            target_update_freq (int): Steps between target network updates.
-            steps (int): Total number of training steps.
-        """
+            while not done and (n_steps <= -1 or n_steps > 0):
+                with torch.no_grad():
+                    self.global_step += 1
+                    n_steps -= 1
+                    state = env.get_wrapper_attr("state")
+                    actions = self.actor(state)
+                    __, reward, terminated, truncated, __ = env.step(
+                        self.actor.get_discrete_actions(actions)
+                    )
+                    next_state = env.get_wrapper_attr("state")
+                    episode_reward += reward
 
-        for step in range(steps):
-            # Sample a batch from the replay buffer
-            batch = replay_buffer.sample(batch_size)
-            states, actions, rewards, next_states, dones = zip(*batch)
+                # Store the experience in the replay buffer
+                if self.replay_buffer is not None:
+                    priority = (
+                        1.0
+                        if len(self.replay_buffer.buffer) == 0
+                        else max(self.replay_buffer.priorities)
+                    )
+                    self.replay_buffer.store(
+                        state, actions, reward, next_state, terminated, priority
+                    )
+                    if (
+                        len(self.replay_buffer.buffer)
+                        > self.replay_buffer.max_size * warmup_buffer_ratio
+                        or len(self.replay_buffer.buffer) > batch_size
+                    ):
+                        batch = self.replay_buffer.sample(batch_size)
+                    else:
+                        batch = None
+                else:
+                    batch = TensorDict(
+                        {
+                            "state": state,
+                            "action": actions,
+                            "reward": reward,
+                            "next_state": next_state,
+                            "done": terminated,
+                        },
+                        batch_size=batch_size,
+                    )
+                if batch is not None:
+                    loss_actor, loss_critic = self.train_step(
+                        batch=batch,
+                        actor_optimizer=self.actor_optimizer,
+                        critic_optimizer=self.critic_optimizer,
+                        gamma=self.gamma,
+                    )
+                done = terminated or truncated
 
-            # Convert to tensors
-            states = torch.stack(states)
-            actions = torch.tensor(actions, dtype=torch.long)
-            rewards = torch.tensor(rewards, dtype=torch.float32)
-            next_states = torch.stack(next_states)
-            dones = torch
+            logger.info(
+                "Episode {}, Reward: {:.2f}, Actor Loss: {:.4f}, Critic Loss: {:.4f}".format(
+                    episode, episode_reward, loss_actor, loss_critic
+                )
+            )

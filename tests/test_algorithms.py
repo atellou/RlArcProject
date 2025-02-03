@@ -1,8 +1,12 @@
+import os
 import torch
+from torch.utils.data import DataLoader
 import tensordict
 from tensordict import TensorDict
 
-
+from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PG
@@ -11,8 +15,9 @@ from rlarcworld.utils import categorical_projection
 import unittest
 import logging
 
-logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 logger.info("Setting up D4PG test")
 
@@ -216,6 +221,33 @@ class TestD4PG(unittest.TestCase):
             assert param.grad is not None, f"Gradient not flowing in actor for: {name}"
         for name, param in self.d4pg.critic.named_parameters():
             assert param.grad is not None, f"Gradient not flowing in critic for: {name}"
+
+    def test_train_d4pg(self):
+        logger.info("Testing train_d4pg")
+        grid_size = 30
+        n_examples = 10
+        color_values = 11
+
+        # Create an instance of the ArcBatchGridEnv
+        env = ArcBatchGridEnv(grid_size, color_values)
+        env = PixelAwareRewardWrapper(env)
+
+        # Create an instance of the ArcDataset
+        dataset = ArcDataset(
+            arc_dataset_dir="tests/test_data",
+            keep_in_memory=True,
+            transform=ArcSampleTransformer(
+                (grid_size, grid_size), examples_stack_dim=10
+            ),
+        )
+        train_samples = DataLoader(dataset=dataset, batch_size=1)
+
+        self.d4pg.train_d4pg(
+            env,
+            train_samples,
+            batch_size=1,
+            n_steps=torch.randint(1, 100, size=(1,)).item(),
+        )
 
 
 if __name__ == "__main__":
