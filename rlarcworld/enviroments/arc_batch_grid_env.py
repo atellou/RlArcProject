@@ -1,3 +1,4 @@
+import os
 from typing import Optional, List
 import torch
 from tensordict import TensorDict
@@ -6,6 +7,7 @@ import gymnasium as gym
 import logging
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class ArcActionSpace:
@@ -154,11 +156,13 @@ class ArcBatchGridEnv(gym.Env):
                 "index": batch_in.clone() * 0,
                 "terminated": torch.zeros(self.batch_size, dtype=int),
                 "examples": options["examples"],
-            }
+            },
+            batch_size=self.batch_size,
         )
 
         self.observations = TensorDict(
-            {"grid": batch_in.clone(), "target": batch_out.clone()}
+            {"grid": batch_in.clone(), "target": batch_out.clone()},
+            batch_size=self.batch_size,
         )
 
         return self.observations, self.information
@@ -204,6 +208,17 @@ class ArcBatchGridEnv(gym.Env):
 
     @property
     def state(self):
+        """
+        Returns:
+            TensorDict: The state of the environment should contain the following keys:
+                - ``grid``: The current state of the grid.
+                - ``last_grid``: The state of the grid in the previous step.
+                - ``initial``: The initial state of the grid.
+                - ``index``: The current index of the batch.
+                - ``terminated``: The termination status of the episode.
+                - ``examples``: The batch of examples.
+        """
+
         state = self.information
         state.update({"grid": self.observations["grid"]})
         state.update({"last_grid": self.last_grid})

@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 import logging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class ArcSampleTransformer(object):

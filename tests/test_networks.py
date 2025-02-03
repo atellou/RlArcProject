@@ -1,3 +1,4 @@
+import os
 import torch
 from tensordict import TensorDict
 
@@ -7,7 +8,7 @@ from rlarcworld.agent.critic import ArcCriticNetwork
 import unittest
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 logger = logging.getLogger(__name__)
 
 

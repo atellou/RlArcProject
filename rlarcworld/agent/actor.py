@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 from tensordict import TensorDict
@@ -5,6 +6,7 @@ from tensordict import TensorDict
 import logging
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class ArcActorNetwork(nn.Module):
@@ -90,6 +92,7 @@ class ArcActorNetwork(nn.Module):
                 value = value / torch.max(value)
             else:
                 value = self.scale_arc_grids(value)
+            logger.debug(f"Input {key} shape: {value.shape}")
             state[key] = self.inputs_layers[key](value)
             state[key] = torch.relu(state[key])
             state[key] = state[key].view(state[key].shape[0], -1)

@@ -1,3 +1,4 @@
+import os
 from typing import Dict
 import torch
 from tensordict import TensorDict
@@ -5,6 +6,7 @@ from tensordict import TensorDict
 import logging
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class ArcCriticNetwork(torch.nn.Module):

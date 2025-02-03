@@ -1,3 +1,4 @@
+import os
 from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
 import numpy as np
@@ -6,8 +7,9 @@ from tensordict import TensorDict
 import unittest
 import logging
 
-logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class ArcBatchGridsEnv(unittest.TestCase):
