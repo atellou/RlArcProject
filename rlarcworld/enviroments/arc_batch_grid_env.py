@@ -7,7 +7,11 @@ import gymnasium as gym
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 class ArcActionSpace:
@@ -224,8 +228,23 @@ class ArcBatchGridEnv(gym.Env):
         state.update({"last_grid": self.last_grid})
         return state.clone()
 
-    def step(self, actions: list):
+    def get_state(self, unsqueeze: int = None):
+        if unsqueeze is not None:
+            assert isinstance(unsqueeze, int)
+            state = self.state
+            state.update(
+                {
+                    "grid": state["grid"].unsqueeze(unsqueeze),
+                    "last_grid": state["last_grid"].unsqueeze(unsqueeze),
+                    "initial": state["initial"].unsqueeze(unsqueeze),
+                    "index": state["index"].unsqueeze(unsqueeze),
+                    "terminated": state["terminated"].unsqueeze(unsqueeze),
+                }
+            )
+            return state
+        return self.state
 
+    def step(self, actions: list):
         if self.action_space.contains(actions.numpy()):
             self.last_grid = self.observations["grid"].clone()
             logger.debug("Actions are valid")

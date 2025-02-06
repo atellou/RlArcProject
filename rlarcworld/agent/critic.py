@@ -6,7 +6,6 @@ from tensordict import TensorDict
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class ArcCriticNetwork(torch.nn.Module):
@@ -161,4 +160,4 @@ class ArcCriticNetwork(torch.nn.Module):
                 }
             )
         self.output_val(output)
-        return output
+        return output.auto_batch_size_(batch_dims=0)

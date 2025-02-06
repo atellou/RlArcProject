@@ -5,10 +5,12 @@ import gymnasium as gym
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class PixelAwareRewardWrapper(gym.Wrapper):
+
+    def get_state(self, **kwargs):
+        return self.env.get_state(**kwargs)
 
     def get_difference(self, binary: bool = True):
         """

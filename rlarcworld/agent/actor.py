@@ -6,7 +6,6 @@ from tensordict import TensorDict
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class ArcActorNetwork(nn.Module):
@@ -122,7 +121,7 @@ class ArcActorNetwork(nn.Module):
                 {
                     reward_type: torch.softmax(layer(state), dim=-1)
                     for reward_type, layer in self.outputs_layers.items()
-                }
+                },
             )
         self.output_val(output)
-        return output
+        return output.auto_batch_size_(batch_dims=0)

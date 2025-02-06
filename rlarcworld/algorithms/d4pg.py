@@ -11,7 +11,6 @@ from rlarcworld.utils import categorical_projection
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class D4PG:
@@ -62,6 +61,17 @@ class D4PG:
         # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
+    def categorize_actions(self, actions, as_dict=False):
+        """Categorizes actions into one-hot vectors."""
+        if as_dict:
+            return TensorDict(
+                {key: torch.argmax(x, dim=-1) for key, x in actions.items()}
+            )
+        return torch.cat(
+            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in actions.values()],
+            dim=-1,
+        )
+
     def compute_target_distribution(
         self,
         reward: torch.Tensor,
@@ -86,9 +96,8 @@ class D4PG:
             action_probs = self.actor_target(next_state)
 
             # Get best action
-            best_next_action = torch.cat(
-                [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
-                dim=-1,
+            best_next_action = self.categorize_actions(
+                action_probs
             )  # Shape: (batch_size, action_space_dim)
 
             # Get the Q-distribution for the best action from the target critic
@@ -151,9 +160,8 @@ class D4PG:
         # Get action probabilities from the actor
         action_probs = self.actor(state)
         # Get best action
-        best_next_action = torch.cat(
-            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
-            dim=-1,
+        best_next_action = self.categorize_actions(
+            action_probs
         ).float()  # Shape: (batch_size, action_space_dim [4])
 
         # Compute gradient of expected Q-value w.r.t. actions
@@ -247,12 +255,14 @@ class D4PG:
                 with torch.no_grad():
                     self.global_step += 1
                     n_steps -= 1
-                    state = env.get_wrapper_attr("state")
+                    state = env.get_state(unsqueeze=1)
                     actions = self.actor(state)
+                    # TODO: Reward only return the pixelwise reward. Addition of binary needed
                     __, reward, terminated, truncated, __ = env.step(
-                        self.actor.get_discrete_actions(actions)
+                        self.categorize_actions(actions, as_dict=True)
                     )
-                    next_state = env.get_wrapper_attr("state")
+
+                    next_state = env.get_state(unsqueeze=1)
                     episode_reward += reward
 
                 # Store the experience in the replay buffer
@@ -282,8 +292,7 @@ class D4PG:
                             "next_state": next_state,
                             "done": terminated,
                         },
-                        batch_size=batch_size,
-                    )
+                    ).auto_batch_size_(batch_dims=0)
                 if batch is not None:
                     loss_actor, loss_critic = self.train_step(
                         batch=batch,

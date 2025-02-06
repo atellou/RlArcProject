@@ -17,7 +17,7 @@ import logging
 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
+
 
 logger.info("Setting up D4PG test")
 
@@ -25,7 +25,7 @@ logger.info("Setting up D4PG test")
 class TestD4PG(unittest.TestCase):
 
     def setUp(self):
-        self.batch_size = torch.randint(1, 20, size=(1,))
+        self.batch_size = torch.randint(1, 20, size=(1,)).item()
         self.grid_size = 30
         self.color_values = 11
         self.num_atoms = {"pixel_wise": 50, "binary": 3}
@@ -225,28 +225,31 @@ class TestD4PG(unittest.TestCase):
     def test_train_d4pg(self):
         logger.info("Testing train_d4pg")
         grid_size = 30
-        n_examples = 10
         color_values = 11
+        n_steps = torch.randint(1, 100, size=(1,)).item()
 
         # Create an instance of the ArcBatchGridEnv
+        logger.info("Creating ArcBatchGridEnv")
         env = ArcBatchGridEnv(grid_size, color_values)
         env = PixelAwareRewardWrapper(env)
 
         # Create an instance of the ArcDataset
+        logger.info("Creating ArcDataset")
         dataset = ArcDataset(
-            arc_dataset_dir="tests/test_data",
+            arc_dataset_dir="rlarcworld/dataset/training",
             keep_in_memory=True,
             transform=ArcSampleTransformer(
                 (grid_size, grid_size), examples_stack_dim=10
             ),
         )
-        train_samples = DataLoader(dataset=dataset, batch_size=1)
+        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
 
+        logger.info("Training D4PG")
         self.d4pg.train_d4pg(
             env,
             train_samples,
-            batch_size=1,
-            n_steps=torch.randint(1, 100, size=(1,)).item(),
+            batch_size=self.batch_size,
+            n_steps=n_steps,
         )
 
 

@@ -9,7 +9,6 @@ import logging
 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
 
 
 class ArcBatchGridsEnv(unittest.TestCase):

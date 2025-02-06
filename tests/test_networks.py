@@ -8,7 +8,7 @@ from rlarcworld.agent.critic import ArcCriticNetwork
 import unittest
 import logging
 
-logging.basicConfig(level=os.environ.get("LOGGING_LEVEL", logging.WARNING))
+
 logger = logging.getLogger(__name__)
 
 
