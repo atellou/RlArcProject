@@ -307,7 +307,7 @@ class D4PG:
                     )
                 done = done or truncated
 
-            logger.info(
+            logger.debug(
                 "Episode {}, Reward['pixel_wise']: {:.2f} Reward['binary']: {:.2f}, Actor Loss: {:.4f}, Critic Loss: {:.4f}".format(
                     episode,
                     episode_reward["pixel_wise"],

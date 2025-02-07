@@ -121,7 +121,8 @@ class ArcCriticNetwork(torch.nn.Module):
             if key == "terminated":
                 pass
             if key == "index":
-                value = value / torch.max(value)
+                max_value = torch.max(value)
+                value = value.float() if max_value == 0 else value / max_value
             elif key == "actions":
                 # x_location, y_location, color_values, submit
                 value = value / torch.tensor(
@@ -132,6 +133,7 @@ class ArcCriticNetwork(torch.nn.Module):
             state[key] = self.inputs_layers[key](value)
             state[key] = torch.relu(state[key])
             state[key] = state[key].view(state[key].shape[0], -1)
+            assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
 
         # Concatenate flattned states
         state = torch.cat(
@@ -143,21 +145,21 @@ class ArcCriticNetwork(torch.nn.Module):
         state = self.linear1(state)
         state, _ = self.gru(state)
         if self.test:
-            output = TensorDict(
+            state = TensorDict(
                 {
-                    reward_type: torch.softmax(
+                    key: torch.softmax(
                         layer(state) * 0.1 + torch.linspace(0, 1, layer.out_features),
                         dim=-1,
                     )
-                    for reward_type, layer in self.outputs_layers.items()
+                    for key, layer in self.outputs_layers.items()
                 }
             )
         else:
-            output = TensorDict(
+            state = TensorDict(
                 {
-                    reward_type: torch.softmax(layer(state), dim=-1)
-                    for reward_type, layer in self.outputs_layers.items()
+                    key: torch.softmax(layer(state), dim=-1)
+                    for key, layer in self.outputs_layers.items()
                 }
             )
-        self.output_val(output)
-        return output.auto_batch_size_(batch_dims=0)
+
+        return state.auto_batch_size_(batch_dims=0)

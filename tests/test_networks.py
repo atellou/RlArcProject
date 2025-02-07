@@ -97,8 +97,6 @@ class ArcNetworksTest(unittest.TestCase):
                 dc.pop(key)
                 network.input_val(dc)
 
-        # Forward pass
-        org_sample = input_sample.clone()
         action_probs = {
             "x_location": torch.softmax(torch.randn(self.batch_size, 30), dim=-1),
             "y_location": torch.softmax(torch.randn(self.batch_size, 30), dim=-1),
@@ -109,6 +107,15 @@ class ArcNetworksTest(unittest.TestCase):
             [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
             dim=-1,
         ).float()
+
+        # numeric stability test
+        for key in input_sample.keys():
+            if torch.rand(1).item() < 0.2:
+                input_sample[key] = input_sample[key] * 0.0
+        if torch.rand(1).item() < 0.1:
+            best_next_action = best_next_action * 0.0
+        # Forward pass
+        org_sample = input_sample.clone()
         output = network(input_sample, action=best_next_action)
 
         # Validate not inplace changes to input
@@ -215,6 +222,10 @@ class ArcNetworksTest(unittest.TestCase):
                 dc.pop(key)
                 network.input_val(dc)
 
+        # numeric stability test
+        for key in input_sample.keys():
+            if torch.rand(1).item() < 0.2:
+                input_sample[key] = input_sample[key] * 0.0
         # Forward pass
         org_sample = input_sample.clone()
         output = network(input_sample)

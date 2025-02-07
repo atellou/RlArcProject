@@ -9,7 +9,9 @@ logger = logging.getLogger(__name__)
 
 
 class ArcActorNetwork(nn.Module):
-    def __init__(self, size: int, color_values, test: bool = False):
+    def __init__(
+        self, size: int, color_values, test: bool = False, epsilon: float = 1e-6
+    ):
         super(ArcActorNetwork, self).__init__()
         self.test = test
         self.size = size
@@ -83,18 +85,20 @@ class ArcActorNetwork(nn.Module):
         state = state.clone()
         # Validate input
         self.input_val(state)
+
         # Brodcast the state
         for key, value in state.items():
             if key == "terminated":
                 pass
             if key == "index":
-                value = value / torch.max(value)
+                max_value = torch.max(value)
+                value = value.float() if max_value == 0 else value / max_value
             else:
                 value = self.scale_arc_grids(value)
-            logger.debug(f"Input {key} shape: {value.shape}")
             state[key] = self.inputs_layers[key](value)
             state[key] = torch.relu(state[key])
             state[key] = state[key].view(state[key].shape[0], -1)
+            assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
 
         # Concatenate flattned states
         state = torch.cat(
@@ -107,7 +111,7 @@ class ArcActorNetwork(nn.Module):
         state, _ = self.gru(state)
 
         if self.test:
-            output = TensorDict(
+            state = TensorDict(
                 {
                     reward_type: torch.softmax(
                         layer(state) * 0.1 + torch.linspace(0, 1, layer.out_features),
@@ -117,11 +121,17 @@ class ArcActorNetwork(nn.Module):
                 }
             )
         else:
-            output = TensorDict(
+            state = TensorDict(
                 {
                     reward_type: torch.softmax(layer(state), dim=-1)
                     for reward_type, layer in self.outputs_layers.items()
                 },
             )
-        self.output_val(output)
-        return output.auto_batch_size_(batch_dims=0)
+        self.output_val(state)
+
+        for key in state.keys():
+            assert not torch.isnan(
+                state[key]
+            ).any(), f"NaN detected in actor output for key {key}!"
+
+        return state.auto_batch_size_(batch_dims=0)
