@@ -150,7 +150,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
         )
         in_keys = {"last_grid", "grid", "examples", "initial", "index", "terminated"}
         assert set(state.keys()) == in_keys, ValueError(
-            "State keys must be {}".format(in_keys)
+            "State keys must be {}, keys found {}".format(in_keys, set(state.keys()))
         )
 
     def compute_difference(self, grid_diff, last_diff, initial_diff_grid_loc):

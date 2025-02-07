@@ -4,7 +4,7 @@ import torch
 def categorical_projection(
     next_q_dist,
     rewards,
-    dones,
+    terminated,
     gamma,
     z_atoms,
     v_min,
@@ -18,7 +18,7 @@ def categorical_projection(
     Args:
         next_q_dist (torch.Tensor): Next state Q-distribution (batch_size, num_atoms).
         rewards (torch.Tensor): Rewards from the batch (batch_size, 1).
-        dones (torch.Tensor): Done flags from the batch (batch_size, 1).
+        terminated (torch.Tensor): Done flags from the batch (batch_size, 1).
         gamma (float): Discount factor.
         z_atoms (torch.Tensor): Z reference distribution Atom values (num_atoms, 1).
         v_min (float): Minimum value for value distribution.
@@ -31,7 +31,7 @@ def categorical_projection(
     delta_z = (v_max - v_min) / (num_atoms - 1)
 
     # Compute the target distribution support
-    tz = rewards + gamma * (1 - dones) * z_atoms
+    tz = rewards + gamma * (1 - terminated) * z_atoms
     tz = tz.clamp(v_min, v_max)
 
     # Map values to categorical bins

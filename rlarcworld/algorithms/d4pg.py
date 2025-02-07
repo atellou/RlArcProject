@@ -76,7 +76,7 @@ class D4PG:
         self,
         reward: torch.Tensor,
         next_state: TensorDict,
-        done: torch.Tensor,
+        terminated: torch.Tensor,
         gamma: float,
     ):
         """
@@ -85,7 +85,7 @@ class D4PG:
         Args:
             reward (torch.Tensor): Rewards from the batch.
             next_state (TensorDict): TensorDict of next states.
-            done (torch.Tensor): Done flags from the batch.
+            terminated (torch.Tensor): terminated flags from the batch.
             gamma (float): Discount factor.
 
         Returns:
@@ -109,7 +109,7 @@ class D4PG:
                 key: categorical_projection(
                     best_next_q_dist[key],
                     reward[key],
-                    done,
+                    terminated,
                     gamma,
                     self.critic_target.z_atoms[key],
                     self.critic_target.v_min[key],
@@ -210,7 +210,7 @@ class D4PG:
 
         # Compute target distribution
         target_probs = self.compute_target_distribution(
-            batch["reward"], batch["next_state"], batch["done"], gamma
+            batch["reward"], batch["next_state"], batch["terminated"], gamma
         )
 
         # Critic update
@@ -244,7 +244,7 @@ class D4PG:
         self.global_episode = 0
         for episode, samples in enumerate(train_samples):
             self.global_episode += 1
-            episode_reward = 0
+            episode_reward = {"pixel_wise": 0.0, "binary": 0.0}
             state = env.reset(
                 options={"batch": samples["task"], "examples": samples["examples"]},
                 seed=episode,
@@ -257,13 +257,18 @@ class D4PG:
                     n_steps -= 1
                     state = env.get_state(unsqueeze=1)
                     actions = self.actor(state)
-                    # TODO: Reward only return the pixelwise reward. Addition of binary needed
-                    __, reward, terminated, truncated, __ = env.step(
-                        self.categorize_actions(actions, as_dict=True)
+                    actions = self.categorize_actions(actions, as_dict=True)
+                    __, reward, done, truncated, __ = env.step(actions)
+                    actions = torch.cat(
+                        [x.unsqueeze(-1) for x in actions.values()], dim=-1
                     )
-
+                    reward = {
+                        "pixel_wise": reward.unsqueeze(-1),
+                        "binary": env.get_wrapper_attr("last_reward").unsqueeze(-1),
+                    }
                     next_state = env.get_state(unsqueeze=1)
-                    episode_reward += reward
+                    episode_reward["pixel_wise"] += torch.sum(reward["pixel_wise"])
+                    episode_reward["binary"] += torch.sum(reward["binary"])
 
                 # Store the experience in the replay buffer
                 if self.replay_buffer is not None:
@@ -273,7 +278,7 @@ class D4PG:
                         else max(self.replay_buffer.priorities)
                     )
                     self.replay_buffer.store(
-                        state, actions, reward, next_state, terminated, priority
+                        state, actions, reward, next_state, done, priority
                     )
                     if (
                         len(self.replay_buffer.buffer)
@@ -290,7 +295,7 @@ class D4PG:
                             "action": actions,
                             "reward": reward,
                             "next_state": next_state,
-                            "done": terminated,
+                            "terminated": state["terminated"],
                         },
                     ).auto_batch_size_(batch_dims=0)
                 if batch is not None:
@@ -300,10 +305,14 @@ class D4PG:
                         critic_optimizer=self.critic_optimizer,
                         gamma=self.gamma,
                     )
-                done = terminated or truncated
+                done = done or truncated
 
             logger.info(
-                "Episode {}, Reward: {:.2f}, Actor Loss: {:.4f}, Critic Loss: {:.4f}".format(
-                    episode, episode_reward, loss_actor, loss_critic
+                "Episode {}, Reward['pixel_wise']: {:.2f} Reward['binary']: {:.2f}, Actor Loss: {:.4f}, Critic Loss: {:.4f}".format(
+                    episode,
+                    episode_reward["pixel_wise"],
+                    episode_reward["binary"],
+                    loss_actor,
+                    loss_critic,
                 )
             )
