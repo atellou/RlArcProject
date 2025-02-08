@@ -3,6 +3,11 @@ import torch
 from torch.utils.data import DataLoader
 import tensordict
 from tensordict import TensorDict
+from torchrl.data.replay_buffers import (
+    TensorDictReplayBuffer,
+    LazyTensorStorage,
+    PrioritizedSampler,
+)
 
 from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
@@ -245,6 +250,24 @@ class TestD4PG(unittest.TestCase):
         train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
 
         logger.info("Training D4PG")
+        self.d4pg.train_d4pg(
+            env,
+            train_samples,
+            batch_size=self.batch_size,
+            n_steps=n_steps,
+        )
+
+        logger.info("Testing D4PG with Replay Buffer")
+        self.d4pg.replay_buffer = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(self.batch_size),
+            sampler=PrioritizedSampler(
+                max_capacity=self.batch_size,
+                alpha=1.0,
+                beta=1.0,
+                max_priority_within_buffer=True,
+            ),
+            priority_key="priority",
+        )
         self.d4pg.train_d4pg(
             env,
             train_samples,

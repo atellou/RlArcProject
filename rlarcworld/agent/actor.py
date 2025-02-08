@@ -134,4 +134,4 @@ class ArcActorNetwork(nn.Module):
                 state[key]
             ).any(), f"NaN detected in actor output for key {key}!"
 
-        return state.auto_batch_size_(batch_dims=0)
+        return state.auto_batch_size_()

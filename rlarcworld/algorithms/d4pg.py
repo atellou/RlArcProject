@@ -218,14 +218,16 @@ class D4PG:
         loss_critic = self.compute_critic_loss(
             batch["state"], batch["action"], target_probs
         )
-        loss_critic = sum(tuple(loss_critic.values()))
+        loss_critic = tuple(loss_critic.values())
+        loss_critic = sum(loss_critic) / len(loss_critic)
         loss_critic.backward()
         critic_optimizer.step()
 
         # Actor update
         actor_optimizer.zero_grad()
         loss_actor = self.compute_actor_loss(batch["state"])
-        loss_actor = sum((g for v in loss_actor.values() for g in v.values()))
+        loss_actor = tuple(g for v in loss_actor.values() for g in v.values())
+        loss_actor = sum(loss_actor) / len(loss_actor)
         loss_actor.backward()
         actor_optimizer.step()
 
@@ -238,7 +240,8 @@ class D4PG:
     ):
         """Performs one full training step for the actor and critic in D4PG."""
         assert (
-            self.replay_buffer is None or self.replay_buffer.max_size >= batch_size
+            self.replay_buffer is None
+            or self.replay_buffer.storage.max_size >= batch_size
         ), "Replay buffer size is too small for the given batch size. Must grater or equal to batch_size"
         self.global_step = 0
         self.global_episode = 0
@@ -262,10 +265,12 @@ class D4PG:
                     actions = torch.cat(
                         [x.unsqueeze(-1) for x in actions.values()], dim=-1
                     )
-                    reward = {
-                        "pixel_wise": reward.unsqueeze(-1),
-                        "binary": env.get_wrapper_attr("last_reward").unsqueeze(-1),
-                    }
+                    reward = TensorDict(
+                        {
+                            "pixel_wise": reward.unsqueeze(-1),
+                            "binary": env.get_wrapper_attr("last_reward").unsqueeze(-1),
+                        }
+                    ).auto_batch_size_()
                     next_state = env.get_state(unsqueeze=1)
                     episode_reward["pixel_wise"] += torch.sum(reward["pixel_wise"])
                     episode_reward["binary"] += torch.sum(reward["binary"])
@@ -273,17 +278,31 @@ class D4PG:
                 # Store the experience in the replay buffer
                 if self.replay_buffer is not None:
                     priority = (
-                        1.0
-                        if len(self.replay_buffer.buffer) == 0
-                        else max(self.replay_buffer.priorities)
+                        torch.ones(batch_size)
+                        if len(self.replay_buffer.storage) == 0
+                        else torch.ones(batch_size)
+                        * max(self.replay_buffer.sampler._max_priority)
                     )
-                    self.replay_buffer.store(
-                        state, actions, reward, next_state, done, priority
+                    batch = torch.stack(
+                        [
+                            TensorDict(
+                                {
+                                    "state": state[i],
+                                    "action": actions[i],
+                                    "reward": reward[i],
+                                    "next_state": next_state[i],
+                                    "terminated": state["terminated"][i],
+                                }
+                            ).auto_batch_size_()
+                            for i in range(batch_size)
+                        ]
                     )
+                    indices = self.replay_buffer.extend(batch)
+                    self.replay_buffer.update_priority(indices, priority)
                     if (
-                        len(self.replay_buffer.buffer)
-                        > self.replay_buffer.max_size * warmup_buffer_ratio
-                        or len(self.replay_buffer.buffer) > batch_size
+                        len(self.replay_buffer.storage)
+                        > self.replay_buffer.storage.max_size * warmup_buffer_ratio
+                        or len(self.replay_buffer.storage) > batch_size
                     ):
                         batch = self.replay_buffer.sample(batch_size)
                     else:
@@ -297,7 +316,7 @@ class D4PG:
                             "next_state": next_state,
                             "terminated": state["terminated"],
                         },
-                    ).auto_batch_size_(batch_dims=0)
+                    ).auto_batch_size_()
                 if batch is not None:
                     loss_actor, loss_critic = self.train_step(
                         batch=batch,

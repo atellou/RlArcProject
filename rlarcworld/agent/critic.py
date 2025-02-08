@@ -162,4 +162,4 @@ class ArcCriticNetwork(torch.nn.Module):
                 }
             )
 
-        return state.auto_batch_size_(batch_dims=0)
+        return state.auto_batch_size_()
