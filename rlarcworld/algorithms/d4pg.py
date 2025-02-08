@@ -123,7 +123,7 @@ class D4PG:
 
         return target_dist
 
-    def compute_critic_loss(self, state, action, target_dist):
+    def compute_critic_loss(self, state, action, target_dist, compute_td_error=False):
         """
         Computes the critic loss using KL divergence.
 
@@ -137,15 +137,19 @@ class D4PG:
         """
         # Get state-action value distribution from the critic
         q_dist = self.critic(state, action)  # Shape: (batch_size, num_atoms)
-        # KL Divergence (TdError)
-        loss = TensorDict(
-            {
-                key: self.critic_criterion(q_dist[key], target_dist[key])
-                for key in q_dist.keys()
-            }
-        )
+        # TD Error
+        loss = TensorDict({})
+        td_error = TensorDict({})
+        for key in q_dist.keys():
+            if compute_td_error:
+                td_error[key] = torch.abs(
+                    torch.sum(q_dist[key] * self.critic.z_atoms[key], dim=-1)
+                    - torch.sum(target_dist[key] * self.critic.z_atoms[key], dim=-1)
+                )
+            # KL Divergence
+            loss[key] = self.critic_criterion(q_dist[key], target_dist[key])
 
-        return loss
+        return loss, td_error
 
     def compute_actor_loss(self, state):
         """
@@ -215,8 +219,11 @@ class D4PG:
 
         # Critic update
         critic_optimizer.zero_grad()
-        loss_critic = self.compute_critic_loss(
-            batch["state"], batch["action"], target_probs
+        loss_critic, td_error = self.compute_critic_loss(
+            batch["state"],
+            batch["action"],
+            target_probs,
+            compute_td_error=self.replay_buffer is not None,
         )
         loss_critic = tuple(loss_critic.values())
         loss_critic = sum(loss_critic) / len(loss_critic)
@@ -230,6 +237,11 @@ class D4PG:
         loss_actor = sum(loss_actor) / len(loss_actor)
         loss_actor.backward()
         actor_optimizer.step()
+
+        if self.replay_buffer is not None:
+            td_error = tuple(td_error.values())
+            td_error = sum(td_error) / len(td_error)
+            self.replay_buffer.update_priority(batch["index"], td_error + 1e-6)
 
         if self.global_step % self.target_update_frequency == 0:
             self.update_target_networks(tau=0.005)

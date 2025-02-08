@@ -144,7 +144,25 @@ class TestD4PG(unittest.TestCase):
         # Backpropagation
         # Define a loss function and an optimizer
         optimizer = torch.optim.Adam(self.critic.parameters(), lr=0.001)
-        loss = self.d4pg.compute_critic_loss(state, best_action, target_distribution)
+        loss, td_error = self.d4pg.compute_critic_loss(
+            state, best_action, target_distribution
+        )
+        assert tuple(td_error.keys()) == tuple([])
+
+        loss, td_error = self.d4pg.compute_critic_loss(
+            state, best_action, target_distribution, compute_td_error=True
+        )
+        assert tuple(td_error.keys()) == tuple(["pixel_wise", "binary"])
+        assert tuple(td_error["pixel_wise"].shape) == tuple(
+            [self.batch_size]
+        ), "TD Error shape incorrect, expected [{}], got {}".format(
+            self.batch_size, td_error["pixel_wise"].shape
+        )
+        for key, value in td_error.items():
+            assert not torch.isnan(
+                value
+            ).any(), f"NaN values found in TD Error for key: {key}"
+
         assert tuple(loss.keys()) == tuple(["pixel_wise", "binary"])
         for key, value in loss.items():
             assert not torch.isnan(
@@ -204,7 +222,7 @@ class TestD4PG(unittest.TestCase):
                 "action": action,
                 "reward": reward,
                 "next_state": next_state,
-                "done": done,
+                "terminated": done,
             },
             batch_size=self.batch_size,
         )
