@@ -249,13 +249,15 @@ class ArcBatchGridsEnv(unittest.TestCase):
             torch.testing.assert_close(
                 reward,
                 (
-                    torch.sum(
-                        torch.abs(observation["grid"] - observation["target"]),
-                        dim=(1, 2),
+                    (
+                        torch.sum(
+                            torch.abs(observation["grid"] - observation["target"]),
+                            dim=(1, 2),
+                        )
+                        == 0
                     )
-                    == 0
-                ).long()
-                * submission,
+                    * submission
+                ).type(torch.float32),
             ), "The step should have a reward of 0"
 
     def assert_reward_pixel(

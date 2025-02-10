@@ -6,6 +6,8 @@ import numpy as np
 import gymnasium as gym
 import logging
 
+from rlarcworld.utils import TorchQueue
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -49,7 +51,24 @@ class ArcActionSpace:
 
 class ArcBatchGridEnv(gym.Env):
 
-    def __init__(self, size: int, color_values: int):
+    def __init__(
+        self, size: int, color_values: int, n_steps: int = 1, gamma: float = 1.0
+    ):
+        assert isinstance(size, int) and size > 0, "size must be a positive int"
+        assert (
+            isinstance(color_values, int) and color_values > 0
+        ), "color_values must be a positive int"
+        assert (
+            isinstance(n_steps, int) and n_steps > 0
+        ), "n_steps must be a positive int"
+        assert (
+            isinstance(gamma, float) and gamma > 0 and gamma <= 1
+        ), "gamma must be a positive float lower or equal than 1.0"
+
+        # N-step attributes
+        self.n_steps = n_steps
+        self.gamma = gamma
+
         # 9 possible values from arc and extras for resizing and no action.
         self.color_values = color_values
 
@@ -148,8 +167,15 @@ class ArcBatchGridEnv(gym.Env):
 
         # grid of initial reward
         self.last_grid = batch_in.clone()
-        self._reward_storage = torch.zeros(self.batch_size, dtype=int)
-        self._last_reward = self._reward_storage.clone()
+
+        # Reward attributes
+        self.discount_factor = torch.ones((self.batch_size, self.n_steps)) * (
+            self.gamma ** torch.arange(1, self.n_steps + 1)
+        )
+        self._reward_storage = TorchQueue(
+            torch.zeros((self.batch_size, self.n_steps)), q_size=self.n_steps, q_dim=1
+        )
+        self._last_reward = torch.zeros(self.batch_size, dtype=int)
         self._timestep = 0
 
         # Validate examples
@@ -214,6 +240,12 @@ class ArcBatchGridEnv(gym.Env):
         """
         Computes the reward for the current grid of the environment.
         """
+        return (
+            self._reward_storage
+            * self.discount_factor[
+                : self._reward_storage.shape[self._reward_storage._q_dim]
+            ]
+        )
 
     @property
     def state(self):
@@ -293,7 +325,7 @@ class ArcBatchGridEnv(gym.Env):
             device=self._reward_storage.device,
             dtype=self._reward_storage.dtype,
         )
-        self._reward_storage += reward
+        self._reward_storage.push(reward.unsqueeze(1))
         self._last_reward = reward
 
         # TODO: No truncate version, evaluate time constraints
