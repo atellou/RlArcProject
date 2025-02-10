@@ -60,6 +60,9 @@ class TorchQueue(torch.Tensor):
             isinstance(q_size, int) and q_size > 0
         ), "q_size must be a positive integer."
         assert isinstance(q_dim, int), "q_dim must be an integer."
+        assert data.shape[q_dim] <= q_size, "Data shape is {}, q_size is {}".format(
+            data.shape[q_dim], q_size
+        )
         self._q_size = q_size
         self._q_dim = q_dim
         self.__reversed_indices = torch.arange(-1 - q_size, 0)
@@ -86,6 +89,10 @@ class TorchQueue(torch.Tensor):
     def q_dim(self):
         return self._q_dim
 
+    @property
+    def is_full(self):
+        return self.shape[self._q_dim] == self._q_size
+
     def push(self, item):
         """
         Adds an item to the queue. If the queue is full, the oldest item is removed first.
@@ -99,7 +106,12 @@ class TorchQueue(torch.Tensor):
         item = torch.cat([self, item], dim=self._q_dim)
         if item.shape[self._q_dim] > self._q_size:
             item = self.__correct_q_size(item)
-        assert item.shape[self._q_dim] <= self._q_size
+            assert item.shape[self._q_dim] == self._q_size
+        assert (
+            item.shape[self._q_dim] <= self._q_size
+        ), "Item shape is {}, q_size is {}".format(
+            item.shape[self._q_dim], self._q_size
+        )
         return TorchQueue(item, q_size=self._q_size, q_dim=self._q_dim)
 
     def __correct_q_size(self, item=None):
@@ -109,7 +121,11 @@ class TorchQueue(torch.Tensor):
         if item is None:
             item = self
         return TorchQueue(
-            item[self.__reversed_indices[1:]], q_size=self._q_size, q_dim=self._q_dim
+            torch.index_select(
+                item, self._q_dim, self.__reversed_indices[1:] + self._q_size + 1
+            ),
+            q_size=self._q_size,
+            q_dim=self._q_dim,
         )
 
     def pop(self):

@@ -22,12 +22,20 @@ class TestTorchQueue(unittest.TestCase):
         self.assertEqual(queue.shape[queue.q_dim], 6)
         self.assertEqual(queue[-1], item)
 
+    def test_push_multiple_dimensions(self):
+        queue = TorchQueue(torch.randn(3, 5), 10, q_dim=1)
+        item = torch.randn(3, 1)
+        queue = queue.push(item)
+        self.assertEqual(queue.shape[queue.q_dim], 6)
+        torch.testing.assert_close(queue[:, -1], item.squeeze(1))
+
     def test_pop(self):
         item = torch.randn(10)
         queue = TorchQueue(item, 10)
-        queue = queue.pop()
+        poped, queue = queue.pop()
         self.assertEqual(queue.shape[queue.q_dim], 9)
         self.assertEqual(queue[-1], item[-1])
+        self.assertEqual(poped, item[0])
 
     def test_multiple_push(self):
         queue = TorchQueue(torch.randn(5), 10)
@@ -36,6 +44,14 @@ class TestTorchQueue(unittest.TestCase):
             queue = queue.push(item)
             self.assertEqual(queue.shape[queue._q_dim], min(5 + i + 1, 10))
             self.assertEqual(queue[-1], item)
+
+    def test_multiple_push_multiple_dimensions(self):
+        queue = TorchQueue(torch.randn(3, 5), 10, q_dim=1)
+        for i in range(15):
+            item = torch.randn(3, 1)
+            queue = queue.push(item)
+            self.assertEqual(queue.shape[queue._q_dim], min(5 + i + 1, 10))
+            torch.testing.assert_close(queue[:, -1], item.squeeze(1))
 
     def test_multiple_pop(self):
         queue = TorchQueue(torch.randn(10), 10)
