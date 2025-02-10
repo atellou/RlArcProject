@@ -46,3 +46,78 @@ def categorical_projection(
     projected_dist.scatter_add_(dim=-1, index=u, src=next_q_dist * (b - l.float()))
 
     return torch.softmax(projected_dist, dim=-1) if apply_softmax else projected_dist
+
+
+class TorchQueue(torch.Tensor):
+    _q_size: tuple
+    _q_dim: int
+
+    def __new__(cls, data, q_size: int, q_dim: int = 0, *args, **kwargs):
+        return super().__new__(cls, data, *args, **kwargs)
+
+    def __init__(self, data, q_size: int, q_dim: int = 0):
+        assert (
+            isinstance(q_size, int) and q_size > 0
+        ), "q_size must be a positive integer."
+        assert isinstance(q_dim, int), "q_dim must be an integer."
+        self._q_size = q_size
+        self._q_dim = q_dim
+        self.__reversed_indices = torch.arange(-1 - q_size, 0)
+
+    def clone(self, *args, **kwargs):
+        return TorchQueue(
+            super().clone(*args, **kwargs),
+            data=self,
+            q_size=self._q_size,
+            q_dim=self._q_dim,
+        )
+
+    def to(self, *args, **kwargs):
+        new_obj = super().to(*args, **kwargs)
+        if new_obj is self:
+            return self
+        return TorchQueue(new_obj, q_size=self._q_size, q_dim=self._q_dim)
+
+    @property
+    def q_size(self):
+        return self._q_size
+
+    @property
+    def q_dim(self):
+        return self._q_dim
+
+    def push(self, item):
+        """
+        Adds an item to the queue. If the queue is full, the oldest item is removed first.
+
+        Args:
+            item (torch.Tensor): The item to be added to the queue.
+
+        Returns:
+            torch.Tensor: The item that was added to the queue.
+        """
+        item = torch.cat([self, item], dim=self._q_dim)
+        if item.shape[self._q_dim] > self._q_size:
+            item = self.__correct_q_size(item)
+        assert item.shape[self._q_dim] <= self._q_size
+        return TorchQueue(item, q_size=self._q_size, q_dim=self._q_dim)
+
+    def __correct_q_size(self, item=None):
+        """
+        Correct the size of the queue along the specified dimension when full.
+        """
+        if item is None:
+            item = self
+        return TorchQueue(
+            item[self.__reversed_indices[1:]], q_size=self._q_size, q_dim=self._q_dim
+        )
+
+    def pop(self):
+        """
+        Pops the oldest elements along the specified dimension.
+
+        Returns:
+            torch.Tensor: The oldest item in the queue.
+            TorchQueue: The updated queue without the oldest item.
+        """
+        return self[0], TorchQueue(self[1:], q_size=self._q_size, q_dim=self._q_dim)

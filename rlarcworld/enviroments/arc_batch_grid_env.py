@@ -210,6 +210,11 @@ class ArcBatchGridEnv(gym.Env):
             dtype=grid_diffs.dtype,
         )
 
+    def n_step_reward(self):
+        """
+        Computes the reward for the current grid of the environment.
+        """
+
     @property
     def state(self):
         """
