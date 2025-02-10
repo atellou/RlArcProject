@@ -240,12 +240,7 @@ class ArcBatchGridEnv(gym.Env):
         """
         Computes the reward for the current grid of the environment.
         """
-        return (
-            self._reward_storage
-            * self.discount_factor[
-                : self._reward_storage.shape[self._reward_storage._q_dim]
-            ]
-        )
+        return torch.sum(self._reward_storage * self.discount_factor, dim=1)
 
     @property
     def state(self):

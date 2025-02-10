@@ -4,10 +4,43 @@ import torch
 import gymnasium as gym
 import logging
 
+from rlarcworld.utils import TorchQueue
+
 logger = logging.getLogger(__name__)
 
 
 class PixelAwareRewardWrapper(gym.Wrapper):
+
+    def __init__(self, env, n_steps: int = 1, gamma: float = 1.0):
+        super().__init__(env)
+        assert (
+            isinstance(n_steps, int) and n_steps > 0
+        ), "n_steps must be a positive int"
+        assert (
+            isinstance(gamma, float) and gamma > 0 and gamma <= 1
+        ), "gamma must be a positive float lower or equal than 1.0"
+
+        self.n_steps = n_steps
+        self.gamma = gamma
+
+    def reset(self, *, seed=None, options=None):
+        reset = super().reset(seed=seed, options=options)
+        self.batch_size = self.get_wrapper_attr("batch_size")
+        # Reward attributes
+        self.discount_factor = torch.ones((self.batch_size, self.n_steps)) * (
+            self.gamma ** torch.arange(1, self.n_steps + 1)
+        )
+        self._reward_storage = TorchQueue(
+            torch.zeros((self.batch_size, self.n_steps)), q_size=self.n_steps, q_dim=1
+        )
+        self._last_reward = torch.zeros(self.batch_size, dtype=int)
+        return reset
+
+    def n_step_reward(self):
+        """
+        Computes the reward for the current grid of the environment.
+        """
+        return torch.sum(self._reward_storage * self.discount_factor, dim=1)
 
     def get_state(self, **kwargs):
         return self.env.get_state(**kwargs)
@@ -96,4 +129,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         obs, _, terminated, truncated, info = self.env.step(actions)
         self.grid_diffs = self.get_difference()
         reward = self.reward(self.last_diffs, self.grid_diffs, actions["submit"])
+        self._reward_storage.push(reward.unsqueeze(1))
+        self._last_reward = reward
         return obs, reward, terminated, truncated, info

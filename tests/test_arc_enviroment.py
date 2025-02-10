@@ -19,7 +19,9 @@ class ArcBatchGridsEnv(unittest.TestCase):
         size = np.random.randint(2, 4)
         color_values = np.random.randint(2, 4)
 
-        env = ArcBatchGridEnv(size, color_values)
+        env = ArcBatchGridEnv(
+            size, color_values, n_steps=np.random.randint(1, 10), gamma=1.0
+        )
         self.episodes_simulation(batch_size, size, color_values, env)
 
     def test_wrapper(self):
@@ -29,7 +31,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
         color_values = np.random.randint(2, 4)
 
         env = ArcBatchGridEnv(size, color_values)
-        env = PixelAwareRewardWrapper(env)
+        env = PixelAwareRewardWrapper(env, n_steps=np.random.randint(1, 10), gamma=1.0)
         self.episodes_simulation(batch_size, size, color_values, env)
 
     def episodes_simulation(self, batch_size, size, color_values, env):
@@ -138,6 +140,19 @@ class ArcBatchGridsEnv(unittest.TestCase):
                             submission,
                             is_last_step,
                         )
+
+                    # Dummy test n-step computation: Check that it runs
+                    n_reward = env.n_step_reward()
+                    assert isinstance(n_reward, torch.Tensor), TypeError(
+                        "N-step reward must be a Tensor, type {} returned.".format(
+                            type(n_reward)
+                        )
+                    )
+                    assert (
+                        n_reward.shape[0] == batch_size
+                    ), "N-step reward must have batch size {} but has {}".format(
+                        batch_size, n_reward.shape[0]
+                    )
 
     def assert_state_property(self, state):
         """
