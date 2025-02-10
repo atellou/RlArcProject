@@ -20,21 +20,23 @@ class D4PG:
         actor,
         critic,
         replay_buffer=None,
+        n_steps=1,
         gamma=0.99,
         tau=0.001,
         target_update_frequency=10,
     ):
-        logger.info("Initializing D4PG...")
+        logger.debug("Initializing D4PG...")
 
         # Store parameters
         self.global_step = 0
         self.global_episode = 0
+        self.n_steps = n_steps
         self.gamma = gamma
         self.tau = tau
         self.target_update_frequency = target_update_frequency
         self.replay_buffer = replay_buffer
         if self.replay_buffer is not None:
-            logger.info("Replay buffer initialized")
+            logger.debug("Replay buffer initialized")
         else:
             logger.warning("Replay buffer not set. Skipping experience storage.")
 
@@ -104,6 +106,9 @@ class D4PG:
             best_next_q_dist = self.critic_target(next_state, best_next_action)
 
         # Project the distribution using the categorical projection
+        assert best_next_q_dist.keys() == reward.keys(), ValueError(
+            "Keys of best_next_q_dist and reward must be the same"
+        )
         target_dist = TensorDict(
             {
                 key: categorical_projection(
@@ -116,6 +121,7 @@ class D4PG:
                     self.critic_target.v_max[key],
                     self.critic_target.num_atoms[key],
                     apply_softmax=True,
+                    n_steps=self.n_steps if key == "n_reward" else 1,
                 )
                 for key in best_next_q_dist.keys()
             }
@@ -244,13 +250,79 @@ class D4PG:
             self.replay_buffer.update_priority(batch["index"], td_error + 1e-6)
 
         if self.global_step % self.target_update_frequency == 0:
-            self.update_target_networks(tau=0.005)
+            self.update_target_networks(tau=self.tau)
         return loss_actor, loss_critic
 
+    def step(self, env):
+        with torch.no_grad():
+            state = env.get_state(unsqueeze=1)
+            actions = self.actor(state)
+            actions = self.categorize_actions(actions, as_dict=True)
+            __, reward, done, truncated, __ = env.step(actions)
+            actions = torch.cat([x.unsqueeze(-1) for x in actions.values()], dim=-1)
+            reward = TensorDict(
+                {
+                    "pixel_wise": reward.unsqueeze(-1),
+                    "binary": env.get_wrapper_attr("last_reward").unsqueeze(-1),
+                }
+            ).auto_batch_size_()
+            next_state = env.get_state(unsqueeze=1)
+            if self.n_steps > 1:
+                reward["n_reward"] = env.n_step_reward().unsqueeze(-1)
+        return state, reward, actions, next_state, done, truncated
+
+    def replay_buffer_step(
+        self,
+        batch_size,
+        state,
+        actions,
+        reward,
+        next_state,
+        warmup_buffer_ratio=0.2,
+    ):
+        priority = (
+            torch.ones(batch_size)
+            if len(self.replay_buffer.storage) == 0
+            else torch.ones(batch_size) * max(self.replay_buffer.sampler._max_priority)
+        )
+        batch = torch.stack(
+            [
+                TensorDict(
+                    {
+                        "state": state[i],
+                        "action": actions[i],
+                        "reward": reward[i],
+                        "next_state": next_state[i],
+                        "terminated": state["terminated"][i],
+                    }
+                ).auto_batch_size_()
+                for i in range(batch_size)
+            ]
+        )
+        indices = self.replay_buffer.extend(batch)
+        self.replay_buffer.update_priority(indices, priority)
+        if (
+            len(self.replay_buffer.storage)
+            > self.replay_buffer.storage.max_size * warmup_buffer_ratio
+            or len(self.replay_buffer.storage) > batch_size
+        ):
+            batch = self.replay_buffer.sample(batch_size)
+        else:
+            batch = None
+        return batch
+
     def train_d4pg(
-        self, env, train_samples, batch_size, n_steps=-1, warmup_buffer_ratio=0.2
+        self, env, train_samples, batch_size, max_steps=-1, warmup_buffer_ratio=0.2
     ):
         """Performs one full training step for the actor and critic in D4PG."""
+        assert (
+            env.n_steps == self.n_steps
+        ), "n-steps in enviroment ({}) is different from n-steps in algorithm ({})".format(
+            env.n_steps, self.n_steps
+        )
+        assert (
+            self.n_steps <= max_steps or max_steps < 0
+        ), "max_steps must be greater or equal to n_steps"
         assert (
             self.replay_buffer is None
             or self.replay_buffer.storage.max_size >= batch_size
@@ -260,66 +332,32 @@ class D4PG:
         for episode, samples in enumerate(train_samples):
             self.global_episode += 1
             episode_reward = {"pixel_wise": 0.0, "binary": 0.0}
-            state = env.reset(
+            env.reset(
                 options={"batch": samples["task"], "examples": samples["examples"]},
                 seed=episode,
             )
             done = False
+            episode_step = 0
+            while not done and (max_steps <= -1 or max_steps > 0):
+                episode_step += 1
+                self.global_step += 1
+                max_steps -= 1
+                state, reward, actions, next_state, done, truncated = self.step(env)
 
-            while not done and (n_steps <= -1 or n_steps > 0):
-                with torch.no_grad():
-                    self.global_step += 1
-                    n_steps -= 1
-                    state = env.get_state(unsqueeze=1)
-                    actions = self.actor(state)
-                    actions = self.categorize_actions(actions, as_dict=True)
-                    __, reward, done, truncated, __ = env.step(actions)
-                    actions = torch.cat(
-                        [x.unsqueeze(-1) for x in actions.values()], dim=-1
-                    )
-                    reward = TensorDict(
-                        {
-                            "pixel_wise": reward.unsqueeze(-1),
-                            "binary": env.get_wrapper_attr("last_reward").unsqueeze(-1),
-                        }
-                    ).auto_batch_size_()
-                    next_state = env.get_state(unsqueeze=1)
-                    episode_reward["pixel_wise"] += torch.sum(reward["pixel_wise"])
-                    episode_reward["binary"] += torch.sum(reward["binary"])
+                episode_reward["pixel_wise"] += torch.sum(reward["pixel_wise"])
+                episode_reward["binary"] += torch.sum(reward["binary"])
 
                 # Store the experience in the replay buffer
-                if self.replay_buffer is not None:
-                    priority = (
-                        torch.ones(batch_size)
-                        if len(self.replay_buffer.storage) == 0
-                        else torch.ones(batch_size)
-                        * max(self.replay_buffer.sampler._max_priority)
+                if self.replay_buffer is not None and episode_step >= self.n_steps:
+                    batch = self.replay_buffer_step(
+                        batch_size,
+                        state,
+                        actions,
+                        reward,
+                        next_state,
+                        warmup_buffer_ratio,
                     )
-                    batch = torch.stack(
-                        [
-                            TensorDict(
-                                {
-                                    "state": state[i],
-                                    "action": actions[i],
-                                    "reward": reward[i],
-                                    "next_state": next_state[i],
-                                    "terminated": state["terminated"][i],
-                                }
-                            ).auto_batch_size_()
-                            for i in range(batch_size)
-                        ]
-                    )
-                    indices = self.replay_buffer.extend(batch)
-                    self.replay_buffer.update_priority(indices, priority)
-                    if (
-                        len(self.replay_buffer.storage)
-                        > self.replay_buffer.storage.max_size * warmup_buffer_ratio
-                        or len(self.replay_buffer.storage) > batch_size
-                    ):
-                        batch = self.replay_buffer.sample(batch_size)
-                    else:
-                        batch = None
-                else:
+                elif self.replay_buffer is None:
                     batch = TensorDict(
                         {
                             "state": state,
@@ -329,6 +367,9 @@ class D4PG:
                             "terminated": state["terminated"],
                         },
                     ).auto_batch_size_()
+                else:
+                    batch = None
+
                 if batch is not None:
                     loss_actor, loss_critic = self.train_step(
                         batch=batch,

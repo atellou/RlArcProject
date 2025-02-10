@@ -11,6 +11,7 @@ def categorical_projection(
     v_max,
     num_atoms,
     apply_softmax=True,
+    n_steps=1,
 ):
     """
     Projects the target distribution using the Bellman update.
@@ -24,6 +25,8 @@ def categorical_projection(
         v_min (float): Minimum value for value distribution.
         v_max (float): Maximum value for value distribution.
         num_atoms (int): Number of atoms in the distribution.
+        apply_softmax (bool): Whether to apply softmax to the projected distribution.
+        n_steps (int): Number of steps in the Bellman update.
 
     Returns:
         torch.Tensor: Projected target distribution (batch_size, num_atoms).
@@ -31,7 +34,7 @@ def categorical_projection(
     delta_z = (v_max - v_min) / (num_atoms - 1)
 
     # Compute the target distribution support
-    tz = rewards + gamma * (1 - terminated) * z_atoms
+    tz = rewards + (gamma**n_steps) * (1 - terminated) * z_atoms
     tz = tz.clamp(v_min, v_max)
 
     # Map values to categorical bins
