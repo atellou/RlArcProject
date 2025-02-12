@@ -361,7 +361,7 @@ class D4PG:
                         "action": actions[i],
                         "reward": reward[i],
                         "next_state": next_state[i],
-                        "terminated": state["terminated"][i],
+                        "terminated": next_state["terminated"][i],
                     }
                 ).auto_batch_size_()
                 for i in range(batch_size)
@@ -377,6 +377,24 @@ class D4PG:
             batch = self.replay_buffer.sample(batch_size)
         else:
             batch = None
+        return batch
+
+    def fileter_compleated_state(
+        self,
+        batch,
+    ):
+        """
+        Filters out the completed states from a batch of transitions.
+
+        Args:
+            batch (TensorDict): A batch of transitions.
+
+        Returns:
+            TensorDict: A filtered batch of transitions where the states are not completed.
+        """
+        mask = batch["state"]["terminated"] == 0
+        selected_indices = mask.nonzero(as_tuple=True)[0]
+        batch = batch[selected_indices]
         return batch
 
     def train_d4pg(
@@ -441,13 +459,14 @@ class D4PG:
                             "action": actions,
                             "reward": reward,
                             "next_state": next_state,
-                            "terminated": state["terminated"],
+                            "terminated": next_state["terminated"],
                         },
                     ).auto_batch_size_()
                 else:
                     batch = None
 
                 if batch is not None:
+                    batch = self.fileter_compleated_state(batch)
                     loss_actor, loss_critic = self.train_step(
                         batch=batch,
                         actor_optimizer=self.actor_optimizer,
