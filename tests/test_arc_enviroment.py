@@ -130,7 +130,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
                                 - dummy_batch["batch"]["output"][:, y_loc, x_loc]
                                 != 0
                             ).long(),
-                            env.max_penality(),
+                            env.max_penality,
                         )
                     elif isinstance(env, ArcBatchGridEnv):
                         self.assert_state_property(env.state)
