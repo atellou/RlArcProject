@@ -25,6 +25,27 @@ class D4PG:
         tau=0.001,
         target_update_frequency=10,
     ):
+        """
+        Initialize a D4PG instance.
+
+        Parameters
+        ----------
+        actor : torch.nn.Module
+            Actor network.
+        critic : torch.nn.Module
+            Critic network.
+        replay_buffer : rlarcworld.data.replay_buffers.TensorDictReplayBuffer, optional
+            Replay buffer to store experiences in. If not provided, experiences won't
+            be stored and the algorithm will not be able to learn.
+        n_steps : int, optional
+            Number of steps to take before updating the target networks. Defaults to 1.
+        gamma : float, optional
+            Discount factor for future rewards. Defaults to 0.99.
+        tau : float, optional
+            Soft update parameter for target networks. Defaults to 0.001.
+        target_update_frequency : int, optional
+            Frequency of target network updates. Defaults to 10.
+        """
         logger.debug("Initializing D4PG...")
 
         # Store parameters
@@ -64,7 +85,18 @@ class D4PG:
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
     def categorize_actions(self, actions, as_dict=False):
-        """Categorizes actions into one-hot vectors."""
+        """
+        Convert a probability distribution action to discrete action.
+
+        Args:
+            actions (TensorDict or torch.Tensor): Distribution over actions.
+            as_dict (bool, optional): Whether to return a TensorDict or a single
+                tensor. Defaults to False.
+
+        Returns:
+            TensorDict or torch.Tensor: The categorical action.
+        """
+
         if as_dict:
             return TensorDict(
                 {key: torch.argmax(x, dim=-1) for key, x in actions.items()}
@@ -131,15 +163,16 @@ class D4PG:
 
     def compute_critic_loss(self, state, action, target_dist, compute_td_error=False):
         """
-        Computes the critic loss using KL divergence.
+        Computes the loss for the critic network.
 
         Args:
             state (TensorDict): TensorDict of current states.
-            action (torch.Tensor): Actions taken in the batch.
-            target_dist (torch.Tensor): Target distribution computed by Bellman backup.
+            action (torch.Tensor): Tensor of actions.
+            target_dist (TensorDict): Target distribution from the target critic.
+            compute_td_error (bool, optional): Whether to compute the TD error. Defaults to False.
 
         Returns:
-            torch.Tensor: Critic loss.
+            Tuple[TensorDict, TensorDict]: Critic loss and TD error.
         """
         # Get state-action value distribution from the critic
         q_dist = self.critic(state, action)  # Shape: (batch_size, num_atoms)
@@ -193,7 +226,12 @@ class D4PG:
         return loss
 
     def update_target_networks(self, tau=0.005):
-        """Performs a soft update on the target networks."""
+        """
+        Updates the target networks using the Polyak averaging method.
+
+        Args:
+            tau (float, optional): The update rate. Defaults to 0.005.
+        """
         for target_param, param in zip(
             self.actor_target.parameters(), self.actor.parameters()
         ):
@@ -254,6 +292,22 @@ class D4PG:
         return loss_actor, loss_critic
 
     def step(self, env):
+        """
+        Performs a single step in the environment using the current policy.
+
+        Args:
+            env: The environment to interact with.
+
+        Returns:
+            Tuple containing:
+                - state (TensorDict): The current state of the environment.
+                - reward (TensorDict): The rewards received after taking the action.
+                - actions (torch.Tensor): The actions taken by the actor.
+                - next_state (TensorDict): The state of the environment after the action.
+                - done (bool): Whether the episode has terminated.
+                - truncated (bool): Whether the episode has been truncated.
+        """
+
         with torch.no_grad():
             state = env.get_state(unsqueeze=1)
             actions = self.actor(state)
@@ -280,6 +334,20 @@ class D4PG:
         next_state,
         warmup_buffer_ratio=0.2,
     ):
+        """
+        Stores a batch of transitions in the replay buffer and samples a new batch of size `batch_size`.
+
+        Args:
+            batch_size (int): The size of the batch to sample.
+            state (TensorDict): The state of the environment.
+            actions (torch.Tensor): The actions taken by the actor.
+            reward (TensorDict): The rewards received from the environment.
+            next_state (TensorDict): The next state of the environment.
+            warmup_buffer_ratio (float, optional): The ratio of the replay buffer to fill before sampling. Defaults to 0.2.
+
+        Returns:
+            TensorDict or None: A batch of transitions if the replay buffer is full, otherwise None.
+        """
         priority = (
             torch.ones(batch_size)
             if len(self.replay_buffer.storage) == 0
@@ -314,7 +382,16 @@ class D4PG:
     def train_d4pg(
         self, env, train_samples, batch_size, max_steps=-1, warmup_buffer_ratio=0.2
     ):
-        """Performs one full training step for the actor and critic in D4PG."""
+        """
+        Trains the D4PG algorithm using the given enviroment and train samples.
+
+        Args:
+            env (ArcBatchGridEnv): The enviroment to use for training.
+            train_samples (DataLoader): A DataLoader containing the training samples.
+            batch_size (int): The size of the batch to sample from the replay buffer.
+            max_steps (int, optional): The maximum number of steps to take in the enviroment. Defaults to -1 (no limit).
+            warmup_buffer_ratio (float, optional): The ratio of the replay buffer to fill before sampling. Defaults to 0.2.
+        """
         assert (
             env.n_steps == self.n_steps
         ), "n-steps in enviroment ({}) is different from n-steps in algorithm ({})".format(
