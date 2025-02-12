@@ -49,8 +49,6 @@ class D4PG:
         logger.debug("Initializing D4PG...")
 
         # Store parameters
-        self.global_step = 0
-        self.global_episode = 0
         self.n_steps = n_steps
         self.gamma = gamma
         self.tau = tau
@@ -287,8 +285,6 @@ class D4PG:
             td_error = sum(td_error) / len(td_error)
             self.replay_buffer.update_priority(batch["index"], td_error + 1e-6)
 
-        if self.global_step % self.target_update_frequency == 0:
-            self.update_target_networks(tau=self.tau)
         return loss_actor, loss_critic
 
     def step(self, env):
@@ -397,8 +393,24 @@ class D4PG:
         batch = batch[selected_indices]
         return batch
 
+    def validate_d4pg(self, env, validation_samples, batch_size):
+        """
+        Validates the D4PG algorithm using the given enviroment and validation samples.
+
+        Args:
+            env (ArcBatchGridEnv): The enviroment to use for validation.
+            validation_samples (DataLoader): A DataLoader containing the validation samples.
+            batch_size (int): The size of the batch to sample from the validation samples.
+        """
+
     def train_d4pg(
-        self, env, train_samples, batch_size, max_steps=-1, warmup_buffer_ratio=0.2
+        self,
+        env,
+        train_samples,
+        batch_size,
+        max_steps=-1,
+        warmup_buffer_ratio=0.2,
+        validation_frequency=100,
     ):
         """
         Trains the D4PG algorithm using the given enviroment and train samples.
@@ -409,6 +421,7 @@ class D4PG:
             batch_size (int): The size of the batch to sample from the replay buffer.
             max_steps (int, optional): The maximum number of steps to take in the enviroment. Defaults to -1 (no limit).
             warmup_buffer_ratio (float, optional): The ratio of the replay buffer to fill before sampling. Defaults to 0.2.
+            validation_frequency (int, optional): The frequency of validation steps. Defaults to 100.
         """
         assert (
             env.n_steps == self.n_steps
@@ -422,10 +435,10 @@ class D4PG:
             self.replay_buffer is None
             or self.replay_buffer.storage.max_size >= batch_size
         ), "Replay buffer size is too small for the given batch size. Must grater or equal to batch_size"
-        self.global_step = 0
-        self.global_episode = 0
+        global_step = 0
+        global_episode = 0
         for episode, samples in enumerate(train_samples):
-            self.global_episode += 1
+            global_episode += 1
             episode_reward = {"pixel_wise": 0.0, "binary": 0.0}
             env.reset(
                 options={"batch": samples["task"], "examples": samples["examples"]},
@@ -435,7 +448,7 @@ class D4PG:
             episode_step = 0
             while not done and (max_steps <= -1 or max_steps > 0):
                 episode_step += 1
-                self.global_step += 1
+                global_step += 1
                 max_steps -= 1
                 state, reward, actions, next_state, done, truncated = self.step(env)
 
@@ -473,6 +486,9 @@ class D4PG:
                         critic_optimizer=self.critic_optimizer,
                         gamma=self.gamma,
                     )
+
+                    if global_step % self.target_update_frequency == 0:
+                        self.update_target_networks(tau=self.tau)
                 done = done or truncated
 
             logger.debug(
