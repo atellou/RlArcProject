@@ -162,12 +162,12 @@ class TestD4PG(unittest.TestCase):
         # Backpropagation
         # Define a loss function and an optimizer
         optimizer = torch.optim.Adam(self.critic.parameters(), lr=0.001)
-        loss, td_error = self.d4pg.compute_critic_loss(
+        loss, td_error, q_dist = self.d4pg.compute_critic_loss(
             state, best_action, target_distribution
         )
         assert tuple(td_error.keys()) == tuple([])
 
-        loss, td_error = self.d4pg.compute_critic_loss(
+        loss, td_error, q_dist = self.d4pg.compute_critic_loss(
             state, best_action, target_distribution, compute_td_error=True
         )
         assert tuple(td_error.keys()) == tuple(["pixel_wise", "binary"])
@@ -245,9 +245,41 @@ class TestD4PG(unittest.TestCase):
             batch_size=self.batch_size,
         )
 
-        loss_actor, loss_critic = self.d4pg.train_step(
-            10, self.batch_size, state, action, reward, next_state
+        loss_actor, loss_critic = self.d4pg.compute_loss(batch)
+
+        logger.info(f"Actor loss: {loss_actor}")
+        logger.info(f"Critic loss: {loss_critic}")
+        # Check that losses are not NaN
+        assert not torch.isnan(loss_actor), "Actor loss is NaN"
+        assert not torch.isnan(loss_critic), "Critic loss is NaN"
+
+        # Check that gradients are flowing
+        for name, param in self.d4pg.actor.named_parameters():
+            assert param.grad is not None, f"Gradient not flowing in actor for: {name}"
+        for name, param in self.d4pg.critic.named_parameters():
+            assert param.grad is not None, f"Gradient not flowing in critic for: {name}"
+
+    def test_validation_step(self):
+        logger.info("Testing train step")
+        reward, done, __, state = self.simmulated_data()
+        __, __, __, next_state = self.simmulated_data()
+        action_probs = self.d4pg.actor(state)
+        action = torch.cat(
+            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action.values()],
+            dim=-1,
+        )  # Shape: (batch_size, action_space_dim)
+        batch = TensorDict(
+            {
+                "state": state,
+                "action": action,
+                "reward": reward,
+                "next_state": next_state,
+                "terminated": done,
+            },
+            batch_size=self.batch_size,
         )
+
+        loss_actor, loss_critic = self.d4pg.compute_loss(batch, training=False)
 
         logger.info(f"Actor loss: {loss_actor}")
         logger.info(f"Critic loss: {loss_critic}")

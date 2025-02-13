@@ -27,6 +27,7 @@ class D4PG:
         batch_size: int,
         validation_samples: DataLoader = None,
         replay_buffer: ReplayBuffer = None,
+        warmup_buffer_ratio: float = 0.2,
         n_steps: int = 1,
         gamma: float = 0.99,
         tau: float = 0.001,
@@ -47,6 +48,18 @@ class D4PG:
         self.tau = tau
         self.target_update_frequency = target_update_frequency
         self.replay_buffer = replay_buffer
+        self.warmup_buffer_ratio = warmup_buffer_ratio
+
+        if self.replay_buffer is None:
+            self.batch_size = train_samples.batch_size
+            logger.warning(
+                "Replay buffer not set. The environment will use the samples given by the dataloades: {}".format(
+                    self.batch_size
+                )
+            )
+        else:
+            self.batch_size = batch_size
+
         if self.replay_buffer is not None:
             logger.debug("Replay buffer initialized")
         else:
@@ -186,9 +199,9 @@ class D4PG:
             # KL Divergence
             loss[key] = self.critic_criterion(q_dist[key], target_dist[key])
 
-        return loss, td_error
+        return loss, td_error, q_dist
 
-    def compute_actor_loss(self, state):
+    def compute_actor_loss(self, state, action_probs=None, critic_probs=None):
         """
         Compute the loss for the actor network.
 
@@ -199,7 +212,10 @@ class D4PG:
             torch.Tensor: Actor loss (negative expected Q-value).
         """
         # Get action probabilities from the actor
-        action_probs = self.actor(state)
+        if action_probs is None:
+            action_probs = self.actor(state)
+        else:
+            self.actor.output_val(action_probs)
         # Get best action
         best_next_action = self.categorize_actions(
             action_probs
@@ -208,12 +224,16 @@ class D4PG:
         # Compute gradient of expected Q-value w.r.t. actions
         best_next_action.requires_grad = True
 
-        probs = self.critic(state, best_next_action)
+        if critic_probs is None:
+            critic_probs = self.critic(state, best_next_action)
+        else:
+            self.critic.output_val(critic_probs)
         loss = TensorDict({})
-        for key in probs.keys():
-            Q = (probs[key] * self.critic.z_atoms[key].to(probs[key].device)).sum(
-                dim=-1
-            )
+        for key in critic_probs.keys():
+            Q = (
+                critic_probs[key]
+                * self.critic.z_atoms[key].to(critic_probs[key].device)
+            ).sum(dim=-1)
             grad = torch.autograd.grad(Q.sum(), best_next_action, retain_graph=True)[0]
             # Policy gradient update
             loss[key] = {
@@ -242,12 +262,10 @@ class D4PG:
 
     def replay_buffer_step(
         self,
-        batch_size,
         state,
         actions,
         reward,
         next_state,
-        warmup_buffer_ratio=0.2,
     ):
         """
         Stores a batch of transitions in the replay buffer and samples a new batch of size `batch_size`.
@@ -258,15 +276,16 @@ class D4PG:
             actions (torch.Tensor): The actions taken by the actor.
             reward (TensorDict): The rewards received from the environment.
             next_state (TensorDict): The next state of the environment.
-            warmup_buffer_ratio (float, optional): The ratio of the replay buffer to fill before sampling. Defaults to 0.2.
 
         Returns:
             TensorDict or None: A batch of transitions if the replay buffer is full, otherwise None.
         """
+        sampled_batch_size = self.train_samples.batch_size
         priority = (
-            torch.ones(batch_size)
+            torch.ones(sampled_batch_size)
             if len(self.replay_buffer.storage) == 0
-            else torch.ones(batch_size) * max(self.replay_buffer.sampler._max_priority)
+            else torch.ones(sampled_batch_size)
+            * max(self.replay_buffer.sampler._max_priority)
         )
         batch = torch.stack(
             [
@@ -279,17 +298,16 @@ class D4PG:
                         "terminated": next_state["terminated"][i],
                     }
                 ).auto_batch_size_()
-                for i in range(batch_size)
+                for i in range(sampled_batch_size)
             ]
         )
         indices = self.replay_buffer.extend(batch)
         self.replay_buffer.update_priority(indices, priority)
         if (
             len(self.replay_buffer.storage)
-            > self.replay_buffer.storage.max_size * warmup_buffer_ratio
-            or len(self.replay_buffer.storage) > batch_size
+            > self.replay_buffer.storage.max_size * self.warmup_buffer_ratio
         ):
-            batch = self.replay_buffer.sample(batch_size)
+            batch = self.replay_buffer.sample(self.batch_size)
         else:
             batch = None
         return batch
@@ -312,16 +330,7 @@ class D4PG:
         batch = batch[selected_indices]
         return batch
 
-    def train_step(
-        self,
-        step,
-        batch_size,
-        state,
-        actions,
-        reward,
-        next_state,
-        warmup_buffer_ratio=0.2,
-    ):
+    def compute_loss(self, batch, training=True):
         """
         Perform a training step for the D4PG algorithm.
 
@@ -332,35 +341,11 @@ class D4PG:
             actions (torch.Tensor): The actions taken by the actor in the current state.
             reward (TensorDict): The rewards received from the enviroment.
             next_state (TensorDict): The next state of the enviroment.
-            warmup_buffer_ratio (float): The ratio of the replay buffer to fill before sampling.
 
         Returns:
             tuple: The actor and critic losses as a tuple.
         """
-        # Store the experience in the replay buffer
-        if self.replay_buffer is not None and step >= self.n_steps:
-            batch = self.replay_buffer_step(
-                batch_size,
-                state,
-                actions,
-                reward,
-                next_state,
-                warmup_buffer_ratio,
-            )
-        elif self.replay_buffer is None:
-            batch = TensorDict(
-                {
-                    "state": state,
-                    "action": actions,
-                    "reward": reward,
-                    "next_state": next_state,
-                    "terminated": next_state["terminated"],
-                },
-            ).auto_batch_size_()
-        else:
-            return
 
-        batch = self.fileter_compleated_state(batch)
         # Compute target distribution
         target_probs = self.compute_target_distribution(
             batch["reward"], batch["next_state"], batch["terminated"]
@@ -368,7 +353,7 @@ class D4PG:
 
         # Critic update
         self.critic_optimizer.zero_grad()
-        loss_critic, td_error = self.compute_critic_loss(
+        loss_critic, td_error, q_dist = self.compute_critic_loss(
             batch["state"],
             batch["action"],
             target_probs,
@@ -381,7 +366,14 @@ class D4PG:
 
         # Actor update
         self.actor_optimizer.zero_grad()
-        loss_actor = self.compute_actor_loss(batch["state"])
+        if training:
+            loss_actor = self.compute_actor_loss(batch["state"])
+        else:
+            loss_actor = self.compute_actor_loss(
+                batch["state"],
+                action_probs=batch["action"],
+                critic_probs=q_dist,
+            )
         loss_actor = tuple(g for v in loss_actor.values() for g in v.values())
         loss_actor = sum(loss_actor) / len(loss_actor)
         loss_actor.backward()
@@ -413,8 +405,8 @@ class D4PG:
 
         with torch.no_grad():
             state = env.get_state(unsqueeze=1)
-            actions = self.actor(state)
-            actions = self.categorize_actions(actions, as_dict=True)
+            action_probs = self.actor(state)
+            actions = self.categorize_actions(action_probs, as_dict=True)
             __, reward, done, truncated, __ = env.step(actions)
             actions = torch.cat([x.unsqueeze(-1) for x in actions.values()], dim=-1)
             reward = TensorDict(
@@ -426,7 +418,7 @@ class D4PG:
             next_state = env.get_state(unsqueeze=1)
             if self.n_steps > 1:
                 reward["n_reward"] = env.n_step_reward().unsqueeze(-1)
-        return state, reward, actions, next_state, done, truncated
+        return state, reward, actions, next_state, done, truncated, action_probs
 
     def episodes_simulation(self, env, samples, max_steps: int = -1, seed: int = None):
         assert (
@@ -444,8 +436,10 @@ class D4PG:
         done = False
         while not done and (max_steps <= -1 or max_steps > 0):
             max_steps -= 1
-            state, reward, actions, next_state, done, truncated = self.step(env)
-            yield state, reward, actions, next_state, done, truncated
+            state, reward, actions, next_state, done, truncated, action_probs = (
+                self.step(env)
+            )
+            yield state, reward, actions, next_state, done, truncated, action_probs
             done = done or truncated
 
     def env_simulation(
@@ -453,9 +447,6 @@ class D4PG:
         env,
         samples,
         max_steps=-1,
-        rewards_track: dict = None,
-        warmup_buffer_ratio=0.2,
-        validation_frequency=100,
     ):
         """
         Trains the D4PG algorithm using the given enviroment and train samples.
@@ -465,8 +456,15 @@ class D4PG:
             train_samples (DataLoader): A DataLoader containing the training samples.
             batch_size (int): The size of the batch to sample from the replay buffer.
             max_steps (int, optional): The maximum number of steps to take in the enviroment. Defaults to -1 (no limit).
-            warmup_buffer_ratio (float, optional): The ratio of the replay buffer to fill before sampling. Defaults to 0.2.
-            validation_frequency (int, optional): The frequency of validation steps. Defaults to 100.
+
+        Yields:
+            Tuple containing:
+                - state (TensorDict): The current state of the environment.
+                - reward (TensorDict): The rewards received after taking the action.
+                - actions (torch.Tensor): The actions taken by the actor.
+                - next_state (TensorDict): The state of the environment after the action.
+                - done (bool): Whether the episode has terminated.
+                - truncated (bool): Whether the episode has been truncated.
         """
         assert (
             self.n_steps <= max_steps or max_steps < 0
@@ -474,6 +472,7 @@ class D4PG:
 
         global_step = 0
         episode = 0
+        cumulated_metrics = {}
         for episode, sample_batch in enumerate(samples):
             episode += 1
             episode_step = 0
@@ -489,31 +488,98 @@ class D4PG:
             for step_state in self.episodes_simulation(
                 env, sample_batch, max_steps, seed=episode
             ):
-                state, reward, actions, next_state, done, truncated = step_state
+                state, reward, actions, next_state, done, truncated, action_probs = (
+                    step_state
+                )
                 episode_step += 1
                 global_step += 1
 
-                if rewards_track is not None:
-                    for key, value in rewards_track.items():
-                        rewards_track[key] += torch.sum(reward[key])
+                for key, value in reward.items():
+                    cumulated_metrics[key] = cumulated_metrics.setdefault(
+                        key, 0
+                    ) + torch.sum(value)
 
-                if training:
-                    loss_actor, loss_critic = self.train_step(
-                        state,
-                        actions,
-                        reward,
-                        next_state,
-                        warmup_buffer_ratio=warmup_buffer_ratio,
-                    )
-                    if global_step % self.target_update_frequency == 0:
-                        self.update_target_networks(tau=self.tau)
+                yield state, reward, actions, next_state, done, truncated, action_probs, cumulated_metrics
 
-            logger.debug(
-                "Episode {}, Reward['pixel_wise']: {:.2f} Reward['binary']: {:.2f}, Actor Loss: {:.4f}, Critic Loss: {:.4f}".format(
-                    episode,
-                    episode_reward["pixel_wise"],
-                    episode_reward["binary"],
-                    loss_actor,
-                    loss_critic,
-                )
+    def validation_process(self, max_steps=-1):
+        if max_steps == -1:
+            logger.warning(
+                "VALIDATION process could take a long time,"
+                " it will run indeterminatly until the end of the enviroment."
+                " Meaning, that all grids should be compleated to end the process."
             )
+        with torch.no_grad():
+            for step_state in self.env_simulation(
+                self.validation_env,
+                self.validation_samples,
+                max_steps=max_steps,
+            ):
+                (
+                    state,
+                    reward,
+                    actions,
+                    next_state,
+                    done,
+                    truncated,
+                    action_probs,
+                    cumulated_metrics,
+                ) = step_state
+                batch = TensorDict(
+                    {
+                        "state": state,
+                        "action": action_probs,
+                        "reward": reward,
+                        "next_state": next_state,
+                        "terminated": next_state["terminated"],
+                    },
+                ).auto_batch_size_()
+
+    def fit(
+        self,
+        max_steps=-1,
+    ):
+
+        for step_number, step_state in enumerate(
+            self.env_simulation(
+                self.train_env,
+                self.train_samples,
+                max_steps=max_steps,
+            )
+        ):
+            (
+                state,
+                reward,
+                actions,
+                next_state,
+                done,
+                truncated,
+                action_probs,
+                cumulated_metrics,
+            ) = step_state
+            # Store the experience in the replay buffer
+            if self.replay_buffer is not None:
+                batch = self.replay_buffer_step(
+                    state,
+                    actions,
+                    reward,
+                    next_state,
+                )
+            elif self.replay_buffer is None:
+                batch = TensorDict(
+                    {
+                        "state": state,
+                        "action": actions,
+                        "reward": reward,
+                        "next_state": next_state,
+                        "terminated": next_state["terminated"],
+                    },
+                ).auto_batch_size_()
+            else:
+                return
+
+            batch = self.fileter_compleated_state(batch)
+            loss_actor, loss_critic = self.train_step(
+                state, actions, reward, next_state
+            )
+            if step_number % self.target_update_frequency == 0:
+                self.update_target_networks(tau=self.tau)
