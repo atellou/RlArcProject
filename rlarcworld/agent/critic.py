@@ -167,7 +167,7 @@ class ArcCriticNetwork(torch.nn.Module):
         assert isinstance(distribution, TensorDict), TypeError(
             "Distribution must be a TensorDict"
         )
-        in_keys = {"pixel_wise", "binary"}
+        in_keys = set(self.num_atoms.keys())
         assert set(distribution.keys()) == in_keys, ValueError(
             "Distribution keys must be {}. Keys found {}".format(
                 in_keys, set(distribution.keys())

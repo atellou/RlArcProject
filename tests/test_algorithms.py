@@ -265,7 +265,7 @@ class TestD4PG(unittest.TestCase):
             assert param.grad is not None, f"Gradient not flowing in critic for: {name}"
 
     def test_validation_step(self):
-        logger.info("Testing train step")
+        logger.info("Testing validation step")
         reward, done, __, state = self.simmulated_data()
         __, __, __, next_state = self.simmulated_data()
         action_probs = self.d4pg.actor(state)
@@ -307,11 +307,12 @@ class TestD4PG(unittest.TestCase):
         self.d4pg_with_replay_buffer.fit(
             max_steps=max_steps,
         )
+        logger.info("D4PG with replay buffer finished")
 
     def test_train_d4pg_with_n_step(self):
         grid_size = 30
         color_values = 11
-        max_steps = torch.randint(5, 20, size=(1,)).item()
+        max_steps = torch.randint(8, 20, size=(1,)).item()
         n_steps = torch.randint(3, max_steps // 2, size=(1,)).item()
         logger.info(
             "Testing train_d4pg with n_steps {} for {} steps".format(n_steps, max_steps)
@@ -361,6 +362,75 @@ class TestD4PG(unittest.TestCase):
         )
         d4pg.fit(
             max_steps=max_steps,
+        )
+
+    def test_validation_d4pg(self):
+        grid_size = 30
+        color_values = 11
+        max_steps = torch.randint(8, 20, size=(1,)).item()
+        n_steps = torch.randint(3, max_steps // 2, size=(1,)).item()
+        logger.info(
+            "Testing train_d4pg with n_steps {} for {} steps".format(n_steps, max_steps)
+        )
+        gamma = 0.99
+        env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
+        env = PixelAwareRewardWrapper(env, n_steps=n_steps, gamma=gamma)
+
+        # Create an instance of the ArcDataset
+        dataset = ArcDataset(
+            arc_dataset_dir="rlarcworld/dataset/training",
+            keep_in_memory=True,
+            transform=ArcSampleTransformer(
+                (grid_size, grid_size), examples_stack_dim=10
+            ),
+        )
+        train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
+
+        dataset_val = ArcDataset(
+            arc_dataset_dir="rlarcworld/dataset/evaluation",
+            keep_in_memory=True,
+            transform=ArcSampleTransformer(
+                (grid_size, grid_size), examples_stack_dim=10
+            ),
+        )
+        val_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
+        replay_buffer = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(self.batch_size),
+            sampler=PrioritizedSampler(
+                max_capacity=self.batch_size,
+                alpha=1.0,
+                beta=1.0,
+            ),
+        )
+
+        num_atoms = {"pixel_wise": 50, "binary": 3, "n_reward": 50 * n_steps}
+        v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
+        v_max = {"pixel_wise": 2, "binary": 1, "n_reward": 2 * n_steps}
+        critic = ArcCriticNetwork(
+            size=self.grid_size,
+            color_values=self.color_values,
+            num_atoms=num_atoms,
+            v_min=v_min,
+            v_max=v_max,
+        )
+
+        d4pg = D4PG(
+            env=env,
+            actor=self.actor,
+            critic=critic,
+            train_samples=train_samples,
+            validation_samples=val_samples,
+            batch_size=self.batch_size,
+            replay_buffer=replay_buffer,
+            target_update_frequency=5,
+            n_steps=env.n_steps,
+            gamma=env.gamma,
+        )
+        d4pg.fit(
+            max_steps=max_steps,
+            validation_steps_frequency=2,
+            validation_steps_per_epoch=2,
+            max_steps_validation=-1,
         )
 
 

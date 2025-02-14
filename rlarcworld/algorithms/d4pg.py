@@ -484,12 +484,6 @@ class D4PG:
                 yield episode_number, step_state
 
     def validation_process(self, max_steps=-1):
-        if max_steps == -1:
-            logger.warning(
-                "VALIDATION process could take a long time,"
-                " it will run indeterminatly until the end of the enviroment."
-                " Meaning, that all grids should be compleated to end the process."
-            )
         with torch.no_grad():
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
@@ -500,11 +494,15 @@ class D4PG:
             ):
                 step_state["terminated"] = step_state["next_state"]["terminated"]
                 loss_actor, loss_critic = self.compute_loss(step_state, training=False)
+                yield episode_number, step_number, loss_actor, loss_critic, step_state
 
     def fit(
         self,
         epochs=1,
         max_steps=-1,
+        validation_steps_frequency=-1,
+        validation_steps_per_epoch=-1,
+        max_steps_validation=-1,
     ):
         for epoch in range(epochs):
             for step_number, (episode_number, step_state) in enumerate(
@@ -540,6 +538,34 @@ class D4PG:
 
                 batch = self.fileter_compleated_state(batch)
                 loss_actor, loss_critic = self.compute_loss(batch, training=True)
+
+                if (
+                    validation_steps_frequency > 0
+                    and step_number % validation_steps_frequency == 0
+                    and batch is not None
+                ):
+                    if not hasattr(self, "running_validation_process"):
+                        if max_steps_validation < 0 and validation_steps_per_epoch < 0:
+                            logger.warning(
+                                "VALIDATION process could take a long time,"
+                                " it will run indeterminatly until the end of the enviroment."
+                                " Meaning, that all grids should be compleated to end the process."
+                            )
+                        self.running_validation_process = self.validation_process(
+                            max_steps=max_steps_validation
+                        )
+                    for (
+                        val_episode_number,
+                        val_step_number,
+                        val_loss_actor,
+                        val_loss_critic,
+                        val_step_state,
+                    ) in self.running_validation_process:
+                        if (
+                            validation_steps_per_epoch > 0
+                            and val_step_number % validation_steps_per_epoch == 0
+                        ):
+                            break
 
                 if step_number % self.target_update_frequency == 0:
                     self.update_target_networks(tau=self.tau)
