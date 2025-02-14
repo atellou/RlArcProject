@@ -88,12 +88,10 @@ class ArcActorNetwork(nn.Module):
 
         # Brodcast the state
         for key, value in state.items():
-            if key == "terminated":
-                pass
             if key == "index":
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
-            else:
+            elif key != "terminated":
                 value = self.scale_arc_grids(value)
             state[key] = self.inputs_layers[key](value)
             state[key] = torch.relu(state[key])

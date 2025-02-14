@@ -274,132 +274,129 @@ class TestD4PG(unittest.TestCase):
         for name, param in self.d4pg.critic.named_parameters():
             assert param.grad is None, f"Gradient not flowing in critic for: {name}"
 
-    # def test_train_d4pg(self):
-    #     logger.info("Testing train_d4pg")
-    #     grid_size = 30
-    #     color_values = 11
-    #     max_steps = torch.randint(5, 100, size=(1,)).item()
+    def test_train_d4pg(self):
+        logger.info("Testing train_d4pg")
+        grid_size = 30
+        color_values = 11
+        max_steps = torch.randint(5, 100, size=(1,)).item()
 
-    #     # Create an instance of the ArcBatchGridEnv
-    #     logger.info("Creating ArcBatchGridEnv")
-    #     env = ArcBatchGridEnv(grid_size, color_values)
-    #     env = PixelAwareRewardWrapper(env)
+        # Create an instance of the ArcBatchGridEnv
+        logger.info("Creating ArcBatchGridEnv")
+        env = ArcBatchGridEnv(grid_size, color_values)
+        env = PixelAwareRewardWrapper(env)
 
-    #     # Create an instance of the ArcDataset
-    #     logger.info("Creating ArcDataset")
-    #     dataset = ArcDataset(
-    #         arc_dataset_dir="rlarcworld/dataset/training",
-    #         keep_in_memory=True,
-    #         transform=ArcSampleTransformer(
-    #             (grid_size, grid_size), examples_stack_dim=10
-    #         ),
-    #     )
-    #     train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+        # Create an instance of the ArcDataset
+        logger.info("Creating ArcDataset")
+        dataset = ArcDataset(
+            arc_dataset_dir="rlarcworld/dataset/training",
+            keep_in_memory=True,
+            transform=ArcSampleTransformer(
+                (grid_size, grid_size), examples_stack_dim=10
+            ),
+        )
+        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
 
-    #     logger.info("Training D4PG")
-    #     self.d4pg.train_d4pg(
-    #         env,
-    #         train_samples,
-    #         batch_size=self.batch_size,
-    #         max_steps=max_steps,
-    #     )
+        logger.info("Training D4PG")
+        self.d4pg.fit(
+            max_steps=max_steps,
+        )
 
-    # def test_train_d4pg_with_replay_buffer(self):
-    #     logger.info("Testing train_d4pg with replay buffer")
-    #     grid_size = 30
-    #     color_values = 11
-    #     max_steps = torch.randint(5, 100, size=(1,)).item()
+    def test_train_d4pg_with_replay_buffer(self):
+        logger.info("Testing train_d4pg with replay buffer")
+        grid_size = 30
+        color_values = 11
+        max_steps = torch.randint(5, 100, size=(1,)).item()
 
-    #     # Create an instance of the ArcBatchGridEnv
-    #     logger.info("Creating ArcBatchGridEnv")
-    #     env = ArcBatchGridEnv(grid_size, color_values)
-    #     env = PixelAwareRewardWrapper(env)
+        # Create an instance of the ArcBatchGridEnv
+        logger.info("Creating ArcBatchGridEnv")
+        env = ArcBatchGridEnv(grid_size, color_values)
+        env = PixelAwareRewardWrapper(env)
 
-    #     # Create an instance of the ArcDataset
-    #     logger.info("Creating ArcDataset")
-    #     dataset = ArcDataset(
-    #         arc_dataset_dir="rlarcworld/dataset/training",
-    #         keep_in_memory=True,
-    #         transform=ArcSampleTransformer(
-    #             (grid_size, grid_size), examples_stack_dim=10
-    #         ),
-    #     )
-    #     train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
-    #     self.d4pg.replay_buffer = TensorDictReplayBuffer(
-    #         storage=LazyTensorStorage(self.batch_size),
-    #         sampler=PrioritizedSampler(
-    #             max_capacity=self.batch_size,
-    #             alpha=1.0,
-    #             beta=1.0,
-    #             max_priority_within_buffer=True,
-    #         ),
-    #         priority_key="priority",
-    #     )
-    #     self.d4pg.train_d4pg(
-    #         env,
-    #         train_samples,
-    #         batch_size=self.batch_size,
-    #         max_steps=max_steps,
-    #     )
+        # Create an instance of the ArcDataset
+        logger.info("Creating ArcDataset")
+        dataset = ArcDataset(
+            arc_dataset_dir="rlarcworld/dataset/training",
+            keep_in_memory=True,
+            transform=ArcSampleTransformer(
+                (grid_size, grid_size), examples_stack_dim=10
+            ),
+        )
+        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+        self.d4pg.replay_buffer = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(self.batch_size),
+            sampler=PrioritizedSampler(
+                max_capacity=self.batch_size,
+                alpha=1.0,
+                beta=1.0,
+                max_priority_within_buffer=True,
+            ),
+            priority_key="priority",
+        )
+        self.d4pg.train_d4pg(
+            env,
+            train_samples,
+            batch_size=self.batch_size,
+            max_steps=max_steps,
+        )
 
-    # def test_train_d4pg_with_n_step(self):
-    #     logger.info("Testing train_d4pg with n_steps")
-    #     grid_size = 30
-    #     color_values = 11
-    #     max_steps = torch.randint(5, 100, size=(1,)).item()
-    #     n_steps = torch.randint(3, max_steps, size=(1,)).item()
-    #     gamma = 0.99
+    def test_train_d4pg_with_n_step(self):
+        logger.info("Testing train_d4pg with n_steps")
+        grid_size = 30
+        color_values = 11
+        max_steps = torch.randint(5, 100, size=(1,)).item()
+        n_steps = torch.randint(3, max_steps, size=(1,)).item()
+        gamma = 0.99
 
-    #     # Create an instance of the ArcBatchGridEnv
-    #     logger.info("Creating ArcBatchGridEnv")
-    #     env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
-    #     env = PixelAwareRewardWrapper(env, n_steps=n_steps, gamma=gamma)
+        # Create an instance of the ArcBatchGridEnv
+        logger.info("Creating ArcBatchGridEnv")
+        env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
+        env = PixelAwareRewardWrapper(env, n_steps=n_steps, gamma=gamma)
 
-    #     # Create an instance of the ArcDataset
-    #     logger.info("Creating ArcDataset")
-    #     dataset = ArcDataset(
-    #         arc_dataset_dir="rlarcworld/dataset/training",
-    #         keep_in_memory=True,
-    #         transform=ArcSampleTransformer(
-    #             (grid_size, grid_size), examples_stack_dim=10
-    #         ),
-    #     )
-    #     train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
-    #     replay_buffer = TensorDictReplayBuffer(
-    #         storage=LazyTensorStorage(self.batch_size),
-    #         sampler=PrioritizedSampler(
-    #             max_capacity=self.batch_size,
-    #             alpha=1.0,
-    #             beta=1.0,
-    #             max_priority_within_buffer=True,
-    #         ),
-    #         priority_key="priority",
-    #     )
-    #     num_atoms = {"pixel_wise": 50, "binary": 3, "n_reward": 50 * n_steps}
-    #     v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
-    #     v_max = {"pixel_wise": 2, "binary": 1, "n_reward": 2 * n_steps}
-    #     critic = ArcCriticNetwork(
-    #         size=self.grid_size,
-    #         color_values=self.color_values,
-    #         num_atoms=num_atoms,
-    #         v_min=v_min,
-    #         v_max=v_max,
-    #         test=True,
-    #     )
+        # Create an instance of the ArcDataset
+        logger.info("Creating ArcDataset")
+        dataset = ArcDataset(
+            arc_dataset_dir="rlarcworld/dataset/training",
+            keep_in_memory=True,
+            transform=ArcSampleTransformer(
+                (grid_size, grid_size), examples_stack_dim=10
+            ),
+        )
+        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+        replay_buffer = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(self.batch_size),
+            sampler=PrioritizedSampler(
+                max_capacity=self.batch_size,
+                alpha=1.0,
+                beta=1.0,
+                max_priority_within_buffer=True,
+            ),
+            priority_key="priority",
+        )
+        num_atoms = {"pixel_wise": 50, "binary": 3, "n_reward": 50 * n_steps}
+        v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
+        v_max = {"pixel_wise": 2, "binary": 1, "n_reward": 2 * n_steps}
+        critic = ArcCriticNetwork(
+            size=self.grid_size,
+            color_values=self.color_values,
+            num_atoms=num_atoms,
+            v_min=v_min,
+            v_max=v_max,
+            test=True,
+        )
 
-    #     d4pg = D4PG(
-    #         actor=self.actor,
-    #         critic=critic,
-    #         n_steps=n_steps,
-    #         gamma=gamma,
-    #         replay_buffer=replay_buffer,
-    #     )
-    #     d4pg.train_d4pg(
-    #         env,
-    #         train_samples,
-    #         batch_size=self.batch_size,
-    #         max_steps=max_steps,
-    #     )
+        d4pg = D4PG(
+            actor=self.actor,
+            critic=critic,
+            n_steps=n_steps,
+            gamma=gamma,
+            replay_buffer=replay_buffer,
+        )
+        d4pg.train_d4pg(
+            env,
+            train_samples,
+            batch_size=self.batch_size,
+            max_steps=max_steps,
+        )
 
 
 if __name__ == "__main__":

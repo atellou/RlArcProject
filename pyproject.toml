@@ -13,6 +13,7 @@ gymnasium = "^1.0.0"
 matplotlib = "^3.9.3"
 numpy = "^2.2.0"
 torchrl = "^0.7.0"
+tensorboard = "^2.19.0"
 
 
 [tool.poetry.group.dev.dependencies]

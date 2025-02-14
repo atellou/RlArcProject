@@ -40,6 +40,13 @@ class ArcCriticNetwork(torch.nn.Module):
             key: torch.linspace(v_min[key], v_max[key], value)
             for key, value in num_atoms.items()
         }
+        self.no_scale_keys = [
+            "x_location",
+            "y_location",
+            "color_values",
+            "submit",
+            "terminated",
+        ]
         self.inputs_layers = torch.nn.ModuleDict(
             {
                 "last_grid": torch.nn.Conv2d(
@@ -60,6 +67,7 @@ class ArcCriticNetwork(torch.nn.Module):
                 "terminated": torch.nn.Linear(1, 1),
             }
         )
+
         self.linear1 = torch.nn.Linear(16469, 128)
         self.gru = torch.nn.GRU(
             input_size=128,
@@ -122,12 +130,10 @@ class ArcCriticNetwork(torch.nn.Module):
         state.update(action)
         # Brodcast the state
         for key, value in state.items():
-            if key == "terminated":
-                pass
             if key == "index":
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
-            else:
+            elif key not in self.no_scale_keys:
                 value = self.scale_arc_grids(value)
             state[key] = self.inputs_layers[key](value)
             state[key] = torch.relu(state[key])

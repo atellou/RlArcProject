@@ -467,12 +467,7 @@ class D4PG:
             self.n_steps <= max_steps or max_steps < 0
         ), "max_steps must be greater or equal to n_steps"
 
-        global_step = 0
-        episode = 0
-        cumulated_metrics = {}
-        for episode, sample_batch in enumerate(samples):
-            episode += 1
-            episode_step = 0
+        for episode_number, sample_batch in enumerate(samples):
 
             # episode_reward = {"pixel_wise": 0.0, "binary": 0.0}
             env.reset(
@@ -480,20 +475,12 @@ class D4PG:
                     "batch": sample_batch["task"],
                     "examples": sample_batch["examples"],
                 },
-                seed=episode,
+                seed=episode_number,
             )
             for step_state in self.episodes_simulation(
-                env, sample_batch, max_steps, seed=episode
+                env, sample_batch, max_steps, seed=episode_number
             ):
-                episode_step += 1
-                global_step += 1
-
-                for key, value in step_state["reward"].items():
-                    cumulated_metrics[key] = cumulated_metrics.setdefault(
-                        key, 0
-                    ) + torch.sum(value)
-                step_state["cumulated_metrics"] = cumulated_metrics
-                yield step_state
+                yield episode_number, step_state
 
     def validation_process(self, max_steps=-1):
         if max_steps == -1:
@@ -503,59 +490,55 @@ class D4PG:
                 " Meaning, that all grids should be compleated to end the process."
             )
         with torch.no_grad():
-            for step_state in self.env_simulation(
-                self.validation_env,
-                self.validation_samples,
-                max_steps=max_steps,
+            for step_number, (episode_number, step_state) in enumerate(
+                self.env_simulation(
+                    self.validation_env,
+                    self.validation_samples,
+                    max_steps=max_steps,
+                )
             ):
                 step_state["terminated"] = step_state["next_state"]["terminated"]
                 loss_actor, loss_critic = self.compute_loss(step_state, training=False)
 
     def fit(
         self,
+        epochs=1,
         max_steps=-1,
     ):
-        cumulated_metrics = {}
-        for step_number, step_state in enumerate(
-            self.env_simulation(
-                self.train_env,
-                self.train_samples,
-                max_steps=max_steps,
-            )
-        ):
-            # Store the experience in the replay buffer
-            if self.replay_buffer is not None:
-                batch = self.replay_buffer_step(
-                    step_state["state"],
-                    step_state["actions"],
-                    step_state["reward"],
-                    step_state["next_state"],
+        for epoch in range(epochs):
+            for step_number, (episode_number, step_state) in enumerate(
+                self.env_simulation(
+                    self.train_env,
+                    self.train_samples,
+                    max_steps=max_steps,
                 )
-            elif self.replay_buffer is None:
-                batch = TensorDict(
-                    {
-                        "state": step_state["state"],
-                        "actions": step_state["actions"],
-                        "reward": step_state["reward"],
-                        "next_state": step_state["next_state"],
-                        "terminated": step_state["next_state"]["terminated"],
-                    },
-                ).auto_batch_size_()
-            else:
-                return
+            ):
+                # Store the experience in the replay buffer
+                if self.replay_buffer is not None:
+                    batch = self.replay_buffer_step(
+                        step_state["state"],
+                        step_state["actions"],
+                        step_state["reward"],
+                        step_state["next_state"],
+                    )
+                elif self.replay_buffer is None:
+                    batch = TensorDict(
+                        {
+                            "state": step_state["state"],
+                            "actions": step_state["actions"],
+                            "reward": step_state["reward"],
+                            "next_state": step_state["next_state"],
+                            "terminated": step_state["next_state"]["terminated"],
+                        },
+                    ).auto_batch_size_()
+                else:
+                    return
 
-            if batch is None:
-                continue
+                if batch is None:
+                    continue
 
-            batch = self.fileter_compleated_state(batch)
-            loss_actor, loss_critic = self.compute_loss(batch, training=True)
+                batch = self.fileter_compleated_state(batch)
+                loss_actor, loss_critic = self.compute_loss(batch, training=True)
 
-            cumulated_metrics["actor_loss"] = (
-                cumulated_metrics.setdefault("actor_loss", 0) + loss_actor
-            )
-            cumulated_metrics["critic_loss"] = (
-                cumulated_metrics.setdefault("critic_loss", 0) + loss_critic
-            )
-
-            if step_number % self.target_update_frequency == 0:
-                self.update_target_networks(tau=self.tau)
+                if step_number % self.target_update_frequency == 0:
+                    self.update_target_networks(tau=self.tau)

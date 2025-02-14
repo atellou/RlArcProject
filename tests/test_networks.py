@@ -97,26 +97,29 @@ class ArcNetworksTest(unittest.TestCase):
                 dc.pop(key)
                 network.input_val(dc)
 
-        action_probs = {
-            "x_location": torch.softmax(torch.randn(self.batch_size, 30), dim=-1),
-            "y_location": torch.softmax(torch.randn(self.batch_size, 30), dim=-1),
-            "color_values": torch.softmax(torch.randn(self.batch_size, 11), dim=-1),
-            "submit": torch.softmax(torch.randn(self.batch_size, 2), dim=-1),
-        }
-        best_next_action = torch.cat(
-            [torch.argmax(x, dim=-1).unsqueeze(-1) for x in action_probs.values()],
-            dim=-1,
-        ).float()
+        action_probs = TensorDict(
+            {
+                "x_location": torch.softmax(torch.randn(self.batch_size, 30), dim=-1),
+                "y_location": torch.softmax(torch.randn(self.batch_size, 30), dim=-1),
+                "color_values": torch.softmax(torch.randn(self.batch_size, 11), dim=-1),
+                "submit": torch.softmax(torch.randn(self.batch_size, 2), dim=-1),
+            }
+        )
 
         # numeric stability test
+        to_zero = []
         for key in input_sample.keys():
             if torch.rand(1).item() < 0.2:
                 input_sample[key] = input_sample[key] * 0.0
-        if torch.rand(1).item() < 0.1:
-            best_next_action = best_next_action * 0.0
+                to_zero.append(key)
+        for key in action_probs.keys():
+            if torch.rand(1).item() < 0.2:
+                action_probs[key] = action_probs[key] * 0.0
+                to_zero.append(key)
+
         # Forward pass
         org_sample = input_sample.clone()
-        output = network(input_sample, action=best_next_action)
+        output = network(input_sample, action=action_probs)
 
         # Validate not inplace changes to input
         torch.testing.assert_close(input_sample, org_sample)
@@ -126,7 +129,7 @@ class ArcNetworksTest(unittest.TestCase):
 
         # Define a loss function and an optimizer
         criterion = torch.nn.KLDivLoss(reduction="batchmean")
-        optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
+        optimizer = torch.optim.RMSprop(network.parameters())
 
         # Create dummy target tensors
         target = TensorDict(
@@ -166,14 +169,16 @@ class ArcNetworksTest(unittest.TestCase):
         optimizer.zero_grad()
         loss.backward()
         for name, param in network.named_parameters():
+            input_key = name.split(".")[1]
             if param.grad is None:
                 raise ValueError(
                     f"Gradient not flowing in ArcCriticNetwork for: {name}"
                 )
-            else:
-                print(name, param.grad.abs().sum())
-                assert torch.all(
-                    param.grad.abs().sum() > 0
+            elif input_key not in to_zero:
+                assert (
+                    not torch.all(param.grad.abs().sum() == 0)
+                    or torch.all(input_sample.get(key, torch.tensor(0)) == 0)
+                    or torch.all(action_probs.get(key, torch.tensor(0)) == 0)
                 ), f"Gradient of zero for ArcCriticNetwork for: {name}"
         optimizer.step()
 
@@ -212,7 +217,6 @@ class ArcNetworksTest(unittest.TestCase):
                 "terminated": torch.randint(0, 2, size=(self.batch_size, 1)).float(),
             }
         )
-
         network.input_val(input_sample)
         # Bad input
         for key in input_sample.keys():
@@ -222,9 +226,12 @@ class ArcNetworksTest(unittest.TestCase):
                 network.input_val(dc)
 
         # numeric stability test
+        to_zero = []
         for key in input_sample.keys():
             if torch.rand(1).item() < 0.2:
                 input_sample[key] = input_sample[key] * 0.0
+                print("Actor Input To Zero:", key)
+                to_zero.append(key)
         # Forward pass
         org_sample = input_sample.clone()
         output = network(input_sample)
@@ -234,7 +241,7 @@ class ArcNetworksTest(unittest.TestCase):
 
         # Define a loss function and an optimizer
         criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
+        optimizer = torch.optim.RMSprop(network.parameters())
 
         # Create dummy target tensors
         target = TensorDict(
@@ -274,11 +281,12 @@ class ArcNetworksTest(unittest.TestCase):
         optimizer.zero_grad()
         loss.backward()
         for name, param in network.named_parameters():
+            input_key = name.split(".")[1]
             if param.grad is None:
                 raise ValueError(f"Gradient not flowing in ArcActorNetwork for: {name}")
-            else:
-                assert torch.all(
-                    param.grad.abs().sum() > 0
+            elif input_key not in to_zero:
+                assert not torch.all(param.grad.abs().sum() == 0) or torch.all(
+                    input_sample.get(key, torch.tensor(0)) == 0
                 ), f"Gradient of zero for ArcActorNetwork for: {name}"
         optimizer.step()
         return loss
