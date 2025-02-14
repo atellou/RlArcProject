@@ -96,7 +96,7 @@ class D4PG:
         # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
-    def categorize_actions(self, actions: TensorDict, as_dict: bool = False):
+    def categorize_actions(self, actions, as_dict=False):
         """
         Convert a probability distribution action to discrete action.
 
@@ -140,13 +140,8 @@ class D4PG:
             # Use the target actor to get the best action for each next state
             action_probs = self.actor_target(next_state)
 
-            # Get best action
-            best_next_action = self.categorize_actions(
-                action_probs
-            )  # Shape: (batch_size, action_space_dim)
-
             # Get the Q-distribution for the best action from the target critic
-            best_next_q_dist = self.critic_target(next_state, best_next_action)
+            best_next_q_dist = self.critic_target(next_state, action_probs)
 
         # Project the distribution using the categorical projection
         assert best_next_q_dist.keys() == reward.keys(), ValueError(
@@ -178,7 +173,7 @@ class D4PG:
 
         Args:
             state (TensorDict): TensorDict of current states.
-            action (torch.Tensor): Tensor of actions.
+            action (TensorDict): TensorDict of actions.
             target_dist (TensorDict): Target distribution from the target critic.
             compute_td_error (bool, optional): Whether to compute the TD error. Defaults to False.
 
@@ -216,30 +211,22 @@ class D4PG:
             action_probs = self.actor(state)
         else:
             self.actor.output_val(action_probs)
-        # Get best action
-        best_next_action = self.categorize_actions(
-            action_probs
-        ).float()  # Shape: (batch_size, action_space_dim [4])
 
         # Compute gradient of expected Q-value w.r.t. actions
-        best_next_action.requires_grad = True
-
         if critic_probs is None:
-            critic_probs = self.critic(state, best_next_action)
+            critic_probs = self.critic(state, action_probs)
         else:
             self.critic.output_val(critic_probs)
+
+        # Compute Q-Values
         loss = TensorDict({})
         for key in critic_probs.keys():
-            Q = (
+            loss[key] = -torch.sum(
                 critic_probs[key]
-                * self.critic.z_atoms[key].to(critic_probs[key].device)
-            ).sum(dim=-1)
-            grad = torch.autograd.grad(Q.sum(), best_next_action, retain_graph=True)[0]
-            # Policy gradient update
-            loss[key] = {
-                k: -torch.sum(x * grad[: grad.shape[0], i].view(-1, 1))
-                for i, (k, x) in enumerate(action_probs.items())
-            }
+                * self.critic.z_atoms[key].to(critic_probs[key].device),
+                dim=-1,
+                keepdim=True,
+            ).mean()
 
         return loss
 
@@ -292,7 +279,7 @@ class D4PG:
                 TensorDict(
                     {
                         "state": state[i],
-                        "action": actions[i],
+                        "actions": actions[i],
                         "reward": reward[i],
                         "next_state": next_state[i],
                         "terminated": next_state["terminated"][i],
@@ -338,51 +325,54 @@ class D4PG:
             step (int): The current step in the enviroment.
             batch_size (int): The size of the batch to sample from the replay buffer.
             state (TensorDict): The current state of the enviroment.
-            actions (torch.Tensor): The actions taken by the actor in the current state.
+            actions (TensorDict): The actions taken by the actor in the current state.
             reward (TensorDict): The rewards received from the enviroment.
             next_state (TensorDict): The next state of the enviroment.
 
         Returns:
             tuple: The actor and critic losses as a tuple.
         """
-
-        # Compute target distribution
-        target_probs = self.compute_target_distribution(
-            batch["reward"], batch["next_state"], batch["terminated"]
-        )
-
-        # Critic update
-        self.critic_optimizer.zero_grad()
-        loss_critic, td_error, q_dist = self.compute_critic_loss(
-            batch["state"],
-            batch["action"],
-            target_probs,
-            compute_td_error=self.replay_buffer is not None,
-        )
-        loss_critic = tuple(loss_critic.values())
-        loss_critic = sum(loss_critic) / len(loss_critic)
-        loss_critic.backward()
-        self.critic_optimizer.step()
-
-        # Actor update
-        self.actor_optimizer.zero_grad()
-        if training:
-            loss_actor = self.compute_actor_loss(batch["state"])
-        else:
-            loss_actor = self.compute_actor_loss(
-                batch["state"],
-                action_probs=batch["action"],
-                critic_probs=q_dist,
+        grading_method = "enable_grad" if training else "no_grad"
+        with getattr(torch, grading_method)():
+            # Compute target distribution
+            target_probs = self.compute_target_distribution(
+                batch["reward"], batch["next_state"], batch["terminated"]
             )
-        loss_actor = tuple(g for v in loss_actor.values() for g in v.values())
-        loss_actor = sum(loss_actor) / len(loss_actor)
-        loss_actor.backward()
-        self.actor_optimizer.step()
 
-        if self.replay_buffer is not None:
-            td_error = tuple(td_error.values())
-            td_error = sum(td_error) / len(td_error)
-            self.replay_buffer.update_priority(batch["index"], td_error + 1e-6)
+            # Critic update
+            loss_critic, td_error, q_dist = self.compute_critic_loss(
+                batch["state"],
+                batch["actions"],
+                target_probs,
+                compute_td_error=self.replay_buffer is not None,
+            )
+            loss_critic = tuple(loss_critic.values())
+            loss_critic = sum(loss_critic) / len(loss_critic)
+
+            if training:
+                self.critic_optimizer.zero_grad()
+                loss_critic.backward()
+                self.critic_optimizer.step()
+                # Actor update
+                loss_actor = self.compute_actor_loss(batch["state"])
+            else:
+                loss_actor = self.compute_actor_loss(
+                    batch["state"],
+                    action_probs=batch["actions"],
+                    critic_probs=q_dist,
+                )
+            loss_actor = tuple(loss_actor.values())
+            loss_actor = sum(loss_actor) / len(loss_actor)
+
+            if training:
+                self.actor_optimizer.zero_grad()
+                loss_actor.backward()
+                self.actor_optimizer.step()
+
+                if self.replay_buffer is not None:
+                    td_error = tuple(td_error.values())
+                    td_error = sum(td_error) / len(td_error)
+                    self.replay_buffer.update_priority(batch["index"], td_error + 1e-6)
 
         return loss_actor, loss_critic
 
@@ -408,7 +398,6 @@ class D4PG:
             action_probs = self.actor(state)
             actions = self.categorize_actions(action_probs, as_dict=True)
             __, reward, done, truncated, __ = env.step(actions)
-            actions = torch.cat([x.unsqueeze(-1) for x in actions.values()], dim=-1)
             reward = TensorDict(
                 {
                     "pixel_wise": reward.unsqueeze(-1),
@@ -418,7 +407,17 @@ class D4PG:
             next_state = env.get_state(unsqueeze=1)
             if self.n_steps > 1:
                 reward["n_reward"] = env.n_step_reward().unsqueeze(-1)
-        return state, reward, actions, next_state, done, truncated, action_probs
+
+        return TensorDict(
+            {
+                "state": state,
+                "reward": reward,
+                "actions": action_probs,
+                "next_state": next_state,
+                "done": done,
+                "truncated": truncated,
+            }
+        ).auto_batch_size_()
 
     def episodes_simulation(self, env, samples, max_steps: int = -1, seed: int = None):
         assert (
@@ -436,11 +435,9 @@ class D4PG:
         done = False
         while not done and (max_steps <= -1 or max_steps > 0):
             max_steps -= 1
-            state, reward, actions, next_state, done, truncated, action_probs = (
-                self.step(env)
-            )
-            yield state, reward, actions, next_state, done, truncated, action_probs
-            done = done or truncated
+            step_state = self.step(env)
+            yield step_state
+            done = step_state["done"] or step_state["truncated"]
 
     def env_simulation(
         self,
@@ -488,18 +485,15 @@ class D4PG:
             for step_state in self.episodes_simulation(
                 env, sample_batch, max_steps, seed=episode
             ):
-                state, reward, actions, next_state, done, truncated, action_probs = (
-                    step_state
-                )
                 episode_step += 1
                 global_step += 1
 
-                for key, value in reward.items():
+                for key, value in step_state["reward"].items():
                     cumulated_metrics[key] = cumulated_metrics.setdefault(
                         key, 0
                     ) + torch.sum(value)
-
-                yield state, reward, actions, next_state, done, truncated, action_probs, cumulated_metrics
+                step_state["cumulated_metrics"] = cumulated_metrics
+                yield step_state
 
     def validation_process(self, max_steps=-1):
         if max_steps == -1:
@@ -514,31 +508,14 @@ class D4PG:
                 self.validation_samples,
                 max_steps=max_steps,
             ):
-                (
-                    state,
-                    reward,
-                    actions,
-                    next_state,
-                    done,
-                    truncated,
-                    action_probs,
-                    cumulated_metrics,
-                ) = step_state
-                batch = TensorDict(
-                    {
-                        "state": state,
-                        "action": action_probs,
-                        "reward": reward,
-                        "next_state": next_state,
-                        "terminated": next_state["terminated"],
-                    },
-                ).auto_batch_size_()
+                step_state["terminated"] = step_state["next_state"]["terminated"]
+                loss_actor, loss_critic = self.compute_loss(step_state, training=False)
 
     def fit(
         self,
         max_steps=-1,
     ):
-
+        cumulated_metrics = {}
         for step_number, step_state in enumerate(
             self.env_simulation(
                 self.train_env,
@@ -546,40 +523,39 @@ class D4PG:
                 max_steps=max_steps,
             )
         ):
-            (
-                state,
-                reward,
-                actions,
-                next_state,
-                done,
-                truncated,
-                action_probs,
-                cumulated_metrics,
-            ) = step_state
             # Store the experience in the replay buffer
             if self.replay_buffer is not None:
                 batch = self.replay_buffer_step(
-                    state,
-                    actions,
-                    reward,
-                    next_state,
+                    step_state["state"],
+                    step_state["actions"],
+                    step_state["reward"],
+                    step_state["next_state"],
                 )
             elif self.replay_buffer is None:
                 batch = TensorDict(
                     {
-                        "state": state,
-                        "action": actions,
-                        "reward": reward,
-                        "next_state": next_state,
-                        "terminated": next_state["terminated"],
+                        "state": step_state["state"],
+                        "actions": step_state["actions"],
+                        "reward": step_state["reward"],
+                        "next_state": step_state["next_state"],
+                        "terminated": step_state["next_state"]["terminated"],
                     },
                 ).auto_batch_size_()
             else:
                 return
 
+            if batch is None:
+                continue
+
             batch = self.fileter_compleated_state(batch)
-            loss_actor, loss_critic = self.train_step(
-                state, actions, reward, next_state
+            loss_actor, loss_critic = self.compute_loss(batch, training=True)
+
+            cumulated_metrics["actor_loss"] = (
+                cumulated_metrics.setdefault("actor_loss", 0) + loss_actor
             )
+            cumulated_metrics["critic_loss"] = (
+                cumulated_metrics.setdefault("critic_loss", 0) + loss_critic
+            )
+
             if step_number % self.target_update_frequency == 0:
                 self.update_target_networks(tau=self.tau)

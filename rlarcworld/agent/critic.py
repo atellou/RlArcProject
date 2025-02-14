@@ -53,11 +53,14 @@ class ArcCriticNetwork(torch.nn.Module):
                     in_channels=1, out_channels=1, kernel_size=3
                 ),
                 "index": torch.nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3),
-                "actions": torch.nn.Linear(4, 1),
+                "x_location": torch.nn.Linear(self.size, 1),
+                "y_location": torch.nn.Linear(self.size, 1),
+                "color_values": torch.nn.Linear(self.color_values, 1),
+                "submit": torch.nn.Linear(2, 1),
                 "terminated": torch.nn.Linear(1, 1),
             }
         )
-        self.linear1 = torch.nn.Linear(16466, 128)
+        self.linear1 = torch.nn.Linear(16469, 128)
         self.gru = torch.nn.GRU(
             input_size=128,
             hidden_size=128,
@@ -105,7 +108,7 @@ class ArcCriticNetwork(torch.nn.Module):
             )
         )
 
-    def forward(self, state: TensorDict, action: torch.Tensor):
+    def forward(self, state: TensorDict, action: TensorDict):
         """
         Args:
             state (TensorDict): The input state.
@@ -115,7 +118,8 @@ class ArcCriticNetwork(torch.nn.Module):
         state = state.clone()
         # Validate input
         self.input_val(state)
-        state["actions"] = action
+        assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
+        state.update(action)
         # Brodcast the state
         for key, value in state.items():
             if key == "terminated":
@@ -123,11 +127,6 @@ class ArcCriticNetwork(torch.nn.Module):
             if key == "index":
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
-            elif key == "actions":
-                # x_location, y_location, color_values, submit
-                value = value / torch.tensor(
-                    [self.size, self.size, self.color_values, 1]
-                )
             else:
                 value = self.scale_arc_grids(value)
             state[key] = self.inputs_layers[key](value)

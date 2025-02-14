@@ -170,12 +170,11 @@ class ArcNetworksTest(unittest.TestCase):
                 raise ValueError(
                     f"Gradient not flowing in ArcCriticNetwork for: {name}"
                 )
-            # NOTE: For debugging on update with relevan testing data
-            # else:
-            #     print(name, param.grad.abs().sum())
-            #     assert torch.all(
-            #         param.grad.abs().sum() > 0
-            #     ), f"Gradient of zero for ArcCriticNetwork for: {name}"
+            else:
+                print(name, param.grad.abs().sum())
+                assert torch.all(
+                    param.grad.abs().sum() > 0
+                ), f"Gradient of zero for ArcCriticNetwork for: {name}"
         optimizer.step()
 
         return loss
@@ -277,11 +276,10 @@ class ArcNetworksTest(unittest.TestCase):
         for name, param in network.named_parameters():
             if param.grad is None:
                 raise ValueError(f"Gradient not flowing in ArcActorNetwork for: {name}")
-            # NOTE: For debugging on update with relevan testing data
-            # else:
-            #     assert torch.all(
-            #         param.grad.abs().sum() > 0
-            #     ), f"Gradient of zero for ArcActorNetwork for: {name}"
+            else:
+                assert torch.all(
+                    param.grad.abs().sum() > 0
+                ), f"Gradient of zero for ArcActorNetwork for: {name}"
         optimizer.step()
         return loss
 
