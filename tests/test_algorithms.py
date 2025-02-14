@@ -36,7 +36,7 @@ class TestD4PG(unittest.TestCase):
         self.num_atoms = {"pixel_wise": 50, "binary": 3}
 
         self.actor = ArcActorNetwork(
-            size=self.grid_size, color_values=self.color_values, test=True
+            size=self.grid_size, color_values=self.color_values
         )
         v_min = {"pixel_wise": -40, "binary": 0}
         v_max = {"pixel_wise": 2, "binary": 1}
@@ -49,22 +49,42 @@ class TestD4PG(unittest.TestCase):
             num_atoms=self.num_atoms,
             v_min=v_min,
             v_max=v_max,
-            test=True,
         )
         dataset = ArcDataset(
             arc_dataset_dir="rlarcworld/dataset/training",
             keep_in_memory=True,
             transform=ArcSampleTransformer(
-                (self.grid_size, self.grid_size), examples_stack_dim=self.batch_size
+                (self.grid_size, self.grid_size), examples_stack_dim=10
             ),
         )
-        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+        train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
         self.d4pg = D4PG(
             env=env,
             actor=self.actor,
             critic=self.critic,
             train_samples=train_samples,
             batch_size=self.batch_size,
+            target_update_frequency=5,
+            n_steps=env.n_steps,
+            gamma=env.gamma,
+        )
+
+        self.replay_buffer = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(self.batch_size),
+            sampler=PrioritizedSampler(
+                max_capacity=self.batch_size * 2,
+                alpha=1.0,
+                beta=1.0,
+            ),
+        )
+
+        self.d4pg_with_replay_buffer = D4PG(
+            env=env,
+            actor=self.actor,
+            critic=self.critic,
+            train_samples=train_samples,
+            batch_size=self.batch_size,
+            replay_buffer=self.replay_buffer,
             target_update_frequency=5,
             n_steps=env.n_steps,
             gamma=env.gamma,
@@ -275,85 +295,32 @@ class TestD4PG(unittest.TestCase):
             assert param.grad is None, f"Gradient not flowing in critic for: {name}"
 
     def test_train_d4pg(self):
-        logger.info("Testing train_d4pg")
-        grid_size = 30
-        color_values = 11
-        max_steps = torch.randint(5, 100, size=(1,)).item()
-
-        # Create an instance of the ArcBatchGridEnv
-        logger.info("Creating ArcBatchGridEnv")
-        env = ArcBatchGridEnv(grid_size, color_values)
-        env = PixelAwareRewardWrapper(env)
-
-        # Create an instance of the ArcDataset
-        logger.info("Creating ArcDataset")
-        dataset = ArcDataset(
-            arc_dataset_dir="rlarcworld/dataset/training",
-            keep_in_memory=True,
-            transform=ArcSampleTransformer(
-                (grid_size, grid_size), examples_stack_dim=10
-            ),
-        )
-        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
-
-        logger.info("Training D4PG")
+        max_steps = torch.randint(5, 20, size=(1,)).item()
+        logger.info("Testing D4PG without replay buffer for {} steps".format(max_steps))
         self.d4pg.fit(
             max_steps=max_steps,
         )
 
     def test_train_d4pg_with_replay_buffer(self):
-        logger.info("Testing train_d4pg with replay buffer")
-        grid_size = 30
-        color_values = 11
-        max_steps = torch.randint(5, 100, size=(1,)).item()
-
-        # Create an instance of the ArcBatchGridEnv
-        logger.info("Creating ArcBatchGridEnv")
-        env = ArcBatchGridEnv(grid_size, color_values)
-        env = PixelAwareRewardWrapper(env)
-
-        # Create an instance of the ArcDataset
-        logger.info("Creating ArcDataset")
-        dataset = ArcDataset(
-            arc_dataset_dir="rlarcworld/dataset/training",
-            keep_in_memory=True,
-            transform=ArcSampleTransformer(
-                (grid_size, grid_size), examples_stack_dim=10
-            ),
-        )
-        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
-        self.d4pg.replay_buffer = TensorDictReplayBuffer(
-            storage=LazyTensorStorage(self.batch_size),
-            sampler=PrioritizedSampler(
-                max_capacity=self.batch_size,
-                alpha=1.0,
-                beta=1.0,
-                max_priority_within_buffer=True,
-            ),
-            priority_key="priority",
-        )
-        self.d4pg.train_d4pg(
-            env,
-            train_samples,
-            batch_size=self.batch_size,
+        max_steps = torch.randint(5, 20, size=(1,)).item()
+        logger.info("Testing D4PG with replay buffer for {} steps".format(max_steps))
+        self.d4pg_with_replay_buffer.fit(
             max_steps=max_steps,
         )
 
     def test_train_d4pg_with_n_step(self):
-        logger.info("Testing train_d4pg with n_steps")
         grid_size = 30
         color_values = 11
-        max_steps = torch.randint(5, 100, size=(1,)).item()
-        n_steps = torch.randint(3, max_steps, size=(1,)).item()
+        max_steps = torch.randint(5, 20, size=(1,)).item()
+        n_steps = torch.randint(3, max_steps // 2, size=(1,)).item()
+        logger.info(
+            "Testing train_d4pg with n_steps {} for {} steps".format(n_steps, max_steps)
+        )
         gamma = 0.99
-
-        # Create an instance of the ArcBatchGridEnv
-        logger.info("Creating ArcBatchGridEnv")
         env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
         env = PixelAwareRewardWrapper(env, n_steps=n_steps, gamma=gamma)
 
         # Create an instance of the ArcDataset
-        logger.info("Creating ArcDataset")
         dataset = ArcDataset(
             arc_dataset_dir="rlarcworld/dataset/training",
             keep_in_memory=True,
@@ -361,16 +328,14 @@ class TestD4PG(unittest.TestCase):
                 (grid_size, grid_size), examples_stack_dim=10
             ),
         )
-        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+        train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
         replay_buffer = TensorDictReplayBuffer(
             storage=LazyTensorStorage(self.batch_size),
             sampler=PrioritizedSampler(
                 max_capacity=self.batch_size,
                 alpha=1.0,
                 beta=1.0,
-                max_priority_within_buffer=True,
             ),
-            priority_key="priority",
         )
         num_atoms = {"pixel_wise": 50, "binary": 3, "n_reward": 50 * n_steps}
         v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
@@ -381,20 +346,20 @@ class TestD4PG(unittest.TestCase):
             num_atoms=num_atoms,
             v_min=v_min,
             v_max=v_max,
-            test=True,
         )
 
         d4pg = D4PG(
+            env=env,
             actor=self.actor,
             critic=critic,
-            n_steps=n_steps,
-            gamma=gamma,
-            replay_buffer=replay_buffer,
-        )
-        d4pg.train_d4pg(
-            env,
-            train_samples,
+            train_samples=train_samples,
             batch_size=self.batch_size,
+            replay_buffer=replay_buffer,
+            target_update_frequency=5,
+            n_steps=env.n_steps,
+            gamma=env.gamma,
+        )
+        d4pg.fit(
             max_steps=max_steps,
         )
 

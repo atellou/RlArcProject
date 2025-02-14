@@ -433,11 +433,12 @@ class D4PG:
             seed=seed,
         )
         done = False
-        while not done and (max_steps <= -1 or max_steps > 0):
-            max_steps -= 1
+        step_number = 0
+        while not done and (max_steps <= -1 or max_steps >= step_number):
             step_state = self.step(env)
-            yield step_state
+            yield step_number, step_state
             done = step_state["done"] or step_state["truncated"]
+            step_number += 1
 
     def env_simulation(
         self,
@@ -477,7 +478,7 @@ class D4PG:
                 },
                 seed=episode_number,
             )
-            for step_state in self.episodes_simulation(
+            for step_number, step_state in self.episodes_simulation(
                 env, sample_batch, max_steps, seed=episode_number
             ):
                 yield episode_number, step_state

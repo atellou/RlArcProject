@@ -202,7 +202,7 @@ class ArcCriticNetwork(torch.nn.Module):
                 value = value.float() if max_value == 0 else value / max_value
             elif key not in self.no_scale_keys:
                 value = self.scale_arc_grids(value)
-            state[key] = self.inputs_layers[key](value)
+            state[key] = self.inputs_layers[key](value.float())
             state[key] = torch.relu(state[key])
             state[key] = state[key].view(state[key].shape[0], -1)
             assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"

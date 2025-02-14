@@ -153,15 +153,21 @@ class ArcActorNetwork(nn.Module):
 
         # Brodcast the state
         for key, value in state.items():
-            if key == "index":
-                max_value = torch.max(value)
-                value = value.float() if max_value == 0 else value / max_value
-            elif key != "terminated":
-                value = self.scale_arc_grids(value)
-            state[key] = self.inputs_layers[key](value)
-            state[key] = torch.relu(state[key])
-            state[key] = state[key].view(state[key].shape[0], -1)
-            assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
+            try:
+                if key == "index":
+                    max_value = torch.max(value)
+                    value = value.float() if max_value == 0 else value / max_value
+                elif key != "terminated":
+                    value = self.scale_arc_grids(value)
+                state[key] = self.inputs_layers[key](value.float())
+                state[key] = torch.relu(state[key])
+                state[key] = state[key].view(state[key].shape[0], -1)
+                assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
+            except Exception as e:
+                logger.error(
+                    f'Error in "{key}" layer, Shape: {value.shape}, and Dtype: {value.dtype}'
+                )
+                raise e
 
         # Concatenate flattned states
         state = torch.cat(

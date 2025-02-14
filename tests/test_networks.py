@@ -93,9 +93,7 @@ class ArcNetworksTest(unittest.TestCase):
         num_atoms = {"pixel_wise": int(torch.randint(50, 100, size=(1,))), "binary": 1}
         v_min = {"pixel_wise": -40, "binary": 0}
         v_max = {"pixel_wise": 2, "binary": 1}
-        network = ArcCriticNetwork(
-            size, color_values, num_atoms, v_min, v_max, test=True
-        )
+        network = ArcCriticNetwork(size, color_values, num_atoms, v_min, v_max)
 
         input_sample = TensorDict(
             {
