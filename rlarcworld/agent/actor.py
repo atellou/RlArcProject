@@ -1,3 +1,18 @@
+"""
+Actor network for the ARC environment.
+
+This module contains the implementation of the actor network for the ARC
+environment. The actor network is a neural network that takes as input the
+state of the environment and outputs a distribution over the possible actions.
+
+The actor network is composed of several convolutional layers, a GRU layer,
+and a linear layer. The convolutional layers are used to process the input
+state, the GRU layer is used to process the output of the convolutional layers,
+and the linear layer is used to output a distribution over the possible actions.
+
+The actor network is trained using the policy gradient algorithm.
+"""
+
 import os
 import torch
 import torch.nn as nn
@@ -9,11 +24,16 @@ logger = logging.getLogger(__name__)
 
 
 class ArcActorNetwork(nn.Module):
-    def __init__(
-        self, size: int, color_values, test: bool = False, epsilon: float = 1e-6
-    ):
+    """Actor network for the ARC environment."""
+
+    def __init__(self, size: int, color_values, epsilon: float = 1e-6):
+        """
+        Args:
+            size (int): The size of the grid.
+            color_values (int): The number of colors.
+            epsilon (float, optional): The epsilon value for the GRU. Defaults to 1e-6.
+        """
         super(ArcActorNetwork, self).__init__()
-        self.test = test
         self.size = size
         self.color_values = color_values
         self.inputs_layers = torch.nn.ModuleDict(
@@ -50,9 +70,33 @@ class ArcActorNetwork(nn.Module):
         )
 
     def scale_arc_grids(self, x: torch.Tensor):
+        """
+        Scales the input tensor by the number of color values.
+
+        Args:
+            x (torch.Tensor): The input tensor to scale.
+
+        Returns:
+            torch.Tensor: The scaled tensor.
+        """
+
         return x / self.color_values
 
     def input_val(self, state: TensorDict):
+        """
+        Validates the input state TensorDict.
+
+        Ensures that the input state is of type TensorDict and contains the
+        required keys: "last_grid", "grid", "examples", "initial", "index", and "terminated".
+
+        Args:
+            state (TensorDict): The input state to validate.
+
+        Raises:
+            TypeError: If the input state is not a TensorDict.
+            ValueError: If the state keys do not match the required keys.
+        """
+
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict"
         )
@@ -69,6 +113,19 @@ class ArcActorNetwork(nn.Module):
         )
 
     def output_val(self, action: TensorDict):
+        """
+        Validates the output action TensorDict.
+
+        Ensures that the output action is of type TensorDict and contains the
+        required keys: "color_values", "submit", "x_location", and "y_location".
+
+        Args:
+            action (TensorDict): The output action to validate.
+
+        Raises:
+            TypeError: If the output action is not a TensorDict.
+            ValueError: If the action keys do not match the required keys.
+        """
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
         in_keys = {"color_values", "submit", "x_location", "y_location"}
         assert set(action.keys()) == in_keys, ValueError(
@@ -77,10 +134,18 @@ class ArcActorNetwork(nn.Module):
 
     def forward(self, state: TensorDict):
         """
+        Forward pass of the actor network.
+
         Args:
-            state (TensorDict): The input state.
+            state (TensorDict): The state of the environment.
+
         Returns:
-            TensorDict: The output actions.
+            TensorDict: The output distribution of the actor network.
+
+        Raises:
+            TypeError: If the input state is not a TensorDict.
+            ValueError: If the state keys do not match the required keys.
+            AssertionError: If a NaN is detected in the output.
         """
         state = state.clone()
         # Validate input
@@ -108,23 +173,12 @@ class ArcActorNetwork(nn.Module):
         state = self.linear1(state)
         state, _ = self.gru(state)
 
-        if self.test:
-            state = TensorDict(
-                {
-                    reward_type: torch.softmax(
-                        layer(state) * 0.1 + torch.linspace(0, 1, layer.out_features),
-                        dim=-1,
-                    )
-                    for reward_type, layer in self.outputs_layers.items()
-                }
-            )
-        else:
-            state = TensorDict(
-                {
-                    reward_type: torch.softmax(layer(state), dim=-1)
-                    for reward_type, layer in self.outputs_layers.items()
-                },
-            )
+        state = TensorDict(
+            {
+                reward_type: torch.softmax(layer(state), dim=-1)
+                for reward_type, layer in self.outputs_layers.items()
+            },
+        )
         self.output_val(state)
 
         for key in state.keys():

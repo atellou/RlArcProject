@@ -1,3 +1,21 @@
+"""
+Critic network for the ARC environment.
+
+This module contains the implementation of the critic network for the ARC
+environment. The critic network is a neural network that takes as input the
+state of the environment and the action taken in the environment and outputs a
+distribution over the possible rewards.
+
+The critic network is composed of several convolutional layers, a GRU layer,
+and a linear layer. The convolutional layers are used to process the input
+state, the GRU layer is used to process the output of the convolutional layers,
+and the linear layer is used to output a distribution over the possible rewards.
+
+The critic network is trained using the distributional reinforcement learning
+algorithm.
+
+"""
+
 import os
 from typing import Dict
 import torch
@@ -9,6 +27,16 @@ logger = logging.getLogger(__name__)
 
 
 class ArcCriticNetwork(torch.nn.Module):
+    r"""
+    Args:
+        size (int): Size of the grid.
+        color_values (int): The number of color values in the grid.
+        num_atoms (Dict[str, int]): The number of atoms in the distribution for each reward type.
+        v_min (Dict[str, int]): The minimum value for each reward type.
+        v_max (Dict[str, int]): The maximum value for each reward type.
+        test (bool, optional): Whether to set the network to test mode. Defaults to False.
+    """
+
     def __init__(
         self,
         size: int,
@@ -18,15 +46,7 @@ class ArcCriticNetwork(torch.nn.Module):
         v_max: Dict[str, int],
         test: bool = False,
     ):
-        """
-        Args:
-            size (int): The size of the grid.
-            color_values (int): The number of colors.
-            num_atoms (Dict[str, int]): The number of atoms for the categorical distribution type.
-        """
-
         super(ArcCriticNetwork, self).__init__()
-        self.test = test
         self.num_atoms = num_atoms
         self.size = size
         self.color_values = color_values
@@ -86,10 +106,34 @@ class ArcCriticNetwork(torch.nn.Module):
             }
         )
 
+    @torch.jit.export
     def scale_arc_grids(self, x: torch.Tensor):
+        r"""
+        Scales the input tensor by the number of color values.
+
+        Args:
+            x (torch.Tensor): The input tensor to scale.
+
+        Returns:
+            torch.Tensor: The scaled tensor.
+        """
         return x / self.color_values
 
+    @torch.jit.export
     def input_val(self, state: TensorDict):
+        r"""
+        Validates the input state TensorDict.
+
+        Ensures that the input state is of type TensorDict and contains the
+        required keys: "last_grid", "grid", "examples", "initial", "index", and "terminated".
+
+        Args:
+            state (TensorDict): The input state to validate.
+
+        Raises:
+            TypeError: If the input state is not a TensorDict.
+            ValueError: If the state keys do not match the required keys.
+        """
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict"
         )
@@ -105,7 +149,21 @@ class ArcCriticNetwork(torch.nn.Module):
             "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
         )
 
+    @torch.jit.export
     def output_val(self, distribution: TensorDict):
+        r"""
+        Validates the output distribution TensorDict.
+
+        Ensures that the output distribution is of type TensorDict and contains the
+        required keys: "pixel_wise" and "binary".
+
+        Args:
+            distribution (TensorDict): The output distribution to validate.
+
+        Raises:
+            TypeError: If the output distribution is not a TensorDict.
+            ValueError: If the distribution keys do not match the required keys.
+        """
         assert isinstance(distribution, TensorDict), TypeError(
             "Distribution must be a TensorDict"
         )
@@ -117,11 +175,20 @@ class ArcCriticNetwork(torch.nn.Module):
         )
 
     def forward(self, state: TensorDict, action: TensorDict):
-        """
+        r"""
+        Forward pass of the critic network.
+
         Args:
-            state (TensorDict): The input state.
+            state (TensorDict): The state of the environment.
+            action (TensorDict): The action taken in the environment.
+
         Returns:
-            TensorDict: The output distributions.
+            TensorDict: The output distribution of the critic network.
+
+        Raises:
+            TypeError: If the input state or action is not a TensorDict.
+            ValueError: If the state keys do not match the required keys.
+            AssertionError: If a NaN is detected in the output.
         """
         state = state.clone()
         # Validate input
@@ -149,22 +216,12 @@ class ArcCriticNetwork(torch.nn.Module):
         # Feed the state to the network
         state = self.linear1(state)
         state, _ = self.gru(state)
-        if self.test:
-            state = TensorDict(
-                {
-                    key: torch.softmax(
-                        layer(state) * 0.1 + torch.linspace(0, 1, layer.out_features),
-                        dim=-1,
-                    )
-                    for key, layer in self.outputs_layers.items()
-                }
-            )
-        else:
-            state = TensorDict(
-                {
-                    key: torch.softmax(layer(state), dim=-1)
-                    for key, layer in self.outputs_layers.items()
-                }
-            )
+
+        state = TensorDict(
+            {
+                key: torch.softmax(layer(state), dim=-1)
+                for key, layer in self.outputs_layers.items()
+            }
+        )
 
         return state.auto_batch_size_()
