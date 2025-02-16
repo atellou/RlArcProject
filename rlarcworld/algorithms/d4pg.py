@@ -4,6 +4,8 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import torch.optim as optim
 
+from torch.utils.tensorboard import SummaryWriter
+
 from tensordict import TensorDict
 from torchrl.data import ReplayBuffer
 
@@ -501,8 +503,7 @@ class D4PG:
         epochs=1,
         max_steps=-1,
         validation_steps_frequency=-1,
-        validation_steps_per_epoch=-1,
-        max_steps_validation=-1,
+        validation_steps_per_episode=-1,
     ):
         for epoch in range(epochs):
             for step_number, (episode_number, step_state) in enumerate(
@@ -544,15 +545,18 @@ class D4PG:
                     and step_number % validation_steps_frequency == 0
                     and batch is not None
                 ):
-                    if not hasattr(self, "running_validation_process"):
-                        if max_steps_validation < 0 and validation_steps_per_epoch < 0:
+                    if not hasattr(
+                        self, "running_validation_process"
+                    ) or initial_episode_number == (len(self.validation_samples) - 1):
+                        if validation_steps_per_episode < 0:
                             logger.warning(
                                 "VALIDATION process could take a long time,"
-                                " it will run indeterminatly until the end of the enviroment."
-                                " Meaning, that all grids should be compleated to end the process."
+                                " it will run indeterminately until the end of the environment."
+                                " Meaning, that all grids should be completed to end the process."
                             )
+                        initial_episode_number = 0
                         self.running_validation_process = self.validation_process(
-                            max_steps=max_steps_validation
+                            max_steps=validation_steps_per_episode
                         )
                     for (
                         val_episode_number,
@@ -561,10 +565,8 @@ class D4PG:
                         val_loss_critic,
                         val_step_state,
                     ) in self.running_validation_process:
-                        if (
-                            validation_steps_per_epoch > 0
-                            and val_step_number % validation_steps_per_epoch == 0
-                        ):
+                        if val_episode_number > initial_episode_number:
+                            initial_episode_number = copy.copy(val_episode_number)
                             break
 
                 if step_number % self.target_update_frequency == 0:

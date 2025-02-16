@@ -429,8 +429,7 @@ class TestD4PG(unittest.TestCase):
         d4pg.fit(
             max_steps=max_steps,
             validation_steps_frequency=2,
-            validation_steps_per_epoch=2,
-            max_steps_validation=-1,
+            validation_steps_per_episode=max_steps,
         )
 
 
