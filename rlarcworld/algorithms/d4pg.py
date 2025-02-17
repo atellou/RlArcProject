@@ -504,8 +504,9 @@ class D4PG:
         max_steps=-1,
         validation_steps_frequency=-1,
         validation_steps_per_episode=-1,
+        writer: SummaryWriter = None,
     ):
-        for epoch in range(epochs):
+        for epoch_n in range(epochs):
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
                     self.train_env,
@@ -539,6 +540,15 @@ class D4PG:
 
                 batch = self.fileter_compleated_state(batch)
                 loss_actor, loss_critic = self.compute_loss(batch, training=True)
+
+                writer.add_scalar("Loss/actor", loss_actor, step_number)
+                writer.add_scalar("Loss/critic", loss_critic, step_number)
+                writer.add_histogram(
+                    "Weights/actor", self.actor.parameters(), step_number
+                )
+                writer.add_histogram(
+                    "Weights/critic", self.critic.parameters(), step_number
+                )
 
                 if (
                     validation_steps_frequency > 0
