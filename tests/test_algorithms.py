@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import tensordict
@@ -15,11 +16,12 @@ from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PG
-from rlarcworld.utils import categorical_projection
+from rlarcworld.utils import categorical_projection, get_nested_ref
 
 import unittest
 import logging
 
+from torch.utils.tensorboard import SummaryWriter
 
 logger = logging.getLogger(__name__)
 
@@ -367,8 +369,8 @@ class TestD4PG(unittest.TestCase):
     def test_validation_d4pg(self):
         grid_size = 30
         color_values = 11
-        max_steps = torch.randint(8, 20, size=(1,)).item()
-        n_steps = torch.randint(3, max_steps // 2, size=(1,)).item()
+        max_steps = torch.randint(30, 100, size=(1,)).item()
+        n_steps = torch.randint(3, 20 // 2, size=(1,)).item()
         logger.info(
             "Testing train_d4pg with n_steps {} for {} steps".format(n_steps, max_steps)
         )
@@ -425,11 +427,44 @@ class TestD4PG(unittest.TestCase):
             target_update_frequency=5,
             n_steps=env.n_steps,
             gamma=env.gamma,
+            tb_writer=SummaryWriter(log_dir="runs/test_validation_d4pg"),
         )
         d4pg.fit(
             max_steps=max_steps,
-            validation_steps_frequency=2,
+            validation_steps_frequency=10,
+            validation_steps_per_train_step=10,
             validation_steps_per_episode=max_steps,
+            logger_frequency=2,
+            grads_logger_frequency=3,
+        )
+
+        assert os.path.isdir(
+            "./runs/test_validation_d4pg"
+        ), "Directory 'runs/test_validation_d4pg' does not exist"
+
+        ref, last_key = get_nested_ref(d4pg.history, "Validation/Reward")
+        assert isinstance(
+            ref[last_key], dict
+        ), "Invalid validation reward history format - expected dict, got {}".format(
+            type(ref[last_key])
+        )
+        assert isinstance(
+            ref[last_key]["n_reward"], np.ndarray
+        ), "Invalid validation reward history format - expected np.ndarray for n_step, got {}".format(
+            type(ref[last_key].get("n_step", None))
+        )
+
+        ref, last_key = get_nested_ref(d4pg.history, "Train/Reward")
+
+        assert isinstance(
+            ref[last_key], dict
+        ), "Invalid training reward history format - expected dict, got {}".format(
+            type(ref[last_key])
+        )
+        assert isinstance(
+            ref[last_key]["n_reward"], np.ndarray
+        ), "Invalid training reward history format - expected np.ndarray for n_step, got {}".format(
+            type(ref[last_key].get("n_step", None))
         )
 
 

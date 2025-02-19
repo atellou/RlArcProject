@@ -1,4 +1,6 @@
+import os
 import copy
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -11,7 +13,7 @@ from torchrl.data import ReplayBuffer
 
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.arc_dataset import ArcDataset
-from rlarcworld.utils import categorical_projection
+from rlarcworld.utils import categorical_projection, get_nested_ref
 
 import logging
 
@@ -34,6 +36,8 @@ class D4PG:
         gamma: float = 0.99,
         tau: float = 0.001,
         target_update_frequency: int = 10,
+        tb_writer: SummaryWriter = None,
+        history_file: str = None,
     ):
         assert (
             env.n_steps == n_steps
@@ -51,6 +55,20 @@ class D4PG:
         self.target_update_frequency = target_update_frequency
         self.replay_buffer = replay_buffer
         self.warmup_buffer_ratio = warmup_buffer_ratio
+        self.tb_writer = tb_writer
+        self.history = {}
+
+        if self.tb_writer is not None:
+            self.writer_base_dir = tb_writer.log_dir
+            if history_file is None:
+                history_file = self.writer_base_dir
+        else:
+            self.writer_base_dir = None
+
+        if history_file is not None:
+            self.history_file = history_file
+        elif self.writer_base_dir is not None:
+            self.history_file = self.writer_base_dir
 
         if self.replay_buffer is None:
             self.batch_size = train_samples.batch_size
@@ -97,6 +115,10 @@ class D4PG:
 
         # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
+
+    def history_add(self, key, value):
+        ref, last_key = get_nested_ref(self.history, key, default=np.array([]))
+        ref[last_key] = np.append(ref[last_key], value)
 
     def categorize_actions(self, actions, as_dict=False):
         """
@@ -319,7 +341,7 @@ class D4PG:
         batch = batch[selected_indices]
         return batch
 
-    def compute_loss(self, batch, training=True):
+    def compute_loss(self, batch, training=True, tb_writer_tag=None, global_step=None):
         """
         Perform a training step for the D4PG algorithm.
 
@@ -354,6 +376,16 @@ class D4PG:
             if training:
                 self.critic_optimizer.zero_grad()
                 loss_critic.backward()
+                if tb_writer_tag is not None and self.tb_writer is not None:
+                    assert global_step is not None, "global_step must be provided"
+                    for name, param in self.critic.named_parameters():
+                        if param.grad is not None:
+                            self.tb_writer.add_histogram(
+                                os.path.join(tb_writer_tag, "/Grads/critic/", name),
+                                param.grad,
+                                global_step,
+                            )
+
                 self.critic_optimizer.step()
                 # Actor update
                 loss_actor = self.compute_actor_loss(batch["state"])
@@ -369,6 +401,15 @@ class D4PG:
             if training:
                 self.actor_optimizer.zero_grad()
                 loss_actor.backward()
+                if tb_writer_tag is not None and self.tb_writer is not None:
+                    assert global_step is not None, "global_step must be provided"
+                    for name, param in self.actor.named_parameters():
+                        if param.grad is not None:
+                            self.tb_writer.add_histogram(
+                                os.path.join(tb_writer_tag, "/Grads/actor/", name),
+                                param.grad,
+                                global_step,
+                            )
                 self.actor_optimizer.step()
 
                 if self.replay_buffer is not None:
@@ -443,10 +484,7 @@ class D4PG:
             step_number += 1
 
     def env_simulation(
-        self,
-        env,
-        samples,
-        max_steps=-1,
+        self, env, samples, max_steps=-1, tb_writer_tag=None, merge_graphs=True
     ):
         """
         Trains the D4PG algorithm using the given enviroment and train samples.
@@ -471,8 +509,6 @@ class D4PG:
         ), "max_steps must be greater or equal to n_steps"
 
         for episode_number, sample_batch in enumerate(samples):
-
-            # episode_reward = {"pixel_wise": 0.0, "binary": 0.0}
             env.reset(
                 options={
                     "batch": sample_batch["task"],
@@ -485,13 +521,44 @@ class D4PG:
             ):
                 yield episode_number, step_state
 
-    def validation_process(self, max_steps=-1):
+                if tb_writer_tag is not None and self.tb_writer is not None:
+                    mask = step_state["state"]["terminated"] == 0
+                    selected_indices = mask.nonzero(as_tuple=True)[0]
+                    rewards = step_state["reward"][selected_indices]
+                    for k, v in rewards.items():
+                        value = torch.mean(v).item()
+                        path = os.path.join(tb_writer_tag, f"Reward/{k}")
+                        self.history_add(path, value)
+                        if merge_graphs:
+                            path = f"Reward/{k}"
+                            value = {tb_writer_tag: value}
+                            self.tb_writer.add_scalars(
+                                path,
+                                value,
+                                step_number * episode_number,
+                            )
+                        else:
+                            self.tb_writer.add_scalar(
+                                path,
+                                value,
+                                step_number * episode_number,
+                            )
+
+    def validation_process(
+        self,
+        max_steps=-1,
+        tb_writer_tag="Validation",
+        logger_frequency=1000,
+        merge_graphs=True,
+    ):
         with torch.no_grad():
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
                     self.validation_env,
                     self.validation_samples,
                     max_steps=max_steps,
+                    tb_writer_tag=tb_writer_tag,
+                    merge_graphs=merge_graphs,
                 )
             ):
                 step_state["terminated"] = step_state["next_state"]["terminated"]
@@ -503,26 +570,68 @@ class D4PG:
                 loss_actor, loss_critic = self.compute_loss(step_state, training=False)
                 yield episode_number, step_number, loss_actor, loss_critic, step_state
 
+                if self.tb_writer is not None and step_number % logger_frequency == 0:
+                    batch_size = step_state["reward"].batch_size[0]
+                    value = loss_actor.item() / batch_size
+                    path = os.path.join(tb_writer_tag, "Loss/actor")
+                    self.history_add(path, value)
+                    if merge_graphs:
+                        path = "Loss/actor"
+                        value = {tb_writer_tag: value}
+                        self.tb_writer.add_scalars(
+                            path,
+                            value,
+                            step_number,
+                        )
+                    else:
+                        self.tb_writer.add_scalar(
+                            path,
+                            value,
+                            step_number,
+                        )
+                    value = loss_critic.item() / batch_size
+                    path = os.path.join(tb_writer_tag, "Loss/critic")
+                    self.history_add(path, value)
+                    if merge_graphs:
+                        path = "Loss/critic"
+                        value = {tb_writer_tag: value}
+                        self.tb_writer.add_scalars(
+                            path,
+                            value,
+                            step_number,
+                        )
+                    else:
+                        self.tb_writer.add_scalar(
+                            path,
+                            value,
+                            step_number,
+                        )
+
     def fit(
         self,
         epochs=1,
         max_steps=-1,
         validation_steps_frequency=-1,
+        validation_steps_per_train_step=-1,
         validation_steps_per_episode=-1,
-        writer: SummaryWriter = None,
+        logger_frequency=1000,
+        grads_logger_frequency=1000000,
+        tb_writer_tag="Train",
+        validation_tb_writer_tag="Validation",
+        merge_graphs=True,
     ):
         val_step_number_base = 0
-        train_step_number_base = 0
-        step_number = 0
+        global_train_step = 0
         for epoch_n in range(epochs):
-            train_step_number_base += step_number
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
                     self.train_env,
                     self.train_samples,
                     max_steps=max_steps,
+                    tb_writer_tag=tb_writer_tag,
                 )
             ):
+                global_train_step += 1
                 # Store the experience in the replay buffer
                 if self.replay_buffer is not None:
                     batch = self.replay_buffer_step(
@@ -548,17 +657,44 @@ class D4PG:
                     continue
 
                 batch = self.fileter_compleated_state(batch)
-                loss_actor, loss_critic = self.compute_loss(batch, training=True)
 
-                # global_train_step = step_number + train_step_number_base
-                # writer.add_scalar("Loss/actor", loss_actor, global_train_step)
-                # writer.add_scalar("Loss/critic", loss_critic, global_train_step)
-                # writer.add_histogram(
-                #     "Weights/actor", self.actor.parameters(), global_train_step
-                # )
-                # writer.add_histogram(
-                #     "Weights/critic", self.critic.parameters(), global_train_step
-                # )
+                if (
+                    self.tb_writer is not None
+                    and global_train_step % grads_logger_frequency == 0
+                ):
+                    loss_actor, loss_critic = self.compute_loss(
+                        batch,
+                        training=True,
+                        tb_writer_tag=tb_writer_tag,
+                        global_step=global_train_step,
+                    )
+                else:
+                    loss_actor, loss_critic = self.compute_loss(batch, training=True)
+
+                if (
+                    self.tb_writer is not None
+                    and global_train_step % logger_frequency == 0
+                ):
+                    batch_size = step_state["reward"].batch_size[0]
+                    value = loss_actor.item() / batch_size
+                    path = os.path.join(tb_writer_tag, "Loss/actor")
+                    self.history_add(path, value)
+                    if merge_graphs:
+                        path = "Loss/actor"
+                        value = {tb_writer_tag: value}
+                        self.tb_writer.add_scalars(path, value, global_train_step)
+                    else:
+                        self.tb_writer.add_scalar(path, value, global_train_step)
+
+                    value = loss_critic.item() / batch_size
+                    path = os.path.join(tb_writer_tag, "Loss/critic")
+                    self.history_add(path, value)
+                    if merge_graphs:
+                        path = "Loss/critic"
+                        value = {tb_writer_tag: value}
+                        self.tb_writer.add_scalars(path, value, global_train_step)
+                    else:
+                        self.tb_writer.add_scalar(path, value, global_train_step)
 
                 if (
                     validation_steps_frequency > 0
@@ -576,7 +712,9 @@ class D4PG:
                             )
                         initial_episode_number = 0
                         self.running_validation_process = self.validation_process(
-                            max_steps=validation_steps_per_episode
+                            max_steps=validation_steps_per_episode,
+                            tb_writer_tag=validation_tb_writer_tag,
+                            merge_graphs=merge_graphs,
                         )
                     for (
                         val_episode_number,
@@ -585,18 +723,12 @@ class D4PG:
                         val_loss_critic,
                         val_step_state,
                     ) in self.running_validation_process:
-                        if val_episode_number > initial_episode_number:
+                        if val_episode_number > initial_episode_number or (
+                            validation_steps_per_train_step > 0
+                            and val_step_number % validation_steps_per_train_step == 0
+                        ):
                             initial_episode_number = copy.copy(val_episode_number)
-                            val_step_number_base += val_step_number
                             break
-
-                        # global_val_step = val_step_number_base + val_step_number
-                        # writer.add_scalar(
-                        #     "Loss/Validation/actor", val_loss_actor, global_val_step
-                        # )
-                        # writer.add_scalar(
-                        #     "Loss/Validation/critic", val_loss_critic, global_val_step
-                        # )
 
                 if step_number % self.target_update_frequency == 0:
                     self.update_target_networks(tau=self.tau)

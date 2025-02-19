@@ -1,6 +1,17 @@
 import torch
 
 
+def get_nested_ref(dictionary: dict, key: str, sep: str = "/", default=None):
+    if sep in key:
+        first_key, other_keys = key.split(sep, 1)
+        sub_dict = dictionary.setdefault(first_key, {})
+        return get_nested_ref(sub_dict, other_keys, sep, default=default)
+
+    if key not in dictionary:
+        dictionary[key] = default() if callable(default) else default
+    return dictionary, key
+
+
 def categorical_projection(
     next_q_dist,
     rewards,
