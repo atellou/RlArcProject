@@ -365,6 +365,9 @@ class TestD4PG(unittest.TestCase):
         d4pg.fit(
             max_steps=max_steps,
         )
+        assert torch.all(
+            env._reward_storage != 0
+        ), "Reward Storage is likely not updating"
 
     def test_validation_d4pg(self):
         grid_size = 30

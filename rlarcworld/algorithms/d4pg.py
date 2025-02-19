@@ -39,6 +39,54 @@ class D4PG:
         tb_writer: SummaryWriter = None,
         history_file: str = None,
     ):
+        """
+        D4PG (Distributed Distributional Deep Deterministic Policy Gradient) implementation.
+
+        This class implements the D4PG algorithm for reinforcement learning with the following key features:
+        - Distributional critic that models value distributions rather than expectations
+        - N-step returns for more accurate value estimation
+        - Prioritized experience replay for more efficient learning
+        - Target networks with soft updates for stability
+        - Support for both pixel-wise and binary rewards
+
+        Args:
+            env (PixelAwareRewardWrapper): Environment wrapper that provides pixel-aware rewards
+            train_samples (DataLoader): DataLoader providing training samples
+            actor (torch.nn.Module): Actor network that outputs action probabilities
+            critic (torch.nn.Module): Critic network that outputs value distributions
+            batch_size (int): Size of batches for training
+            validation_samples (DataLoader, optional): DataLoader for validation samples
+            replay_buffer (ReplayBuffer, optional): Buffer for experience replay
+            warmup_buffer_ratio (float, optional): Ratio of buffer to fill before training. Defaults to 0.2
+            n_steps (int, optional): Number of steps for n-step returns. Defaults to 1
+            gamma (float, optional): Discount factor. Defaults to 0.99
+            tau (float, optional): Target network update rate. Defaults to 0.001
+            target_update_frequency (int, optional): Steps between target updates. Defaults to 10
+            tb_writer (SummaryWriter, optional): TensorBoard writer for logging
+            history_file (str, optional): Path to save training history
+
+        Methods:
+            step(): Performs a single environment step using current policy
+            compute_loss(): Computes actor and critic losses for a batch of transitions
+            fit(): Main training loop that handles training and validation
+            validation_process(): Runs validation episodes
+            update_target_networks(): Updates target network weights
+            compute_target_distribution(): Computes target distribution for critic training
+            compute_critic_loss(): Computes critic loss given current states/actions
+            compute_actor_loss(): Computes actor loss for policy improvement
+            replay_buffer_step(): Handles experience storage and sampling
+            episodes_simulation(): Simulates episodes in the environment
+            env_simulation(): Handles environment simulation with logging
+            categorize_actions(): Converts action probabilities to discrete actions
+            history_add(): Adds values to training history
+            fileter_compleated_state(): Filters out completed states from batches
+        """
+        assert isinstance(
+            train_samples, DataLoader
+        ), "train_samples must be an instance of DataLoader"
+        assert isinstance(
+            env, PixelAwareRewardWrapper
+        ), "Environment must be an instance of PixelAwareRewardWrapper"
         assert (
             env.n_steps == n_steps
         ), "n-steps in enviroment ({}) is different from n-steps in algorithm ({})".format(
@@ -117,6 +165,13 @@ class D4PG:
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
     def history_add(self, key, value):
+        """
+        Adds a value to the training history.
+
+        Args:
+            key (str): The key for the value to be added.
+            value (any): The value to be added.
+        """
         ref, last_key = get_nested_ref(self.history, key, default=np.array([]))
         ref[last_key] = np.append(ref[last_key], value)
 
@@ -155,7 +210,6 @@ class D4PG:
             reward (torch.Tensor): Rewards from the batch.
             next_state (TensorDict): TensorDict of next states.
             terminated (torch.Tensor): terminated flags from the batch.
-            gamma (float): Discount factor.
 
         Returns:
             torch.Tensor: Projected target distribution (batch_size, num_atoms).
@@ -226,6 +280,8 @@ class D4PG:
 
         Args:
             state (TensorDict): TensorDict of current states.
+            action_probs (TensorDict, optional): Pre-computed action probabilities. If None, will be computed using actor network.
+            critic_probs (TensorDict, optional): Pre-computed critic probabilities. If None, will be computed using critic network.
 
         Returns:
             torch.Tensor: Actor loss (negative expected Q-value).
@@ -343,18 +399,21 @@ class D4PG:
 
     def compute_loss(self, batch, training=True, tb_writer_tag=None, global_step=None):
         """
-        Perform a training step for the D4PG algorithm.
+        Computes actor and critic losses for a batch of transitions.
 
         Args:
-            step (int): The current step in the enviroment.
-            batch_size (int): The size of the batch to sample from the replay buffer.
-            state (TensorDict): The current state of the enviroment.
-            actions (TensorDict): The actions taken by the actor in the current state.
-            reward (TensorDict): The rewards received from the enviroment.
-            next_state (TensorDict): The next state of the enviroment.
+            batch (TensorDict): Batch of transitions containing:
+                - state (TensorDict): Current states
+                - actions (TensorDict): Actions taken
+                - reward (TensorDict): Rewards received
+                - next_state (TensorDict): Next states
+                - terminated (torch.Tensor): Terminal flags
+            training (bool, optional): Whether to compute gradients and update networks. Defaults to True.
+            tb_writer_tag (str, optional): Tag for TensorBoard logging. Defaults to None.
+            global_step (int, optional): Global step for TensorBoard logging. Required if tb_writer_tag is provided.
 
         Returns:
-            tuple: The actor and critic losses as a tuple.
+            Tuple[torch.Tensor, torch.Tensor]: Actor loss and critic loss
         """
         grading_method = "enable_grad" if training else "no_grad"
         with getattr(torch, grading_method)():
@@ -463,6 +522,26 @@ class D4PG:
         ).auto_batch_size_()
 
     def episodes_simulation(self, env, samples, max_steps: int = -1, seed: int = None):
+        """
+        Simulates episodes in the environment using the current policy.
+
+        Args:
+            env: The environment to interact with.
+            samples: Samples containing task and examples data for the environment.
+            max_steps (int, optional): Maximum number of steps per episode. -1 means no limit. Defaults to -1.
+            seed (int, optional): Random seed for reproducibility. Defaults to None.
+
+        Yields:
+            Tuple containing:
+                - step_number (int): Current step number in the episode
+                - step_state (TensorDict): Dictionary containing:
+                    - state: Current environment state
+                    - reward: Rewards received from the environment
+                    - actions: Action probabilities from the actor
+                    - next_state: Next environment state
+                    - done: Whether episode is done
+                    - truncated: Whether episode was truncated
+        """
         assert (
             env.n_steps == self.n_steps
         ), "n-steps in enviroment ({}) is different from n-steps in algorithm ({})".format(
@@ -487,22 +566,28 @@ class D4PG:
         self, env, samples, max_steps=-1, tb_writer_tag=None, merge_graphs=True
     ):
         """
-        Trains the D4PG algorithm using the given enviroment and train samples.
+        Simulates episodes in the environment and handles logging.
 
         Args:
-            env (ArcBatchGridEnv): The enviroment to use for training.
-            train_samples (DataLoader): A DataLoader containing the training samples.
-            batch_size (int): The size of the batch to sample from the replay buffer.
-            max_steps (int, optional): The maximum number of steps to take in the enviroment. Defaults to -1 (no limit).
+            env: The environment to interact with
+            samples: Samples containing task and examples data for the environment
+            max_steps (int, optional): Maximum number of steps per episode. -1 means no limit. Defaults to -1
+            tb_writer_tag (str, optional): Tag for TensorBoard logging. Defaults to None
+            merge_graphs (bool, optional): Whether to merge graphs in TensorBoard. Defaults to True
 
         Yields:
             Tuple containing:
-                - state (TensorDict): The current state of the environment.
-                - reward (TensorDict): The rewards received after taking the action.
-                - actions (torch.Tensor): The actions taken by the actor.
-                - next_state (TensorDict): The state of the environment after the action.
-                - done (bool): Whether the episode has terminated.
-                - truncated (bool): Whether the episode has been truncated.
+                - episode_number (int): Current episode number
+                - step_state (TensorDict): Dictionary containing:
+                    - state: Current environment state
+                    - reward: Rewards received from the environment
+                    - actions: Action probabilities from the actor
+                    - next_state: Next environment state
+                    - done: Whether episode is done
+                    - truncated: Whether episode was truncated
+
+        Raises:
+            AssertionError: If max_steps is less than n_steps when max_steps is not -1
         """
         assert (
             self.n_steps <= max_steps or max_steps < 0
@@ -551,6 +636,29 @@ class D4PG:
         logger_frequency=1000,
         merge_graphs=True,
     ):
+        """
+        Performs validation on the validation environment.
+
+        Args:
+            max_steps (int, optional): Maximum number of steps per episode. -1 means no limit. Defaults to -1
+            tb_writer_tag (str, optional): Tag for TensorBoard logging. Defaults to "Validation"
+            logger_frequency (int, optional): Frequency of logging. Defaults to 1000
+            merge_graphs (bool, optional): Whether to merge graphs in TensorBoard. Defaults to True
+
+        Returns:
+            Generator yielding:
+                - episode_number (int): Current episode number
+                - step_number (int): Current step number in the episode
+                - loss_actor (torch.Tensor): Actor loss
+                - loss_critic (torch.Tensor): Critic loss
+                - step_state (TensorDict): Dictionary containing:
+                    - state: Current environment state
+                    - reward: Rewards received from the environment
+                    - actions: Action probabilities from the actor
+                    - next_state: Next environment state
+                    - done: Whether episode is done
+                    - truncated: Whether episode was truncated
+        """
         with torch.no_grad():
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
@@ -620,7 +728,35 @@ class D4PG:
         validation_tb_writer_tag="Validation",
         merge_graphs=True,
     ):
-        val_step_number_base = 0
+        """
+        Main training loop that handles training and validation.
+
+        Args:
+            epochs (int, optional): Number of training epochs. Defaults to 1.
+            max_steps (int, optional): Maximum steps per episode. -1 means no limit. Defaults to -1.
+            validation_steps_frequency (int, optional): Number of training steps between validation runs.
+                -1 means no validation. Defaults to -1.
+            validation_steps_per_train_step (int, optional): Number of validation steps per training step.
+                -1 means run until episode completion. Defaults to -1.
+            validation_steps_per_episode (int, optional): Maximum validation steps per episode.
+                -1 means no limit. Defaults to -1.
+            logger_frequency (int, optional): Steps between logging training metrics. Defaults to 1000.
+            grads_logger_frequency (int, optional): Steps between logging gradients. Defaults to 1000000.
+            tb_writer_tag (str, optional): Tag for training metrics in TensorBoard. Defaults to "Train".
+            validation_tb_writer_tag (str, optional): Tag for validation metrics in TensorBoard.
+                Defaults to "Validation".
+            merge_graphs (bool, optional): Whether to merge training and validation graphs in TensorBoard.
+                Defaults to True.
+
+        The training loop:
+        1. Samples transitions from environment
+        2. Stores transitions in replay buffer if enabled
+        3. Updates actor and critic networks
+        4. Periodically:
+            - Updates target networks
+            - Runs validation if enabled
+            - Logs metrics to TensorBoard
+        """
         global_train_step = 0
         for epoch_n in range(epochs):
             for step_number, (episode_number, step_state) in enumerate(
