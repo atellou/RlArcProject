@@ -388,13 +388,6 @@ class TestD4PG(unittest.TestCase):
         )
         train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
 
-        dataset_val = ArcDataset(
-            arc_dataset_dir="rlarcworld/dataset/evaluation",
-            keep_in_memory=True,
-            transform=ArcSampleTransformer(
-                (grid_size, grid_size), examples_stack_dim=10
-            ),
-        )
         val_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
         replay_buffer = TensorDictReplayBuffer(
             storage=LazyTensorStorage(self.batch_size),

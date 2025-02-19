@@ -320,7 +320,7 @@ class ArcBatchGridEnv(gym.Env):
             device=self._reward_storage.device,
             dtype=self._reward_storage.dtype,
         )
-        self._reward_storage.push(reward.unsqueeze(1))
+        self._reward_storage = self._reward_storage.push(reward.unsqueeze(1))
         self._last_reward = reward
 
         # TODO: No truncate version, evaluate time constraints
