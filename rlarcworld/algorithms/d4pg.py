@@ -34,6 +34,8 @@ class D4PG:
         warmup_buffer_ratio: float = 0.2,
         n_steps: int = 1,
         gamma: float = 0.99,
+        entropy_coef: float = 0.01,
+        entropy_coef_decay: float = 0.995,
         tau: float = 0.001,
         target_update_frequency: int = 10,
         tb_writer: SummaryWriter = None,
@@ -99,6 +101,8 @@ class D4PG:
         # Store parameters
         self.n_steps = n_steps
         self.gamma = gamma
+        self.entropy_coef = entropy_coef
+        self.entropy_coef_decay = entropy_coef_decay
         self.tau = tau
         self.target_update_frequency = target_update_frequency
         self.replay_buffer = replay_buffer
@@ -163,6 +167,12 @@ class D4PG:
 
         # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
+
+    def apply_decay(self):
+        """
+        Applies entropy coefficient decay.
+        """
+        self.entropy_coef *= self.entropy_coef_decay
 
     def history_add(self, key, value):
         """
@@ -299,6 +309,14 @@ class D4PG:
             self.critic.output_val(critic_probs)
 
         # Compute Q-Values
+        if self.entropy_coef != 0:
+            entropy = 0
+            for key in action_probs.keys():
+                entropy += -torch.sum(
+                    action_probs[key] * torch.log(action_probs[key] + 1e-10), dim=-1
+                ).mean()
+            entropy /= len(action_probs.keys())
+
         loss = TensorDict({})
         for key in critic_probs.keys():
             loss[key] = -torch.sum(
@@ -307,6 +325,8 @@ class D4PG:
                 dim=-1,
                 keepdim=True,
             ).mean()
+            if self.entropy_coef != 0:
+                loss[key] = loss[key] - self.entropy_coef * entropy
 
         return loss
 
