@@ -412,10 +412,10 @@ class D4PG:
 
         return TensorDict(
             {
-                "state": state,
-                "reward": reward,
-                "actions": action_probs,
-                "next_state": next_state,
+                "state": state.auto_batch_size_(),
+                "reward": reward.auto_batch_size_(),
+                "actions": action_probs.auto_batch_size_(),
+                "next_state": next_state.auto_batch_size_(),
                 "done": done,
                 "truncated": truncated,
             }
@@ -495,6 +495,11 @@ class D4PG:
                 )
             ):
                 step_state["terminated"] = step_state["next_state"]["terminated"]
+                mask = step_state["state"]["terminated"] == 0
+                selected_indices = mask.nonzero(as_tuple=True)[0]
+                for key in step_state.keys():
+                    if isinstance(step_state[key], TensorDict):
+                        step_state[key] = step_state[key][selected_indices]
                 loss_actor, loss_critic = self.compute_loss(step_state, training=False)
                 yield episode_number, step_number, loss_actor, loss_critic, step_state
 
@@ -506,7 +511,11 @@ class D4PG:
         validation_steps_per_episode=-1,
         writer: SummaryWriter = None,
     ):
+        val_step_number_base = 0
+        train_step_number_base = 0
+        step_number = 0
         for epoch_n in range(epochs):
+            train_step_number_base += step_number
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
                     self.train_env,
@@ -541,14 +550,15 @@ class D4PG:
                 batch = self.fileter_compleated_state(batch)
                 loss_actor, loss_critic = self.compute_loss(batch, training=True)
 
-                writer.add_scalar("Loss/actor", loss_actor, step_number)
-                writer.add_scalar("Loss/critic", loss_critic, step_number)
-                writer.add_histogram(
-                    "Weights/actor", self.actor.parameters(), step_number
-                )
-                writer.add_histogram(
-                    "Weights/critic", self.critic.parameters(), step_number
-                )
+                # global_train_step = step_number + train_step_number_base
+                # writer.add_scalar("Loss/actor", loss_actor, global_train_step)
+                # writer.add_scalar("Loss/critic", loss_critic, global_train_step)
+                # writer.add_histogram(
+                #     "Weights/actor", self.actor.parameters(), global_train_step
+                # )
+                # writer.add_histogram(
+                #     "Weights/critic", self.critic.parameters(), global_train_step
+                # )
 
                 if (
                     validation_steps_frequency > 0
@@ -577,7 +587,16 @@ class D4PG:
                     ) in self.running_validation_process:
                         if val_episode_number > initial_episode_number:
                             initial_episode_number = copy.copy(val_episode_number)
+                            val_step_number_base += val_step_number
                             break
+
+                        # global_val_step = val_step_number_base + val_step_number
+                        # writer.add_scalar(
+                        #     "Loss/Validation/actor", val_loss_actor, global_val_step
+                        # )
+                        # writer.add_scalar(
+                        #     "Loss/Validation/critic", val_loss_critic, global_val_step
+                        # )
 
                 if step_number % self.target_update_frequency == 0:
                     self.update_target_networks(tau=self.tau)
