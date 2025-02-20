@@ -49,10 +49,10 @@ class ArcActorNetwork(nn.Module):
                     in_channels=1, out_channels=1, kernel_size=3
                 ),
                 "index": torch.nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3),
-                "terminated": torch.nn.Linear(1, 1),
+                # "terminated": torch.nn.Linear(1, 1),
             }
         )
-        self.linear1 = torch.nn.Linear(16465, 128)
+        self.linear1 = torch.nn.Linear(16464, 128)
         self.gru = torch.nn.GRU(
             input_size=128,
             hidden_size=128,
@@ -106,7 +106,6 @@ class ArcActorNetwork(nn.Module):
             "examples",
             "initial",
             "index",
-            "terminated",
         }
         assert set(state.keys()) == in_keys, ValueError(
             "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
@@ -148,6 +147,8 @@ class ArcActorNetwork(nn.Module):
             AssertionError: If a NaN is detected in the output.
         """
         state = state.clone()
+        # Only present in training
+        state.pop("terminated", None)
         # Validate input
         self.input_val(state)
 

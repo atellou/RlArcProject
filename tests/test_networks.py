@@ -232,7 +232,6 @@ class ArcNetworksTest(unittest.TestCase):
                     0, color_values, size=(self.batch_size, 1, size, size)
                 ),
                 "index": torch.randint(0, size, size=(self.batch_size, 1, size, size)),
-                "terminated": torch.randint(0, 2, size=(self.batch_size, 1)).float(),
             }
         )
         network.input_val(input_sample)
