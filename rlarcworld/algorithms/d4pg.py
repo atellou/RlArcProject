@@ -36,6 +36,7 @@ class D4PG:
         warmup_buffer_ratio: float = 0.2,
         n_steps: int = 1,
         gamma: float = 0.99,
+        carsm=False,
         entropy_coef: float = 0.01,
         entropy_coef_decay: float = 0.995,
         tau: float = 0.001,
@@ -67,6 +68,7 @@ class D4PG:
             warmup_buffer_ratio (float, optional): Ratio of buffer to fill before training. Defaults to 0.2
             n_steps (int, optional): Number of steps for n-step returns. Defaults to 1
             gamma (float, optional): Discount factor. Defaults to 0.99
+            carsam (bool, optional): Whether to use CARSAM actor computation of loss. Defaults to False
             entropy_coef (float, optional): Initial coefficient for entropy regularization. Higher values encourage more exploration. Defaults to 0.01
             entropy_coef_decay (float, optional): Rate at which entropy coefficient decays over time. Values closer to 1.0 decay more slowly. Defaults to 0.995
             tau (float, optional): Target network update rate. Defaults to 0.001
@@ -111,6 +113,7 @@ class D4PG:
         self.learning_rate_critic = learning_rate_critic
         self.n_steps = n_steps
         self.gamma = gamma
+        self.carsm = carsm
         self.entropy_coef = entropy_coef
         self.entropy_coef_decay = entropy_coef_decay
         self.tau = tau
@@ -317,12 +320,13 @@ class D4PG:
 
         return loss, td_error, q_dist
 
-    def compute_actor_loss(self, state, action_probs=None, critic_probs=None):
+    def compute_actor_loss(self, state, target_q, action_probs=None, critic_probs=None):
         """
         Compute the loss for the actor network.
 
         Args:
             state (TensorDict): TensorDict of current states.
+            target_q (TensorDict): TensorDict of target Q-values.
             action_probs (TensorDict, optional): Pre-computed action probabilities. If None, will be computed using actor network.
             critic_probs (TensorDict, optional): Pre-computed critic probabilities. If None, will be computed using critic network.
 
@@ -341,23 +345,38 @@ class D4PG:
         else:
             self.critic.output_val(critic_probs)
 
-        # Compute Q-Values
-        if self.entropy_coef != 0:
+        if self.entropy_coef != 0 or self.carsm:
             entropy = 0
+            log_probs = []
+            action = self.categorize_actions(action_probs, as_dict=True)
             for key in action_probs.keys():
-                entropy += -torch.sum(
-                    action_probs[key] * torch.log(action_probs[key] + 1e-10), dim=-1
-                ).mean()
-            entropy /= len(action_probs.keys())
+                if self.carsm:
+                    dist = torch.distributions.Categorical(probs=action_probs[key])
+                    log_probs.append(dist.log_prob(action[key]))
+                if self.entropy_coef != 0:
+                    entropy += -torch.sum(
+                        action_probs[key] * torch.log(action_probs[key] + 1e-10), dim=-1
+                    ).mean()
 
+            entropy /= len(action_probs.keys()) / len(critic_probs.keys())
+            log_probs = torch.sum(torch.stack(log_probs, dim=-1), dim=-1).unsqueeze(
+                -1
+            ) / len(action_probs.keys())
+
+        # Compute Q-Values
         loss = TensorDict({})
         for key in critic_probs.keys():
-            loss[key] = -torch.sum(
+            loss[key] = torch.sum(
                 critic_probs[key]
                 * self.critic.z_atoms[key].to(critic_probs[key].device),
                 dim=-1,
                 keepdim=True,
-            ).mean()
+            )
+            if self.carsm:
+                loss[key] = target_q[key] - loss[key]
+                loss[key] = loss[key] * log_probs
+            loss[key] = -torch.mean(loss[key])
+
             if self.entropy_coef != 0:
                 loss[key] = loss[key] - self.entropy_coef * entropy
 
@@ -500,10 +519,11 @@ class D4PG:
 
                 self.critic_optimizer.step()
                 # Actor update
-                loss_actor = self.compute_actor_loss(batch["state"])
+                loss_actor = self.compute_actor_loss(batch["state"], target_probs)
             else:
                 loss_actor = self.compute_actor_loss(
                     batch["state"],
+                    target_probs,
                     action_probs=batch["actions"],
                     critic_probs=q_dist,
                 )
@@ -975,6 +995,7 @@ class D4PG:
                     "lr_critic": self.learning_rate_critic,
                     "bsize": self.batch_size,
                     "gamma": self.gamma,
+                    "carsm": self.carsm,
                     "tau": self.tau,
                     "target_update_frequency": self.target_update_frequency,
                     "entropy_coef": self.entropy_coef,
