@@ -116,11 +116,6 @@ class ArcSampleTransformer(object):
         if n_examples < self.examples_stack_dim:
             pad_size = torch.zeros(len(sample["examples"].shape) * 2, dtype=int)
             pad_size[-1] = self.examples_stack_dim - n_examples
-            logger.debug(
-                "Train Examples shape: {},Padding size: {}".format(
-                    sample["examples"].shape, pad_size
-                )
-            )
             sample["examples"] = (
                 torch.nn.functional.pad(
                     sample["examples"], tuple(pad_size), value=self.constant_value
@@ -128,6 +123,12 @@ class ArcSampleTransformer(object):
                 + self.zero_based_correction
             )
 
+            assert sample["examples"].shape[0] == self.examples_stack_dim, ValueError(
+                "The number of examples (second dimension) should be equal to examples_stack_dim. "
+                + "Train Examples shape: {},Padding size: {}".format(
+                    sample["examples"].shape, pad_size
+                )
+            )
         sample["task"]["input"] = (
             self.pad_to_size(torch.as_tensor(sample["task"]["input"]))
             + self.zero_based_correction

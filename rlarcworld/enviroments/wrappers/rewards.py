@@ -176,6 +176,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         obs, _, terminated, truncated, info = self.env.step(actions)
         self.grid_diffs = self.get_difference()
         reward = self.reward(self.last_diffs, self.grid_diffs, actions["submit"])
-        self._reward_storage.push(reward.unsqueeze(1))
+        self._reward_storage = self._reward_storage.push(reward.unsqueeze(1))
         self._last_reward = reward
         return obs, reward, terminated, truncated, info
