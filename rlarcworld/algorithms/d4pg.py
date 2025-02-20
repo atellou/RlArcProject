@@ -62,6 +62,8 @@ class D4PG:
             warmup_buffer_ratio (float, optional): Ratio of buffer to fill before training. Defaults to 0.2
             n_steps (int, optional): Number of steps for n-step returns. Defaults to 1
             gamma (float, optional): Discount factor. Defaults to 0.99
+            entropy_coef (float, optional): Initial coefficient for entropy regularization. Higher values encourage more exploration. Defaults to 0.01
+            entropy_coef_decay (float, optional): Rate at which entropy coefficient decays over time. Values closer to 1.0 decay more slowly. Defaults to 0.995
             tau (float, optional): Target network update rate. Defaults to 0.001
             target_update_frequency (int, optional): Steps between target updates. Defaults to 10
             tb_writer (SummaryWriter, optional): TensorBoard writer for logging
@@ -173,6 +175,27 @@ class D4PG:
         Applies entropy coefficient decay.
         """
         self.entropy_coef *= self.entropy_coef_decay
+
+    def log_parameters(self, step):
+        """
+        Logs the current entropy coefficient to TensorBoard.
+
+        Args:
+            step (int): The current training step.
+        """
+        if self.tb_writer is not None:
+            self.tb_writer.add_scalar(
+                "Parameters/EntropyCoef", self.entropy_coef, global_step=step
+            )
+            self.tb_writer.add_scalar("Parameters/Gamma", self.gamma, global_step=step)
+            self.tb_writer.add_scalars(
+                "Parameters/LearningRate",
+                {
+                    "Critic": self.critic_optimizer.param_groups[0]["lr"],
+                    "Actor": self.actor_optimizer.param_groups[0]["lr"],
+                },
+                global_step=step,
+            )
 
     def history_add(self, key, value):
         """
@@ -627,27 +650,52 @@ class D4PG:
                 yield episode_number, step_state
 
                 if tb_writer_tag is not None and self.tb_writer is not None:
+                    tag = os.path.join(
+                        tb_writer_tag,
+                        f"Episode/{episode_number}",
+                    )
                     mask = step_state["state"]["terminated"] == 0
                     selected_indices = mask.nonzero(as_tuple=True)[0]
                     rewards = step_state["reward"][selected_indices]
                     for k, v in rewards.items():
                         value = torch.mean(v).item()
-                        path = os.path.join(tb_writer_tag, f"Reward/{k}")
+                        path = os.path.join(tag, f"Reward/{k}")
                         self.history_add(path, value)
                         if merge_graphs:
                             path = f"Reward/{k}"
-                            value = {tb_writer_tag: value}
+                            value = {tag: value}
                             self.tb_writer.add_scalars(
                                 path,
                                 value,
-                                step_number * episode_number,
+                                step_number,
                             )
                         else:
                             self.tb_writer.add_scalar(
                                 path,
                                 value,
-                                step_number * episode_number,
+                                step_number,
                             )
+
+                    compleatition_percentage = (
+                        torch.count_nonzero(step_state["state"]["terminated"])
+                        / mask.shape[0]
+                    ).item()
+                    path = os.path.join(tag, f"Metric/Completition[%]")
+                    self.history_add(path, value)
+                    if merge_graphs:
+                        path = f"Metric/Completition[%]"
+                        compleatition_percentage = {tag: compleatition_percentage}
+                        self.tb_writer.add_scalars(
+                            path,
+                            compleatition_percentage,
+                            step_number,
+                        )
+                    else:
+                        self.tb_writer.add_scalar(
+                            path,
+                            compleatition_percentage,
+                            step_number,
+                        )
 
     def validation_process(
         self,
@@ -788,6 +836,8 @@ class D4PG:
                 )
             ):
                 global_train_step += 1
+                self.apply_decay()
+                self.log_parameters(global_train_step)
                 # Store the experience in the replay buffer
                 if self.replay_buffer is not None:
                     batch = self.replay_buffer_step(
@@ -888,3 +938,20 @@ class D4PG:
 
                 if step_number % self.target_update_frequency == 0:
                     self.update_target_networks(tau=self.tau)
+
+        for (
+            val_episode_number,
+            val_step_number,
+            val_loss_actor,
+            val_loss_critic,
+            val_step_state,
+        ) in self.validation_process(
+            max_steps=validation_steps_per_episode,
+            tb_writer_tag="End" + validation_tb_writer_tag,
+            merge_graphs=merge_graphs,
+        ):
+            pass
+
+        if self.tb_writer is not None and step_number % logger_frequency == 0:
+            self.tb_writer.flush()
+            self.tb_writer.close()

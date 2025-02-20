@@ -440,29 +440,18 @@ class TestD4PG(unittest.TestCase):
             "./runs/test_validation_d4pg"
         ), "Directory 'runs/test_validation_d4pg' does not exist"
 
-        ref, last_key = get_nested_ref(d4pg.history, "Validation/Reward")
+        ref, last_key = get_nested_ref(d4pg.history, "Validation/Loss/actor")
         assert isinstance(
-            ref[last_key], dict
-        ), "Invalid validation reward history format - expected dict, got {}".format(
+            ref[last_key], np.ndarray
+        ), "Invalid validation loss history format - expected np.ndarray for actor, got {}".format(
             type(ref[last_key])
         )
-        assert isinstance(
-            ref[last_key]["n_reward"], np.ndarray
-        ), "Invalid validation reward history format - expected np.ndarray for n_step, got {}".format(
-            type(ref[last_key].get("n_step", None))
-        )
 
-        ref, last_key = get_nested_ref(d4pg.history, "Train/Reward")
-
+        ref, last_key = get_nested_ref(d4pg.history, "Train/Loss/actor")
         assert isinstance(
-            ref[last_key], dict
-        ), "Invalid training reward history format - expected dict, got {}".format(
+            ref[last_key], np.ndarray
+        ), "Invalid training loss history format - expected np.ndarray for critic, got {}".format(
             type(ref[last_key])
-        )
-        assert isinstance(
-            ref[last_key]["n_reward"], np.ndarray
-        ), "Invalid training reward history format - expected np.ndarray for n_step, got {}".format(
-            type(ref[last_key].get("n_step", None))
         )
 
 
