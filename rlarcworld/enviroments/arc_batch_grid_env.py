@@ -146,6 +146,7 @@ class ArcBatchGridEnv(gym.Env):
         super().reset(seed=seed)
 
         # The sample for every episode is a batch of ARC Samples
+        self.is_train_episode = options.get("is_train", True)
         batch = options["batch"]
         batch_in = batch["input"]
         batch_out = batch["output"]
@@ -324,13 +325,16 @@ class ArcBatchGridEnv(gym.Env):
         self._last_reward = reward
 
         # TODO: No truncate version, evaluate time constraints
-        truncated = False
-        terminated = self.episode_terminated(actions["submit"])
-        self.information["terminated"] = terminated
+        truncated = (
+            False
+            if self.is_train_episode
+            else torch.sum(torch.as_tensor(actions["submit"])) == len(self)
+        )
+        self.information["terminated"] = self.episode_terminated(actions["submit"])
         return (
             self.observations,
             reward,
-            torch.sum(terminated) == len(self),
+            torch.sum(self.information["terminated"]) == len(self),
             truncated,
             self.information,
         )

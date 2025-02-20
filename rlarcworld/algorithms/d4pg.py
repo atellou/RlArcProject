@@ -642,7 +642,13 @@ class D4PG:
             step_number += 1
 
     def env_simulation(
-        self, env, samples, max_steps=-1, tb_writer_tag=None, merge_graphs=True
+        self,
+        env,
+        samples,
+        max_steps=-1,
+        tb_writer_tag=None,
+        merge_graphs=True,
+        **kwargs,
     ):
         """
         Simulates episodes in the environment and handles logging.
@@ -673,11 +679,14 @@ class D4PG:
         ), "max_steps must be greater or equal to n_steps"
 
         for episode_number, sample_batch in enumerate(samples):
-            env.reset(
-                options={
+            kwargs.update(
+                {
                     "batch": sample_batch["task"],
                     "examples": sample_batch["examples"],
-                },
+                }
+            )
+            env.reset(
+                options=kwargs,
                 seed=episode_number,
             )
             for step_number, step_state in self.episodes_simulation(
@@ -771,6 +780,7 @@ class D4PG:
                     max_steps=max_steps,
                     tb_writer_tag=tb_writer_tag,
                     merge_graphs=merge_graphs,
+                    is_train=False,
                 )
             ):
                 step_state["terminated"] = step_state["next_state"]["terminated"]
