@@ -29,6 +29,8 @@ class D4PG:
         actor: torch.nn.Module,
         critic: torch.nn.Module,
         batch_size: int,
+        learning_rate_actor: float = 3e-4,
+        learning_rate_critic: float = 3e-3,
         validation_samples: DataLoader = None,
         replay_buffer: ReplayBuffer = None,
         warmup_buffer_ratio: float = 0.2,
@@ -40,6 +42,7 @@ class D4PG:
         target_update_frequency: int = 10,
         tb_writer: SummaryWriter = None,
         history_file: str = None,
+        extras_hparams: dict = None,
     ):
         """
         D4PG (Distributed Distributional Deep Deterministic Policy Gradient) implementation.
@@ -57,6 +60,8 @@ class D4PG:
             actor (torch.nn.Module): Actor network that outputs action probabilities
             critic (torch.nn.Module): Critic network that outputs value distributions
             batch_size (int): Size of batches for training
+            learning_rate_actor (float, optional): Learning rate for actor network. Defaults to 3e-4
+            learning_rate_critic (float, optional): Learning rate for critic network. Defaults to 3e-3
             validation_samples (DataLoader, optional): DataLoader for validation samples
             replay_buffer (ReplayBuffer, optional): Buffer for experience replay
             warmup_buffer_ratio (float, optional): Ratio of buffer to fill before training. Defaults to 0.2
@@ -68,6 +73,7 @@ class D4PG:
             target_update_frequency (int, optional): Steps between target updates. Defaults to 10
             tb_writer (SummaryWriter, optional): TensorBoard writer for logging
             history_file (str, optional): Path to save training history
+            extras_hparams (dict, optional): Dictionary of extra hyperparameters to log
 
         Methods:
             step(): Performs a single environment step using current policy
@@ -101,6 +107,8 @@ class D4PG:
         ), "Replay buffer size is too small for the given batch size. Must grater or equal to batch_size"
 
         # Store parameters
+        self.learning_rate_actor = learning_rate_actor
+        self.learning_rate_critic = learning_rate_critic
         self.n_steps = n_steps
         self.gamma = gamma
         self.entropy_coef = entropy_coef
@@ -111,6 +119,8 @@ class D4PG:
         self.warmup_buffer_ratio = warmup_buffer_ratio
         self.tb_writer = tb_writer
         self.history = {}
+        if extras_hparams is None:
+            self.extras_hparams = {}
 
         if self.tb_writer is not None:
             self.writer_base_dir = tb_writer.log_dir
@@ -164,8 +174,8 @@ class D4PG:
         self.critic_target.eval()
 
         # Create optimizers
-        self.actor_optimizer = optim.Adam(actor.parameters(), lr=3e-4)
-        self.critic_optimizer = optim.Adam(critic.parameters(), lr=3e-4)
+        self.actor_optimizer = optim.Adam(actor.parameters(), lr=learning_rate_actor)
+        self.critic_optimizer = optim.Adam(critic.parameters(), lr=learning_rate_critic)
 
         # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
@@ -953,5 +963,35 @@ class D4PG:
             pass
 
         if self.tb_writer is not None:
+            comp_percent = step_state["state"]["terminated"].sum().item() / len(
+                step_state["state"]["terminated"]
+            )
+            val_comp_percent = val_step_state["state"]["terminated"].sum().item() / len(
+                val_step_state["state"]["terminated"]
+            )
+            self.extras_hparams.update(
+                {
+                    "lr_actor": self.learning_rate_actor,
+                    "lr_critic": self.learning_rate_critic,
+                    "bsize": self.batch_size,
+                    "gamma": self.gamma,
+                    "tau": self.tau,
+                    "target_update_frequency": self.target_update_frequency,
+                    "entropy_coef": self.entropy_coef,
+                    "entropy_coef_decay": self.entropy_coef_decay,
+                    "n_steps": self.n_steps,
+                }
+            )
+            self.tb_writer.add_hparams(
+                self.extras_hparams,
+                {
+                    "hparam/train_loss_actor": loss_actor,
+                    "hparam/train_loss_critic": loss_critic,
+                    "hparam/validation_loss_actor": val_loss_actor,
+                    "hparam/validation_loss_critic": val_loss_critic,
+                    "hparam/train_completion": comp_percent,
+                    "hparam/validation_completion": val_comp_percent,
+                },
+            )
             self.tb_writer.flush()
             self.tb_writer.close()
