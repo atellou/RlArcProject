@@ -952,6 +952,6 @@ class D4PG:
         ):
             pass
 
-        if self.tb_writer is not None and step_number % logger_frequency == 0:
+        if self.tb_writer is not None:
             self.tb_writer.flush()
             self.tb_writer.close()
