@@ -43,8 +43,8 @@ class TestD4PG(unittest.TestCase):
         v_min = {"pixel_wise": -40, "binary": 0}
         v_max = {"pixel_wise": 2, "binary": 1}
 
-        env = ArcBatchGridEnv(self.grid_size, self.color_values)
-        env = PixelAwareRewardWrapper(env)
+        env_binary = ArcBatchGridEnv(self.grid_size, self.color_values)
+        self.env = PixelAwareRewardWrapper(env_binary)
         self.critic = ArcCriticNetwork(
             size=self.grid_size,
             color_values=self.color_values,
@@ -59,16 +59,16 @@ class TestD4PG(unittest.TestCase):
                 (self.grid_size, self.grid_size), examples_stack_dim=10
             ),
         )
-        train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
+        self.train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
         self.d4pg = D4PG(
-            env=env,
+            env=self.env,
             actor=self.actor,
             critic=self.critic,
-            train_samples=train_samples,
+            train_samples=self.train_samples,
             batch_size=self.batch_size,
             target_update_frequency=5,
-            n_steps=env.n_steps,
-            gamma=env.gamma,
+            n_steps=self.env.n_steps,
+            gamma=self.env.gamma,
         )
 
         self.replay_buffer = TensorDictReplayBuffer(
@@ -81,15 +81,15 @@ class TestD4PG(unittest.TestCase):
         )
 
         self.d4pg_with_replay_buffer = D4PG(
-            env=env,
+            env=self.env,
             actor=self.actor,
             critic=self.critic,
-            train_samples=train_samples,
+            train_samples=self.train_samples,
             batch_size=self.batch_size,
             replay_buffer=self.replay_buffer,
             target_update_frequency=5,
-            n_steps=env.n_steps,
-            gamma=env.gamma,
+            n_steps=self.env.n_steps,
+            gamma=self.env.gamma,
         )
 
     def simmulated_data(self):
@@ -222,6 +222,41 @@ class TestD4PG(unittest.TestCase):
         # Define a loss function and an optimizer
         optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
         loss = self.d4pg.compute_actor_loss(state)
+        assert tuple(loss.keys()) == tuple(["pixel_wise", "binary"])
+        for k, v in loss.items():
+            assert not torch.isnan(v).any(), f"NaN values found in loss for key: [{k}]"
+
+        loss = sum(tuple(loss.values()))
+        optimizer.zero_grad()
+        loss.backward()
+        for name, param in self.actor.named_parameters():
+            if param.grad is None:
+                raise ValueError(
+                    f"Gradient not flowing in D4PG ArcActorNetwork for: {name}"
+                )
+        optimizer.step()
+
+    def test_actor_loss_carsm(self):
+        logger.info("Testing actor loss computation CARSM")
+        reward, done, gamma, state = self.simmulated_data()
+        target_distribution = self.d4pg.compute_target_distribution(
+            reward,
+            state.clone(),
+            done,
+        )
+        optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
+        d4pg = D4PG(
+            env=self.env,
+            actor=self.actor,
+            critic=self.critic,
+            train_samples=self.train_samples,
+            batch_size=self.batch_size,
+            target_update_frequency=5,
+            n_steps=self.env.n_steps,
+            gamma=self.env.gamma,
+            carsm=True,
+        )
+        loss = d4pg.compute_actor_loss(state, target_q=target_distribution)
         assert tuple(loss.keys()) == tuple(["pixel_wise", "binary"])
         for k, v in loss.items():
             assert not torch.isnan(v).any(), f"NaN values found in loss for key: [{k}]"

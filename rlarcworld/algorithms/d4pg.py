@@ -320,7 +320,9 @@ class D4PG:
 
         return loss, td_error, q_dist
 
-    def compute_actor_loss(self, state, target_q, action_probs=None, critic_probs=None):
+    def compute_actor_loss(
+        self, state, target_q=None, action_probs=None, critic_probs=None
+    ):
         """
         Compute the loss for the actor network.
 
@@ -333,6 +335,9 @@ class D4PG:
         Returns:
             torch.Tensor: Actor loss (negative expected Q-value).
         """
+        assert (
+            not self.carsm or target_q is not None
+        ), "target_q must be provided when usin CARSM loss."
         # Get action probabilities from the actor
         if action_probs is None:
             action_probs = self.actor(state)
@@ -359,9 +364,10 @@ class D4PG:
                     ).mean()
 
             entropy /= len(action_probs.keys()) / len(critic_probs.keys())
-            log_probs = torch.sum(torch.stack(log_probs, dim=-1), dim=-1).unsqueeze(
-                -1
-            ) / len(action_probs.keys())
+            if self.carsm:
+                log_probs = torch.sum(torch.stack(log_probs, dim=-1), dim=-1).unsqueeze(
+                    -1
+                ) / len(action_probs.keys())
 
         # Compute Q-Values
         loss = TensorDict({})
@@ -969,18 +975,19 @@ class D4PG:
                 if step_number % self.target_update_frequency == 0:
                     self.update_target_networks(tau=self.tau)
 
-        for (
-            val_episode_number,
-            val_step_number,
-            val_loss_actor,
-            val_loss_critic,
-            val_step_state,
-        ) in self.validation_process(
-            max_steps=validation_steps_per_episode,
-            tb_writer_tag="End" + validation_tb_writer_tag,
-            merge_graphs=merge_graphs,
-        ):
-            pass
+        if hasattr(self, "validation_env"):
+            for (
+                val_episode_number,
+                val_step_number,
+                val_loss_actor,
+                val_loss_critic,
+                val_step_state,
+            ) in self.validation_process(
+                max_steps=validation_steps_per_episode,
+                tb_writer_tag="End" + validation_tb_writer_tag,
+                merge_graphs=merge_graphs,
+            ):
+                pass
 
         if self.tb_writer is not None:
             comp_percent = step_state["state"]["terminated"].sum().item() / len(
