@@ -4,7 +4,11 @@ from tensordict import TensorDict
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
-from rlarcworld.agent.models.resnet_module import ResNetModule
+from rlarcworld.agent.models.resnet_module import (
+    ResNetModule,
+    MultiHeadAttention,
+    ResNetAttention,
+)
 
 import unittest
 import logging
@@ -69,6 +73,40 @@ class ArcNetworksTest(unittest.TestCase):
             if isinstance(module, torch.nn.BatchNorm2d):
                 for param in module.parameters():
                     self.assertTrue(param.grad is not None)
+
+        optimizer.step()
+
+    def test_mha(self):
+        logger.info("Testing MultiHeadAttention")
+        model = MultiHeadAttention(E_q=256, E_k=256, E_v=256, E_total=256, nheads=8)
+        q = torch.randn(10, 10, 256)
+        k = torch.randn(10, 10, 256)
+        v = k
+        output = model(q, k, v)
+        optimizer = torch.optim.RMSprop(model.parameters())
+        criterion = torch.nn.MSELoss()
+        loss = criterion(output, torch.randn(10, 10, 256))
+        optimizer.zero_grad()
+        loss.backward()
+        for param in model.parameters():
+            self.assertTrue(param.grad is not None)
+
+        optimizer.step()
+
+    def test_resnet_mha(self):
+        logger.info("Testing ResNetModule + MultiHeadAttention")
+        model = ResNetAttention(embedding_size=256, nheads=8, dropout=0.1, bias=True)
+        input_tensor = torch.randn(20, 10, 2, 30, 30)
+        output = model(input_tensor)
+        optimizer = torch.optim.RMSprop(model.parameters())
+        criterion = torch.nn.MSELoss()
+        loss = criterion(output, torch.randn(20, 10, 256))
+        optimizer.zero_grad()
+        loss.backward()
+        for name, param in model.named_parameters():
+            if "base_model" in name:
+                continue
+            self.assertTrue(param.grad is not None, f"Gradient not flowing in {name}")
 
         optimizer.step()
 

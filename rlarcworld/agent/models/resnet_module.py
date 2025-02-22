@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 from torchvision import models
+import torch.nn.functional as F
+
 
 import logging
 
@@ -83,94 +85,181 @@ class ResNetModule(nn.Module):
         return embedding
 
 
-class ResNetGruTransformer(nn.Module):
-    def __init__(self, embedding_size=256, num_classes=10):
-        super(ResNetGruTransformer, self).__init__()
+class MultiHeadAttention(nn.Module):
+    """
+    Computes multi-head attention. Supports nested or padded tensors.
+    Ref:https://pytorch.org/tutorials/intermediate/transformer_building_blocks.html
+
+    Args:
+        E_q (int): Size of embedding dim for query
+        E_k (int): Size of embedding dim for key
+        E_v (int): Size of embedding dim for value
+        E_total (int): Total embedding dim of combined heads post input projection. Each head
+            has dim E_total // nheads
+        nheads (int): Number of heads
+        dropout (float, optional): Dropout probability. Default: 0.0
+        bias (bool, optional): Whether to add bias to input projection. Default: True
+    """
+
+    def __init__(
+        self,
+        E_q: int,
+        E_k: int,
+        E_v: int,
+        E_total: int,
+        nheads: int,
+        dropout: float = 0.0,
+        bias=True,
+        device=None,
+        dtype=None,
+    ):
+        factory_kwargs = {"device": device, "dtype": dtype}
+        super().__init__()
+        self.nheads = nheads
+        self.dropout = dropout
+        self._qkv_same_embed_dim = E_q == E_k and E_q == E_v
+        if self._qkv_same_embed_dim:
+            self.packed_proj = nn.Linear(E_q, E_total * 3, bias=bias, **factory_kwargs)
+        else:
+            self.q_proj = nn.Linear(E_q, E_total, bias=bias, **factory_kwargs)
+            self.k_proj = nn.Linear(E_k, E_total, bias=bias, **factory_kwargs)
+            self.v_proj = nn.Linear(E_v, E_total, bias=bias, **factory_kwargs)
+        E_out = E_q
+        self.out_proj = nn.Linear(E_total, E_out, bias=bias, **factory_kwargs)
+        assert E_total % nheads == 0, "Embedding dim is not divisible by nheads"
+        self.E_head = E_total // nheads
+        self.bias = bias
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_mask=None,
+        is_causal=False,
+    ) -> torch.Tensor:
+        """
+        Forward pass; runs the following process:
+            1. Apply input projection
+            2. Split heads and prepare for SDPA
+            3. Run SDPA
+            4. Apply output projection
+
+        Args:
+            query (torch.Tensor): query of shape (``N``, ``L_q``, ``E_qk``)
+            key (torch.Tensor): key of shape (``N``, ``L_kv``, ``E_qk``)
+            value (torch.Tensor): value of shape (``N``, ``L_kv``, ``E_v``)
+            attn_mask (torch.Tensor, optional): attention mask of shape (``N``, ``L_q``, ``L_kv``) to pass to SDPA. Default: None
+            is_causal (bool, optional): Whether to apply causal mask. Default: False
+
+        Returns:
+            attn_output (torch.Tensor): output of shape (N, L_t, E_q)
+        """
+        # Step 1. Apply input projection
+        if self._qkv_same_embed_dim:
+            if query is key and key is value:
+                result = self.packed_proj(query)
+                query, key, value = torch.chunk(result, 3, dim=-1)
+            else:
+                q_weight, k_weight, v_weight = torch.chunk(
+                    self.packed_proj.weight, 3, dim=0
+                )
+                if self.bias:
+                    q_bias, k_bias, v_bias = torch.chunk(
+                        self.packed_proj.bias, 3, dim=0
+                    )
+                else:
+                    q_bias, k_bias, v_bias = None, None, None
+                query, key, value = (
+                    F.linear(query, q_weight, q_bias),
+                    F.linear(key, k_weight, k_bias),
+                    F.linear(value, v_weight, v_bias),
+                )
+
+        else:
+            query = self.q_proj(query)
+            key = self.k_proj(key)
+            value = self.v_proj(value)
+
+        # Step 2. Split heads and prepare for SDPA
+        # reshape query, key, value to separate by head
+        # (N, L_t, E_total) -> (N, L_t, nheads, E_head) -> (N, nheads, L_t, E_head)
+        query = query.unflatten(-1, [self.nheads, self.E_head]).transpose(1, 2)
+        # (N, L_s, E_total) -> (N, L_s, nheads, E_head) -> (N, nheads, L_s, E_head)
+        key = key.unflatten(-1, [self.nheads, self.E_head]).transpose(1, 2)
+        # (N, L_s, E_total) -> (N, L_s, nheads, E_head) -> (N, nheads, L_s, E_head)
+        value = value.unflatten(-1, [self.nheads, self.E_head]).transpose(1, 2)
+
+        # Step 3. Run SDPA
+        # (N, nheads, L_t, E_head)
+        attn_output = F.scaled_dot_product_attention(
+            query, key, value, dropout_p=self.dropout, is_causal=is_causal
+        )
+        # (N, nheads, L_t, E_head) -> (N, L_t, nheads, E_head) -> (N, L_t, E_total)
+        attn_output = attn_output.transpose(1, 2).flatten(-2)
+
+        # Step 4. Apply output projection
+        # (N, L_t, E_total) -> (N, L_t, E_out)
+        attn_output = self.out_proj(attn_output)
+
+        return attn_output
+
+
+class ResNetAttention(nn.Module):
+    def __init__(self, embedding_size=256, nheads=8, dropout=0.0, bias=True):
+        """
+        Initializes the ResNetAttention module.
+
+        Args:
+            embedding_size (int, optional): The size of the embedding for the ResNet modules and the multi-head attention. Defaults to 256.
+            nheads (int, optional): The number of attention heads in the multi-head attention module. Defaults to 8.
+            dropout (float, optional): The dropout probability for the multi-head attention module. Defaults to 0.0.
+            bias (bool, optional): Whether to include a bias term in the multi-head attention module. Defaults to True.
+
+        The module consists of two ResNet embeddings for time steps t0 and t1, and a MultiHeadAttention module.
+        """
+
+        super(ResNetAttention, self).__init__()
         self.resnet_embedding_t0 = ResNetModule(
             resnet_version="resnet18",
             resnet_weights="ResNet18_Weights.DEFAULT",
-            embedding_size=256,
+            do_not_freeze="layer4",
+            embedding_size=embedding_size,
         )
         self.resnet_embedding_t1 = ResNetModule(
             resnet_version="resnet18",
             resnet_weights="ResNet18_Weights.DEFAULT",
-            embedding_size=256,
-        )
-        self.lstm = torch.nn.GRU(
-            input_size=256,
-            hidden_size=256,
-            num_layers=1,
-            batch_first=True,
-            bidirectional=True,
-        )
-        self.embedding_layer = nn.Linear(512, embedding_size)
-        self.fc = nn.Linear(embedding_size, num_classes)
-
-    def forward(self, x, return_embedding=False):
-        B, N, T, H, W = x.shape  # B=batch, N=examples, T=time steps (2), H=W=30
-        x = x.view(B * N, T, H, W)  # Flatten batch and example dims
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = nn.ReLU()(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = nn.ReLU()(x)
-        x = self.conv3(x)
-        x = self.bn3(x)
-        x = nn.ReLU()(x)
-        x = x.view(B, N, -1)  # Reshape back to (B, N, Features)
-        x = x.mean(
-            dim=1
-        )  # Aggregate over N (few-shot examples) to maintain batch integrity
-        _, (h_n, _) = self.lstm(x.unsqueeze(1))  # Pass through LSTM
-        embedding = self.embedding_layer(h_n[-1])
-
-        if return_embedding:
-            return embedding
-        return self.fc(embedding)
-
-
-import torch
-import torch.nn as nn
-
-
-class LSTMTransformer(nn.Module):
-    def __init__(
-        self,
-        embed_dim=256,
-        lstm_hidden_dim=256,
-        transformer_dim=256,
-        num_heads=4,
-        num_layers=2,
-    ):
-        super().__init__()
-
-        # LSTM Encoder
-        self.lstm = nn.LSTM(
-            input_size=embed_dim, hidden_size=lstm_hidden_dim, batch_first=True
+            do_not_freeze="layer4",
+            embedding_size=embedding_size,
         )
 
-        # Transformer Encoder
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=transformer_dim, nhead=num_heads
+        self.mha = MultiHeadAttention(
+            E_q=embedding_size,
+            E_k=embedding_size,
+            E_v=embedding_size,
+            E_total=embedding_size,
+            nheads=nheads,
+            dropout=dropout,
+            bias=bias,
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-    def forward(self, t0, t1):
-        # Stack inputs as a sequence: (batch_size, seq_len=2, embed_dim)
-        x = torch.stack([t0, t1], dim=1)
+    def forward(self, x):
+        """
+        Forward pass; runs the following process:
+            1. Flatten the input
+            2. Extract features from t=0 and t=1 using two different ResNets
+            3. Run multi-head attention on the two feature vectors
+            4. Reshape the output to match the input shape
 
-        # Pass through LSTM
-        _, (h_n, _) = self.lstm(x)  # h_n is (1, batch_size, lstm_hidden_dim)
-        lstm_output = h_n.squeeze(0)  # (batch_size, lstm_hidden_dim)
+        Args:
+            x (torch.Tensor): input of shape (``N``, ``num_examples``, ``times_state``, ``height``, ``width``)
 
-        # Add sequence dimension for Transformer (batch_size, seq_len=1, embed_dim)
-        transformer_input = lstm_output.unsqueeze(1)
-
-        # Pass through Transformer
-        transformer_output = self.transformer(
-            transformer_input
-        )  # (batch_size, seq_len=1, embed_dim)
-
-        # Remove sequence dimension
-        return transformer_output.squeeze(1)  # (batch_size, embed_dim)
+        Returns:
+            x (torch.Tensor): output of shape (``N``, ``num_examples``, ``E_out``)
+        """
+        batch_size, num_examples, times_state, height, width = x.shape
+        x = x.view(batch_size * num_examples, times_state, height, width)
+        t0 = self.resnet_embedding_t0(x[:, 0].unsqueeze(1))
+        t1 = self.resnet_embedding_t1(x[:, 1].unsqueeze(1))
+        x = self.mha(t0, t1, t1)
+        return x.view(batch_size, num_examples, -1)
