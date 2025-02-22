@@ -24,6 +24,7 @@ class ArcNetworksTest(unittest.TestCase):
         self.batch_size = torch.randint(1, 20, size=(1,))
 
     def test_resnet(self):
+        logger.info("Testing resnet50")
         model = ResNetModule(do_not_freeze="layer4")
         input_tensor = torch.randn(1, 1, 30, 30)
         optimizer = torch.optim.RMSprop(model.parameters())
@@ -44,6 +45,30 @@ class ArcNetworksTest(unittest.TestCase):
         for name, param in model.named_parameters():
             if name.startswith("base_model.layer4"):
                 self.assertTrue(param.grad is not None)
+
+        optimizer.step()
+
+        logger.info("Testing resnet18")
+        model = ResNetModule(
+            resnet_version="resnet18",
+            resnet_weights="ResNet18_Weights.DEFAULT",
+            freeze="ALL",
+        )
+        input_tensor = torch.randn(1, 1, 30, 30)
+        optimizer = torch.optim.RMSprop(model.parameters())
+        criterion = torch.nn.MSELoss()
+        output = model(input_tensor)
+        self.assertEqual(output.shape, (1, 256))
+        loss = criterion(output, torch.randn(1, 256))
+        optimizer.zero_grad()
+        loss.backward()
+        self.assertTrue(model.embedding_layer.weight.grad is not None)
+        self.assertTrue(model.base_model.conv1.weight.grad is not None)
+        # Test that the batch normalization layers have gradients
+        for module in model.base_model.modules():
+            if isinstance(module, torch.nn.BatchNorm2d):
+                for param in module.parameters():
+                    self.assertTrue(param.grad is not None)
 
         optimizer.step()
 
