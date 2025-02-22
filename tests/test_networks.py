@@ -4,6 +4,7 @@ from tensordict import TensorDict
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
+from rlarcworld.agent.models.resnet_module import ResNetModule
 
 import unittest
 import logging
@@ -21,6 +22,30 @@ class ArcNetworksTest(unittest.TestCase):
         This method sets up the test by generating a random batch size.
         """
         self.batch_size = torch.randint(1, 20, size=(1,))
+
+    def test_resnet(self):
+        model = ResNetModule(do_not_freeze="layer4")
+        input_tensor = torch.randn(1, 1, 30, 30)
+        optimizer = torch.optim.RMSprop(model.parameters())
+        criterion = torch.nn.MSELoss()
+        output = model(input_tensor)
+        self.assertEqual(output.shape, (1, 256))
+        loss = criterion(output, torch.randn(1, 256))
+        optimizer.zero_grad()
+        loss.backward()
+        self.assertTrue(model.embedding_layer.weight.grad is not None)
+        self.assertTrue(model.base_model.conv1.weight.grad is not None)
+        # Test that the batch normalization layers have gradients
+        for module in model.base_model.modules():
+            if isinstance(module, torch.nn.BatchNorm2d):
+                for param in module.parameters():
+                    self.assertTrue(param.grad is not None)
+
+        for name, param in model.named_parameters():
+            if name.startswith("base_model.layer4"):
+                self.assertTrue(param.grad is not None)
+
+        optimizer.step()
 
     def test_train_arc_actor_network(self):
         """
