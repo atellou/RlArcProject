@@ -17,6 +17,11 @@ import os
 import torch
 import torch.nn as nn
 from tensordict import TensorDict
+from rlarcworld.agent.nn_modules import (
+    ResNetModule,
+    ResNetAttention,
+    CrossAttentionClassifier,
+)
 
 import logging
 
@@ -38,35 +43,56 @@ class ArcActorNetwork(nn.Module):
         self.color_values = color_values
         self.inputs_layers = torch.nn.ModuleDict(
             {
-                "last_grid": torch.nn.Conv2d(
-                    in_channels=1, out_channels=1, kernel_size=3
+                "last_grid": ResNetModule(
+                    resnet_version="resnet18",
+                    resnet_weights="ResNet18_Weights.DEFAULT",
+                    # do_not_freeze="layer4",
+                    embedding_size=256,
                 ),
-                "grid": torch.nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3),
-                "examples": torch.nn.Conv3d(
-                    in_channels=10, out_channels=1, kernel_size=(1, 3, 3)
+                "grid": ResNetModule(
+                    resnet_version="resnet18",
+                    resnet_weights="ResNet18_Weights.DEFAULT",
+                    # do_not_freeze="layer4",
+                    embedding_size=256,
                 ),
-                "initial": torch.nn.Conv2d(
-                    in_channels=1, out_channels=1, kernel_size=3
+                "examples": ResNetAttention(
+                    embedding_size=256, nheads=8, dropout=0.2, bias=True
                 ),
-                "index": torch.nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3),
+                "initial": ResNetModule(
+                    resnet_version="resnet18",
+                    resnet_weights="ResNet18_Weights.DEFAULT",
+                    # do_not_freeze="layer4",
+                    embedding_size=256,
+                ),
+                "index": ResNetModule(
+                    resnet_version="resnet18",
+                    resnet_weights="ResNet18_Weights.DEFAULT",
+                    # do_not_freeze="layer4",
+                    embedding_size=256,
+                ),
                 # "terminated": torch.nn.Linear(1, 1),
             }
         )
-        self.linear1 = torch.nn.Linear(16464, 128)
-        self.gru = torch.nn.GRU(
-            input_size=128,
-            hidden_size=128,
-            num_layers=1,
-            batch_first=True,
-            bidirectional=True,
+
+        self.cross_attention_classifier = CrossAttentionClassifier(
+            output_classes={
+                "x_location": self.size,
+                "y_location": self.size,
+                "color_values": self.color_values,
+                "submit": 2,
+            },
+            embedding_size=256,
+            nheads=8,
+            dropout=0.2,
+            bias=True,
         )
-        self.outputs_layers = torch.nn.ModuleDict(
-            {
-                "x_location": torch.nn.Linear(256, self.size),
-                "y_location": torch.nn.Linear(256, self.size),
-                "color_values": torch.nn.Linear(256, self.color_values),
-                "submit": torch.nn.Linear(256, 2),
-            }
+        params = torch.tensor(
+            [[p.numel() * int(p.requires_grad), p.numel()] for p in self.parameters()]
+        )
+        print(
+            "Actor Network Params:\n {} trainable, {} total".format(
+                sum(params[:, 0]), sum(params[:, 1])
+            )
         )
 
     def scale_arc_grids(self, x: torch.Tensor):
@@ -161,8 +187,9 @@ class ArcActorNetwork(nn.Module):
                 elif key != "terminated":
                     value = self.scale_arc_grids(value)
                 state[key] = self.inputs_layers[key](value.float())
-                state[key] = torch.relu(state[key])
-                state[key] = state[key].view(state[key].shape[0], -1)
+
+                if key != "examples":
+                    state[key] = state[key].unsqueeze(1)
                 assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
             except Exception as e:
                 logger.error(
@@ -176,14 +203,12 @@ class ArcActorNetwork(nn.Module):
             dim=1,
         )
 
-        # Feed the state to the network
-        state = self.linear1(state)
-        state, _ = self.gru(state)
+        state = self.cross_attention_classifier(state)
 
         state = TensorDict(
             {
-                reward_type: torch.softmax(layer(state), dim=-1)
-                for reward_type, layer in self.outputs_layers.items()
+                action_type: torch.softmax(logits, dim=-1)
+                for action_type, logits in state.items()
             },
         )
         self.output_val(state)

@@ -263,7 +263,7 @@ class ResNetAttention(nn.Module):
         x = x.view(batch_size * num_examples, times_state, height, width)
         t0 = self.resnet_embedding_t0(x[:, 0].unsqueeze(1))
         t1 = self.resnet_embedding_t1(x[:, 1].unsqueeze(1))
-        x = self.mha(t0, t1, t1)
+        x = self.mha(query=t1, key=t0, value=t0)
         return x.view(batch_size, num_examples, -1)
 
 

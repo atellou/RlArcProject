@@ -309,11 +309,11 @@ class ArcNetworksTest(unittest.TestCase):
         loss.backward()
         for name, param in network.named_parameters():
             input_key = name.split(".")[1]
-            if param.grad is None:
+            if "base_model" not in name and param.grad is None:
                 raise ValueError(
                     f"Gradient not flowing in ArcCriticNetwork for: {name}"
                 )
-            elif input_key not in to_zero:
+            elif "base_model" not in name and input_key not in to_zero:
                 assert (
                     not torch.all(param.grad.abs().sum() == 0)
                     or torch.all(input_sample.get(key, torch.tensor(0)) == 0)
@@ -412,9 +412,9 @@ class ArcNetworksTest(unittest.TestCase):
         loss.backward()
         for name, param in network.named_parameters():
             input_key = name.split(".")[1]
-            if param.grad is None:
+            if "base_model" not in name and param.grad is None:
                 raise ValueError(f"Gradient not flowing in ArcActorNetwork for: {name}")
-            elif input_key not in to_zero:
+            elif "base_model" not in name and input_key not in to_zero:
                 assert not torch.all(param.grad.abs().sum() == 0) or torch.all(
                     input_sample.get(key, torch.tensor(0)) == 0
                 ), f"Gradient of zero for ArcActorNetwork for: {name}"
