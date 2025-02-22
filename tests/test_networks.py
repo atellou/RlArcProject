@@ -4,10 +4,11 @@ from tensordict import TensorDict
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
-from rlarcworld.agent.models.resnet_module import (
+from rlarcworld.agent.nn_modules import (
     ResNetModule,
     MultiHeadAttention,
     ResNetAttention,
+    CrossAttentionClassifier,
 )
 
 import unittest
@@ -29,7 +30,11 @@ class ArcNetworksTest(unittest.TestCase):
 
     def test_resnet(self):
         logger.info("Testing resnet50")
-        model = ResNetModule(do_not_freeze="layer4")
+        model = ResNetModule(
+            resnet_version="resnet50",
+            resnet_weights="ResNet50_Weights.DEFAULT",
+            do_not_freeze="layer4",
+        )
         input_tensor = torch.randn(1, 1, 30, 30)
         optimizer = torch.optim.RMSprop(model.parameters())
         criterion = torch.nn.MSELoss()
@@ -101,6 +106,37 @@ class ArcNetworksTest(unittest.TestCase):
         optimizer = torch.optim.RMSprop(model.parameters())
         criterion = torch.nn.MSELoss()
         loss = criterion(output, torch.randn(20, 10, 256))
+        optimizer.zero_grad()
+        loss.backward()
+        for name, param in model.named_parameters():
+            if "base_model" in name:
+                continue
+            self.assertTrue(param.grad is not None, f"Gradient not flowing in {name}")
+
+        optimizer.step()
+
+    def test_cross_attention(self):
+        logger.info("Testing ResNetModule + MultiHeadAttention + CrossAttention")
+        output_classes = {"x_location": 10, "y_location": 5, "color_values": 2}
+        model = torch.nn.Sequential(
+            ResNetAttention(embedding_size=256, nheads=8, dropout=0.1, bias=True),
+            CrossAttentionClassifier(
+                output_classes=output_classes,
+                embedding_size=256,
+                nheads=4,
+                dropout=0.1,
+                bias=True,
+            ),
+        )
+        input_tensor = torch.randn(20, 10, 2, 30, 30)
+        output = model(input_tensor)
+        optimizer = torch.optim.RMSprop(model.parameters())
+        criterion = torch.nn.CrossEntropyLoss()
+        loss = {
+            k: criterion(output[k], torch.softmax(torch.randn(20, v), dim=-1))
+            for k, v in output_classes.items()
+        }
+        loss = sum(loss.values()) / len(loss)
         optimizer.zero_grad()
         loss.backward()
         for name, param in model.named_parameters():

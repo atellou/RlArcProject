@@ -3,6 +3,8 @@ import torch.nn as nn
 from torchvision import models
 import torch.nn.functional as F
 
+from tensordict import TensorDict
+
 
 import logging
 
@@ -13,8 +15,8 @@ logger = logging.getLogger(__name__)
 class ResNetModule(nn.Module):
     def __init__(
         self,
-        resnet_version="resnet50",
-        resnet_weights="ResNet50_Weights.DEFAULT",
+        resnet_version="resnet18",
+        resnet_weights="ResNet18_Weights.DEFAULT",
         freeze: str = "ALL",
         do_not_freeze: str = None,
         embedding_size=256,
@@ -206,7 +208,7 @@ class MultiHeadAttention(nn.Module):
 
 
 class ResNetAttention(nn.Module):
-    def __init__(self, embedding_size=256, nheads=8, dropout=0.0, bias=True):
+    def __init__(self, embedding_size=256, nheads=4, dropout=0.0, bias=True):
         """
         Initializes the ResNetAttention module.
 
@@ -263,3 +265,87 @@ class ResNetAttention(nn.Module):
         t1 = self.resnet_embedding_t1(x[:, 1].unsqueeze(1))
         x = self.mha(t0, t1, t1)
         return x.view(batch_size, num_examples, -1)
+
+
+class CrossAttentionClassifier(nn.Module):
+    def __init__(
+        self,
+        output_classes: dict,
+        embedding_size=256,
+        nheads=4,
+        dropout=0.0,
+        bias=True,
+    ):
+        """
+        Initialize a CrossAttentionClassifier.
+
+        Args:
+            output_classes (dict): A dictionary mapping output types to the number of classes in each type.
+            embedding_size (int, optional): The size of the embedding dimension. Defaults to 256.
+            num_heads (int, optional): The number of attention heads in the multi-head attention module. Defaults to 4.
+            dropout (float, optional): The dropout probability for the multi-head attention module. Defaults to 0.0.
+            bias (bool, optional): Whether to include a bias term in the multi-head attention module. Defaults to True.
+
+        """
+        super().__init__()
+        self.output_classes = output_classes
+        # Learnable query vector (1 per sample)
+        self.query = nn.Parameter(
+            torch.randn(1, 1, embedding_size)
+        )  # Shape: [1, 1, 256]
+
+        # Multihead cross-attention
+        self.cross_attention = MultiHeadAttention(
+            E_q=embedding_size,
+            E_k=embedding_size,
+            E_v=embedding_size,
+            E_total=embedding_size,
+            nheads=nheads,
+            dropout=dropout,
+            bias=bias,
+        )
+
+        # MLP Classifier
+        self.classifier = torch.nn.ModuleDict(
+            {
+                k: nn.Linear(embedding_size, num_classes)
+                for k, num_classes in output_classes.items()
+            }
+        )
+
+    def forward(self, embeddings):
+        """
+        Computes the forward pass of the CrossAttentionClassifier.
+
+        Args:
+            embeddings (torch.Tensor): input embeddings of shape (Batch Size, Sequence Length, Embedding Dimension)
+
+        Returns:
+            TensorDict of logits: A dictionary of output logits, mapping each output type to a tensor of shape (Batch Size, Num_classes)
+
+        The forward pass consists of the following steps:
+
+        1. Expand the query vector to match the batch size
+        2. Apply cross-attention (query attends to the embeddings)
+        3. Remove the sequence dimension (1)
+        4. Pass through the classifier
+        """
+        batch_size = embeddings.size(0)
+
+        # Expand query to match batch size: [batch_size, 1, 256]
+        query = self.query.expand(batch_size, -1, -1)
+
+        # Apply cross-attention (query attends to the embeddings)
+        attended_output = self.cross_attention(
+            query, embeddings, embeddings
+        )  # Shape: [batch_size, 1, 256]
+
+        # Remove the sequence dimension (1) -> [batch_size, 256]
+        attended_output = attended_output.squeeze(1)
+
+        # Pass through classifier
+        logits = TensorDict(
+            {k: self.classifier[k](attended_output) for k in self.classifier.keys()}
+        )
+
+        return logits
