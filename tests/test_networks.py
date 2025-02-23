@@ -5,9 +5,9 @@ from tensordict import TensorDict
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.agent.nn_modules import (
-    ResNetModule,
+    CnnPreTrainedModule,
     MultiHeadAttention,
-    ResNetAttention,
+    CnnAttention,
     CrossAttentionClassifier,
 )
 
@@ -28,13 +28,9 @@ class ArcNetworksTest(unittest.TestCase):
         """
         self.batch_size = torch.randint(1, 20, size=(1,))
 
-    def test_resnet(self):
-        logger.info("Testing resnet50")
-        model = ResNetModule(
-            resnet_version="resnet50",
-            resnet_weights="ResNet50_Weights.DEFAULT",
-            do_not_freeze="layer4",
-        )
+    def test_cnn_pretrained(self):
+        logger.info("Testing CNN Pretrained Module")
+        model = CnnPreTrainedModule()
         input_tensor = torch.randn(1, 1, 30, 30)
         optimizer = torch.optim.RMSprop(model.parameters())
         criterion = torch.nn.MSELoss()
@@ -44,46 +40,21 @@ class ArcNetworksTest(unittest.TestCase):
         optimizer.zero_grad()
         loss.backward()
         self.assertTrue(model.embedding_layer.weight.grad is not None)
-        self.assertTrue(model.base_model.conv1.weight.grad is not None)
         # Test that the batch normalization layers have gradients
-        for module in model.base_model.modules():
-            if isinstance(module, torch.nn.BatchNorm2d):
-                for param in module.parameters():
-                    self.assertTrue(param.grad is not None)
-
-        for name, param in model.named_parameters():
-            if name.startswith("base_model.layer4"):
-                self.assertTrue(param.grad is not None)
-
-        optimizer.step()
-
-        logger.info("Testing resnet18")
-        model = ResNetModule(
-            resnet_version="resnet18",
-            resnet_weights="ResNet18_Weights.DEFAULT",
-            freeze="ALL",
-        )
-        input_tensor = torch.randn(1, 1, 30, 30)
-        optimizer = torch.optim.RMSprop(model.parameters())
-        criterion = torch.nn.MSELoss()
-        output = model(input_tensor)
-        self.assertEqual(output.shape, (1, 256))
-        loss = criterion(output, torch.randn(1, 256))
-        optimizer.zero_grad()
-        loss.backward()
-        self.assertTrue(model.embedding_layer.weight.grad is not None)
-        self.assertTrue(model.base_model.conv1.weight.grad is not None)
-        # Test that the batch normalization layers have gradients
-        for module in model.base_model.modules():
-            if isinstance(module, torch.nn.BatchNorm2d):
-                for param in module.parameters():
-                    self.assertTrue(param.grad is not None)
+        for i, module in enumerate(model.modules()):
+            if i == 0 or isinstance(module, torch.nn.BatchNorm2d):
+                for i, (name, param) in enumerate(module.named_parameters()):
+                    if i != 0:
+                        continue
+                    self.assertTrue(
+                        param.grad is not None, f"Gradient not flowing in {name}"
+                    )
 
         optimizer.step()
 
     def test_mha(self):
         logger.info("Testing MultiHeadAttention")
-        model = MultiHeadAttention(E_q=256, E_k=256, E_v=256, E_total=256, nheads=8)
+        model = MultiHeadAttention(E_q=256, E_k=256, E_v=256, E_total=256, nheads=4)
         q = torch.randn(10, 10, 256)
         k = torch.randn(10, 10, 256)
         v = k
@@ -98,9 +69,9 @@ class ArcNetworksTest(unittest.TestCase):
 
         optimizer.step()
 
-    def test_resnet_mha(self):
-        logger.info("Testing ResNetModule + MultiHeadAttention")
-        model = ResNetAttention(embedding_size=256, nheads=8, dropout=0.1, bias=True)
+    def test_cnn_mha(self):
+        logger.info("Testing CnnModule + MultiHeadAttention")
+        model = CnnAttention(embedding_size=256, nheads=4, dropout=0.1, bias=True)
         input_tensor = torch.randn(20, 10, 2, 30, 30)
         output = model(input_tensor)
         optimizer = torch.optim.RMSprop(model.parameters())
@@ -116,10 +87,10 @@ class ArcNetworksTest(unittest.TestCase):
         optimizer.step()
 
     def test_cross_attention(self):
-        logger.info("Testing ResNetModule + MultiHeadAttention + CrossAttention")
+        logger.info("Testing CnnModule + MultiHeadAttention + CrossAttention")
         output_classes = {"x_location": 10, "y_location": 5, "color_values": 2}
         model = torch.nn.Sequential(
-            ResNetAttention(embedding_size=256, nheads=8, dropout=0.1, bias=True),
+            CnnAttention(embedding_size=256, nheads=4, dropout=0.1, bias=True),
             CrossAttentionClassifier(
                 output_classes=output_classes,
                 embedding_size=256,
@@ -286,11 +257,11 @@ class ArcNetworksTest(unittest.TestCase):
                     0, 2, size=(self.batch_size, num_atoms["binary"])
                 ).float(),
             }
-        )
+        ).to(network.device)
 
         for key, dist in output.items():
             torch.testing.assert_close(
-                torch.sum(dist, dim=1), torch.ones(self.batch_size)
+                torch.sum(dist, dim=1), torch.ones(self.batch_size).to(network.device)
             ), f"Probability mass function not normalized for key: {key}"
             assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
             assert torch.all(
@@ -391,11 +362,11 @@ class ArcNetworksTest(unittest.TestCase):
                 ),
                 "submit": torch.softmax(torch.rand(size=(self.batch_size, 2)), dim=1),
             }
-        )
+        ).to(network.device)
 
         for key, dist in output.items():
             torch.testing.assert_close(
-                torch.sum(dist, dim=1), torch.ones(self.batch_size)
+                torch.sum(dist, dim=1), torch.ones(self.batch_size).to(network.device)
             ), f"Probability mass function not normalized for key: {key}"
             assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
             assert torch.all(

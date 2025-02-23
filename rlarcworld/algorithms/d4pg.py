@@ -13,7 +13,7 @@ from torchrl.data import ReplayBuffer
 
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.arc_dataset import ArcDataset
-from rlarcworld.utils import categorical_projection, get_nested_ref
+from rlarcworld.utils import categorical_projection, get_nested_ref, enable_cuda
 
 import logging
 
@@ -44,6 +44,7 @@ class D4PG:
         tb_writer: SummaryWriter = None,
         history_file: str = None,
         extras_hparams: dict = None,
+        amp_scaler=None,
     ):
         """
         D4PG (Distributed Distributional Deep Deterministic Policy Gradient) implementation.
@@ -121,6 +122,14 @@ class D4PG:
         self.replay_buffer = replay_buffer
         self.warmup_buffer_ratio = warmup_buffer_ratio
         self.tb_writer = tb_writer
+        self.config = enable_cuda()
+        self.device = self.config["device"]
+        self.amp_scaler = (
+            torch.amp.GradScaler(device=self.device)
+            if self.config.get("use_amp", False)
+            else None
+        )
+
         self.history = {}
         if extras_hparams is None:
             self.extras_hparams = {}
@@ -139,18 +148,11 @@ class D4PG:
 
         if self.replay_buffer is None:
             self.batch_size = train_samples.batch_size
-            logger.warning(
-                "Replay buffer not set. The environment will use the samples given by the dataloades: {}".format(
-                    self.batch_size
-                )
-            )
         else:
             self.batch_size = batch_size
 
         if self.replay_buffer is not None:
             logger.debug("Replay buffer initialized")
-        else:
-            logger.warning("Replay buffer not set. Skipping experience storage.")
 
         # Store enviroment and samples
         self.train_env = env
@@ -177,11 +179,19 @@ class D4PG:
         self.critic_target.eval()
 
         # Create optimizers
-        self.actor_optimizer = optim.Adam(actor.parameters(), lr=learning_rate_actor)
-        self.critic_optimizer = optim.Adam(critic.parameters(), lr=learning_rate_critic)
+        self.actor_optimizer = optim.AdamW(actor.parameters(), lr=learning_rate_actor)
+        self.critic_optimizer = optim.AdamW(
+            critic.parameters(), lr=learning_rate_critic
+        )
 
         # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
+
+        # Move networks and optimizers to device
+        self.actor = self.actor.to(self.device)
+        self.critic = self.critic.to(self.device)
+        self.actor_target = self.actor_target.to(self.device)
+        self.critic_target = self.critic_target.to(self.device)
 
     def apply_decay(self):
         """
@@ -237,11 +247,11 @@ class D4PG:
         if as_dict:
             return TensorDict(
                 {key: torch.argmax(x, dim=-1) for key, x in actions.items()}
-            )
+            ).to(self.device)
         return torch.cat(
             [torch.argmax(x, dim=-1).unsqueeze(-1) for x in actions.values()],
             dim=-1,
-        )
+        ).to(self.device)
 
     def compute_target_distribution(
         self,
@@ -262,10 +272,18 @@ class D4PG:
         """
         with torch.no_grad():
             # Use the target actor to get the best action for each next state
-            action_probs = self.actor_target(next_state)
+            if self.amp_scaler is not None:
+                with torch.amp.autocast(device_type="cuda"):
+                    action_probs = self.actor_target(next_state)
+            else:
+                action_probs = self.actor_target(next_state)
 
             # Get the Q-distribution for the best action from the target critic
-            best_next_q_dist = self.critic_target(next_state, action_probs)
+            if self.amp_scaler is not None:
+                with torch.amp.autocast(device_type="cuda"):
+                    best_next_q_dist = self.critic_target(next_state, action_probs)
+            else:
+                best_next_q_dist = self.critic_target(next_state, action_probs)
 
         # Project the distribution using the categorical projection
         assert best_next_q_dist.keys() == reward.keys(), ValueError(
@@ -274,20 +292,20 @@ class D4PG:
         target_dist = TensorDict(
             {
                 key: categorical_projection(
-                    best_next_q_dist[key],
-                    reward[key],
-                    terminated,
-                    self.gamma,
-                    self.critic_target.z_atoms[key],
-                    self.critic_target.v_min[key],
-                    self.critic_target.v_max[key],
-                    self.critic_target.num_atoms[key],
-                    apply_softmax=True,
-                    n_steps=self.n_steps if key == "n_reward" else 1,
+                    best_next_q_dist[key],  # next_q_dist
+                    reward[key],  # rewards
+                    terminated,  # terminated
+                    self.gamma,  # gamma
+                    self.critic_target.z_atoms[key],  # z_atoms
+                    self.critic_target.v_min[key],  # v_min
+                    self.critic_target.v_max[key],  # v_max
+                    self.critic_target.num_atoms[key],  # num_atoms
+                    apply_softmax=True,  # apply_softmax
+                    n_steps=self.n_steps if key == "n_reward" else 1,  # n_steps
                 )
                 for key in best_next_q_dist.keys()
             }
-        )
+        ).to(self.device)
 
         return target_dist
 
@@ -305,10 +323,14 @@ class D4PG:
             Tuple[TensorDict, TensorDict]: Critic loss and TD error.
         """
         # Get state-action value distribution from the critic
-        q_dist = self.critic(state, action)  # Shape: (batch_size, num_atoms)
+        if self.amp_scaler is not None:
+            with torch.amp.autocast(device_type="cuda"):
+                q_dist = self.critic(state, action)
+        else:
+            q_dist = self.critic(state, action)
         # TD Error
-        loss = TensorDict({})
-        td_error = TensorDict({})
+        loss = TensorDict({}).to(self.device)
+        td_error = TensorDict({}).to(self.device)
         for key in q_dist.keys():
             if compute_td_error:
                 td_error[key] = torch.abs(
@@ -340,13 +362,21 @@ class D4PG:
         ), "target_q must be provided when usin CARSM loss."
         # Get action probabilities from the actor
         if action_probs is None:
-            action_probs = self.actor(state)
+            if self.amp_scaler is not None:
+                with torch.amp.autocast(device_type="cuda"):
+                    action_probs = self.actor(state)
+            else:
+                action_probs = self.actor(state)
         else:
             self.actor.output_val(action_probs)
 
         # Compute gradient of expected Q-value w.r.t. actions
         if critic_probs is None:
-            critic_probs = self.critic(state, action_probs)
+            if self.amp_scaler is not None:
+                with torch.amp.autocast(device_type="cuda"):
+                    critic_probs = self.critic(state, action_probs)
+            else:
+                critic_probs = self.critic(state, action_probs)
         else:
             self.critic.output_val(critic_probs)
 
@@ -452,7 +482,7 @@ class D4PG:
             len(self.replay_buffer.storage)
             > self.replay_buffer.storage.max_size * self.warmup_buffer_ratio
         ):
-            batch = self.replay_buffer.sample(self.batch_size)
+            batch = self.replay_buffer.sample(self.batch_size).to(self.device)
         else:
             batch = None
         return batch
@@ -471,7 +501,7 @@ class D4PG:
             TensorDict: A filtered batch of transitions where the states are not completed.
         """
         mask = batch["state"]["terminated"] == 0
-        selected_indices = mask.nonzero(as_tuple=True)[0]
+        selected_indices = mask.nonzero(as_tuple=True)[0].cpu()
         batch = batch[selected_indices]
         return batch
 
@@ -512,7 +542,11 @@ class D4PG:
 
             if training:
                 self.critic_optimizer.zero_grad()
-                loss_critic.backward()
+                if self.amp_scaler is not None:
+                    with torch.amp.autocast(device_type="cuda"):
+                        self.amp_scaler.scale(loss_critic).backward()
+                else:
+                    loss_critic.backward()
                 if tb_writer_tag is not None and self.tb_writer is not None:
                     assert global_step is not None, "global_step must be provided"
                     for name, param in self.critic.named_parameters():
@@ -523,7 +557,12 @@ class D4PG:
                                 global_step,
                             )
 
-                self.critic_optimizer.step()
+                if self.amp_scaler is not None:
+                    with torch.amp.autocast(device_type="cuda"):
+                        self.amp_scaler.step(self.critic_optimizer)
+                        self.amp_scaler.update()
+                else:
+                    self.critic_optimizer.step()
                 # Actor update
                 loss_actor = self.compute_actor_loss(batch["state"], target_probs)
             else:
@@ -538,7 +577,11 @@ class D4PG:
 
             if training:
                 self.actor_optimizer.zero_grad()
-                loss_actor.backward()
+                if self.amp_scaler is not None:
+                    with torch.amp.autocast(device_type="cuda"):
+                        self.amp_scaler.scale(loss_actor).backward()
+                else:
+                    loss_actor.backward()
                 if tb_writer_tag is not None and self.tb_writer is not None:
                     assert global_step is not None, "global_step must be provided"
                     for name, param in self.actor.named_parameters():
@@ -548,7 +591,12 @@ class D4PG:
                                 param.grad,
                                 global_step,
                             )
-                self.actor_optimizer.step()
+                if self.amp_scaler is not None:
+                    with torch.amp.autocast(device_type="cuda"):
+                        self.amp_scaler.step(self.actor_optimizer)
+                        self.amp_scaler.update()
+                else:
+                    self.actor_optimizer.step()
 
                 if self.replay_buffer is not None:
                     td_error = tuple(td_error.values())
@@ -575,8 +623,12 @@ class D4PG:
         """
 
         with torch.no_grad():
-            state = env.get_state(unsqueeze=1)
-            action_probs = self.actor(state)
+            state = env.get_state(unsqueeze=1).to(self.device)
+            if self.amp_scaler is not None:
+                with torch.amp.autocast(device_type="cuda"):
+                    action_probs = self.actor(state)
+            else:
+                action_probs = self.actor(state)
             actions = self.categorize_actions(action_probs, as_dict=True)
             __, reward, done, truncated, __ = env.step(actions)
             reward = TensorDict(
@@ -587,18 +639,22 @@ class D4PG:
             ).auto_batch_size_()
             next_state = env.get_state(unsqueeze=1)
             if self.n_steps > 1:
-                reward["n_reward"] = env.n_step_reward().unsqueeze(-1)
+                reward["n_reward"] = env.n_step_reward().unsqueeze(-1).to(self.device)
 
-        return TensorDict(
-            {
-                "state": state.auto_batch_size_(),
-                "reward": reward.auto_batch_size_(),
-                "actions": action_probs.auto_batch_size_(),
-                "next_state": next_state.auto_batch_size_(),
-                "done": done,
-                "truncated": truncated,
-            }
-        ).auto_batch_size_()
+        return (
+            TensorDict(
+                {
+                    "state": state.auto_batch_size_(),
+                    "reward": reward.auto_batch_size_(),
+                    "actions": action_probs.auto_batch_size_(),
+                    "next_state": next_state.auto_batch_size_(),
+                    "done": done,
+                    "truncated": truncated,
+                }
+            )
+            .auto_batch_size_()
+            .to(self.device)
+        )
 
     def episodes_simulation(self, env, samples, max_steps: int = -1, seed: int = None):
         """
@@ -679,6 +735,7 @@ class D4PG:
         ), "max_steps must be greater or equal to n_steps"
 
         for episode_number, sample_batch in enumerate(samples):
+            sample_batch = TensorDict(sample_batch).to(self.device)
             kwargs.update(
                 {
                     "batch": sample_batch["task"],
@@ -700,7 +757,7 @@ class D4PG:
                         f"Episode/{episode_number}",
                     )
                     mask = step_state["state"]["terminated"] == 0
-                    selected_indices = mask.nonzero(as_tuple=True)[0]
+                    selected_indices = mask.nonzero(as_tuple=True)[0].cpu()
                     rewards = step_state["reward"][selected_indices]
                     for k, v in rewards.items():
                         value = torch.mean(v).item()
@@ -785,7 +842,7 @@ class D4PG:
             ):
                 step_state["terminated"] = step_state["next_state"]["terminated"]
                 mask = step_state["state"]["terminated"] == 0
-                selected_indices = mask.nonzero(as_tuple=True)[0]
+                selected_indices = mask.nonzero(as_tuple=True)[0].cpu()
                 for key in step_state.keys():
                     if isinstance(step_state[key], TensorDict):
                         step_state[key] = step_state[key][selected_indices]
@@ -893,15 +950,19 @@ class D4PG:
                         step_state["next_state"],
                     )
                 elif self.replay_buffer is None:
-                    batch = TensorDict(
-                        {
-                            "state": step_state["state"],
-                            "actions": step_state["actions"],
-                            "reward": step_state["reward"],
-                            "next_state": step_state["next_state"],
-                            "terminated": step_state["next_state"]["terminated"],
-                        },
-                    ).auto_batch_size_()
+                    batch = (
+                        TensorDict(
+                            {
+                                "state": step_state["state"],
+                                "actions": step_state["actions"],
+                                "reward": step_state["reward"],
+                                "next_state": step_state["next_state"],
+                                "terminated": step_state["next_state"]["terminated"],
+                            },
+                        )
+                        .auto_batch_size_()
+                        .to(self.device)
+                    )
                 else:
                     return
 

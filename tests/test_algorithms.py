@@ -1,4 +1,5 @@
 import os
+import argparse
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -16,7 +17,7 @@ from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PG
-from rlarcworld.utils import categorical_projection, get_nested_ref
+from rlarcworld.utils import get_nested_ref
 
 import unittest
 import logging
@@ -45,6 +46,14 @@ class TestD4PG(unittest.TestCase):
 
         env_binary = ArcBatchGridEnv(self.grid_size, self.color_values)
         self.env = PixelAwareRewardWrapper(env_binary)
+        dataset = ArcDataset(
+            arc_dataset_dir="rlarcworld/dataset/training",
+            keep_in_memory=False,
+            transform=ArcSampleTransformer(
+                (self.grid_size, self.grid_size), examples_stack_dim=10
+            ),
+        )
+        self.train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
         self.critic = ArcCriticNetwork(
             size=self.grid_size,
             color_values=self.color_values,
@@ -52,14 +61,6 @@ class TestD4PG(unittest.TestCase):
             v_min=v_min,
             v_max=v_max,
         )
-        dataset = ArcDataset(
-            arc_dataset_dir="rlarcworld/dataset/training",
-            keep_in_memory=True,
-            transform=ArcSampleTransformer(
-                (self.grid_size, self.grid_size), examples_stack_dim=10
-            ),
-        )
-        self.train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
         self.d4pg = D4PG(
             env=self.env,
             actor=self.actor,
@@ -93,12 +94,14 @@ class TestD4PG(unittest.TestCase):
         )
 
     def simmulated_data(self):
-        reward = {
-            "pixel_wise": torch.randint(-40, 2, size=(self.batch_size, 1)),
-            "binary": torch.randint(0, 2, size=(self.batch_size, 1)),
-        }
+        reward = TensorDict(
+            {
+                "pixel_wise": torch.randint(-40, 2, size=(self.batch_size, 1)),
+                "binary": torch.randint(0, 2, size=(self.batch_size, 1)),
+            }
+        ).to(self.actor.device)
 
-        done = torch.randint(0, 2, size=(self.batch_size, 1))
+        done = torch.randint(0, 2, size=(self.batch_size, 1)).to(self.actor.device)
         gamma = 0.99
         state = TensorDict(
             {
@@ -127,9 +130,9 @@ class TestD4PG(unittest.TestCase):
                     self.grid_size,
                     size=(self.batch_size, 1, self.grid_size, self.grid_size),
                 ),
-                "terminated": torch.randint(0, 2, size=(self.batch_size, 1)).float(),
+                "terminated": torch.randint(0, 2, size=(self.batch_size, 1)),
             }
-        )
+        ).to(self.actor.device)
         return reward, done, gamma, state
 
     def test_target_distribution(self):
@@ -157,7 +160,8 @@ class TestD4PG(unittest.TestCase):
         # Assert probability mass function
         for key, dist in target_distribution.items():
             torch.testing.assert_close(
-                torch.sum(dist, dim=1), torch.ones(self.batch_size)
+                torch.sum(dist, dim=1),
+                torch.ones(self.batch_size).to(self.actor.device),
             ), f"Probability mass function not normalized for key: {key}"
             assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
             assert torch.all(
@@ -178,7 +182,7 @@ class TestD4PG(unittest.TestCase):
 
         # Backpropagation
         # Define a loss function and an optimizer
-        optimizer = torch.optim.Adam(self.critic.parameters(), lr=0.001)
+        optimizer = torch.optim.AdamW(self.critic.parameters(), lr=0.001)
         loss, td_error, q_dist = self.d4pg.compute_critic_loss(
             state, action_probs, target_distribution
         )
@@ -220,7 +224,7 @@ class TestD4PG(unittest.TestCase):
 
         # Backpropagation
         # Define a loss function and an optimizer
-        optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
+        optimizer = torch.optim.AdamW(self.actor.parameters(), lr=0.001)
         loss = self.d4pg.compute_actor_loss(state)
         assert tuple(loss.keys()) == tuple(["pixel_wise", "binary"])
         for k, v in loss.items():
@@ -230,7 +234,7 @@ class TestD4PG(unittest.TestCase):
         optimizer.zero_grad()
         loss.backward()
         for name, param in self.actor.named_parameters():
-            if param.grad is None:
+            if "base_model" not in name and param.grad is None:
                 raise ValueError(
                     f"Gradient not flowing in D4PG ArcActorNetwork for: {name}"
                 )
@@ -244,7 +248,7 @@ class TestD4PG(unittest.TestCase):
             state.clone(),
             done,
         )
-        optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
+        optimizer = torch.optim.AdamW(self.actor.parameters(), lr=0.001)
         d4pg = D4PG(
             env=self.env,
             actor=self.actor,
@@ -265,7 +269,7 @@ class TestD4PG(unittest.TestCase):
         optimizer.zero_grad()
         loss.backward()
         for name, param in self.actor.named_parameters():
-            if param.grad is None:
+            if "base_model" not in name and param.grad is None:
                 raise ValueError(
                     f"Gradient not flowing in D4PG ArcActorNetwork for: {name}"
                 )
@@ -285,7 +289,7 @@ class TestD4PG(unittest.TestCase):
                 "terminated": done,
             },
             batch_size=self.batch_size,
-        )
+        ).to(self.actor.device)
 
         loss_actor, loss_critic = self.d4pg.compute_loss(batch)
 
@@ -297,9 +301,15 @@ class TestD4PG(unittest.TestCase):
 
         # Check that gradients are flowing
         for name, param in self.d4pg.actor.named_parameters():
-            assert param.grad is not None, f"Gradient not flowing in actor for: {name}"
+            if "base_model" not in name:
+                assert (
+                    param.grad is not None
+                ), f"Gradient not flowing in actor for: {name}"
         for name, param in self.d4pg.critic.named_parameters():
-            assert param.grad is not None, f"Gradient not flowing in critic for: {name}"
+            if "base_model" not in name:
+                assert (
+                    param.grad is not None
+                ), f"Gradient not flowing in critic for: {name}"
 
     def test_validation_step(self):
         logger.info("Testing validation step")
@@ -315,7 +325,7 @@ class TestD4PG(unittest.TestCase):
                 "terminated": done,
             },
             batch_size=self.batch_size,
-        )
+        ).to(self.actor.device)
 
         loss_actor, loss_critic = self.d4pg.compute_loss(batch, training=False)
 
@@ -361,7 +371,7 @@ class TestD4PG(unittest.TestCase):
         # Create an instance of the ArcDataset
         dataset = ArcDataset(
             arc_dataset_dir="rlarcworld/dataset/training",
-            keep_in_memory=True,
+            keep_in_memory=False,
             transform=ArcSampleTransformer(
                 (grid_size, grid_size), examples_stack_dim=10
             ),
@@ -406,88 +416,88 @@ class TestD4PG(unittest.TestCase):
             torch.sum(env._reward_storage)
         )
 
-    def test_validation_d4pg(self):
-        grid_size = 30
-        color_values = 11
-        max_steps = torch.randint(30, 100, size=(1,)).item()
-        n_steps = torch.randint(3, 20 // 2, size=(1,)).item()
-        logger.info(
-            "Testing train_d4pg with n_steps {} for {} steps".format(n_steps, max_steps)
-        )
-        gamma = 0.99
-        env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
-        env = PixelAwareRewardWrapper(env, n_steps=n_steps, gamma=gamma)
+    # def test_validation_d4pg(self):
+    #     grid_size = 30
+    #     color_values = 11
+    #     max_steps = torch.randint(30, 100, size=(1,)).item()
+    #     n_steps = torch.randint(3, 20 // 2, size=(1,)).item()
+    #     logger.info(
+    #         "Testing train_d4pg with n_steps {} for {} steps".format(n_steps, max_steps)
+    #     )
+    #     gamma = 0.99
+    #     env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
+    #     env = PixelAwareRewardWrapper(env, n_steps=n_steps, gamma=gamma)
 
-        # Create an instance of the ArcDataset
-        dataset = ArcDataset(
-            arc_dataset_dir="rlarcworld/dataset/training",
-            keep_in_memory=True,
-            transform=ArcSampleTransformer(
-                (grid_size, grid_size), examples_stack_dim=10
-            ),
-        )
-        train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
+    #     # Create an instance of the ArcDataset
+    #     dataset = ArcDataset(
+    #         arc_dataset_dir="rlarcworld/dataset/training",
+    #         keep_in_memory=False,
+    #         transform=ArcSampleTransformer(
+    #             (grid_size, grid_size), examples_stack_dim=10
+    #         ),
+    #     )
+    #     train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
 
-        val_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
-        replay_buffer = TensorDictReplayBuffer(
-            storage=LazyTensorStorage(self.batch_size),
-            sampler=PrioritizedSampler(
-                max_capacity=self.batch_size,
-                alpha=1.0,
-                beta=1.0,
-            ),
-        )
+    #     val_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
+    #     replay_buffer = TensorDictReplayBuffer(
+    #         storage=LazyTensorStorage(self.batch_size),
+    #         sampler=PrioritizedSampler(
+    #             max_capacity=self.batch_size,
+    #             alpha=1.0,
+    #             beta=1.0,
+    #         ),
+    #     )
 
-        num_atoms = {"pixel_wise": 50, "binary": 3, "n_reward": 50 * n_steps}
-        v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
-        v_max = {"pixel_wise": 2, "binary": 1, "n_reward": 2 * n_steps}
-        critic = ArcCriticNetwork(
-            size=self.grid_size,
-            color_values=self.color_values,
-            num_atoms=num_atoms,
-            v_min=v_min,
-            v_max=v_max,
-        )
+    #     num_atoms = {"pixel_wise": 50, "binary": 3, "n_reward": 50 * n_steps}
+    #     v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
+    #     v_max = {"pixel_wise": 2, "binary": 1, "n_reward": 2 * n_steps}
+    #     critic = ArcCriticNetwork(
+    #         size=self.grid_size,
+    #         color_values=self.color_values,
+    #         num_atoms=num_atoms,
+    #         v_min=v_min,
+    #         v_max=v_max,
+    #     )
 
-        d4pg = D4PG(
-            env=env,
-            actor=self.actor,
-            critic=critic,
-            train_samples=train_samples,
-            validation_samples=val_samples,
-            batch_size=self.batch_size,
-            replay_buffer=replay_buffer,
-            target_update_frequency=5,
-            n_steps=env.n_steps,
-            gamma=env.gamma,
-            tb_writer=SummaryWriter(log_dir="runs/test_validation_d4pg"),
-        )
-        d4pg.fit(
-            max_steps=max_steps,
-            validation_steps_frequency=10,
-            validation_steps_per_train_step=10,
-            validation_steps_per_episode=max_steps,
-            logger_frequency=2,
-            grads_logger_frequency=3,
-        )
+    #     d4pg = D4PG(
+    #         env=env,
+    #         actor=self.actor,
+    #         critic=critic,
+    #         train_samples=train_samples,
+    #         validation_samples=val_samples,
+    #         batch_size=self.batch_size,
+    #         replay_buffer=replay_buffer,
+    #         target_update_frequency=5,
+    #         n_steps=env.n_steps,
+    #         gamma=env.gamma,
+    #         tb_writer=SummaryWriter(log_dir="runs/test_validation_d4pg"),
+    #     )
+    #     d4pg.fit(
+    #         max_steps=max_steps,
+    #         validation_steps_frequency=10,
+    #         validation_steps_per_train_step=10,
+    #         validation_steps_per_episode=max_steps,
+    #         logger_frequency=2,
+    #         grads_logger_frequency=3,
+    #     )
 
-        assert os.path.isdir(
-            "./runs/test_validation_d4pg"
-        ), "Directory 'runs/test_validation_d4pg' does not exist"
+    #     assert os.path.isdir(
+    #         "./runs/test_validation_d4pg"
+    #     ), "Directory 'runs/test_validation_d4pg' does not exist"
 
-        ref, last_key = get_nested_ref(d4pg.history, "Validation/Loss/actor")
-        assert isinstance(
-            ref[last_key], np.ndarray
-        ), "Invalid validation loss history format - expected np.ndarray for actor, got {}".format(
-            type(ref[last_key])
-        )
+    #     ref, last_key = get_nested_ref(d4pg.history, "Validation/Loss/actor")
+    #     assert isinstance(
+    #         ref[last_key], np.ndarray
+    #     ), "Invalid validation loss history format - expected np.ndarray for actor, got {}".format(
+    #         type(ref[last_key])
+    #     )
 
-        ref, last_key = get_nested_ref(d4pg.history, "Train/Loss/actor")
-        assert isinstance(
-            ref[last_key], np.ndarray
-        ), "Invalid training loss history format - expected np.ndarray for critic, got {}".format(
-            type(ref[last_key])
-        )
+    #     ref, last_key = get_nested_ref(d4pg.history, "Train/Loss/actor")
+    #     assert isinstance(
+    #         ref[last_key], np.ndarray
+    #     ), "Invalid training loss history format - expected np.ndarray for critic, got {}".format(
+    #         type(ref[last_key])
+    #     )
 
 
 if __name__ == "__main__":

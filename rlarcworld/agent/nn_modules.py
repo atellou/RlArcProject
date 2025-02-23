@@ -11,37 +11,26 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# Define Pretrained CNN Model (ResNet50, ~23M parameters)
-class ResNetModule(nn.Module):
+class CnnPreTrainedModule(nn.Module):
     def __init__(
         self,
-        resnet_version="resnet18",
-        resnet_weights="ResNet18_Weights.DEFAULT",
+        model="efficientnet_b0",
+        model_weights="EfficientNet_B0_Weights.DEFAULT",
         freeze: str = "ALL",
         do_not_freeze: str = None,
         embedding_size=256,
     ):
-        """
-        Initialize a ResNet-based model for learning an embedding from images.
+        super(CnnPreTrainedModule, self).__init__()
 
-        Args:
-            resnet_version (str): A string specifying the ResNet version to use
-                (e.g. "resnet50", "resnet101", etc.). Defaults to "resnet50".
-            resnet_weights (str): A string specifying the ResNet weights to use.
-                Defaults to "ResNet50_Weights.DEFAULT".
-            freeze (bool): Comma separated string specifying which layers to freeze. Defaults to "ALL".
-            embedding_size (int): The size of the output embedding. Defaults to
-                256.
-        """
-        super(ResNetModule, self).__init__()
-        self.base_model = getattr(models, resnet_version)(weights=resnet_weights)
-        self.base_model.conv1 = nn.Conv2d(
-            1, 64, kernel_size=3, stride=1, padding=1, bias=False
+        self.base_model = getattr(models, model)(weights=model_weights)
+        self.base_model.features[0][0] = nn.Conv2d(
+            1, 32, kernel_size=3, stride=1, padding=1, bias=False
         )  # Adjust for 1-channel input
         self.embedding_layer = nn.Linear(
-            self.base_model.fc.in_features, embedding_size
-        )  # ResNet50 output -> embedding
-        self.base_model.fc = nn.Identity()  # Remove classification head
+            self.base_model.classifier[1].in_features,
+            embedding_size,
+        )
+        self.base_model.classifier = nn.Identity()
 
         # Freeze all layers except conv1 and embedding_layer
         freeze = freeze.split(",")
@@ -63,7 +52,7 @@ class ResNetModule(nn.Module):
                 else:
                     logging.warning(f"Layer {layer} not found in model")
 
-        for param in self.base_model.conv1.parameters():
+        for param in self.base_model.features[0][0].parameters():
             param.requires_grad = True
         for param in self.embedding_layer.parameters():
             param.requires_grad = True
@@ -71,6 +60,9 @@ class ResNetModule(nn.Module):
             if isinstance(module, nn.BatchNorm2d):
                 for param in module.parameters():
                     param.requires_grad = True
+
+        self.add_module("base_model", self.base_model)
+        self.add_module("embedding_layer", self.embedding_layer)
 
     def forward(self, x):
         """
@@ -207,33 +199,23 @@ class MultiHeadAttention(nn.Module):
         return attn_output
 
 
-class ResNetAttention(nn.Module):
+class CnnAttention(nn.Module):
     def __init__(self, embedding_size=256, nheads=4, dropout=0.0, bias=True):
         """
-        Initializes the ResNetAttention module.
+        Initializes the CnnAttention module.
 
         Args:
-            embedding_size (int, optional): The size of the embedding for the ResNet modules and the multi-head attention. Defaults to 256.
+            embedding_size (int, optional): The size of the embedding for the Cnn modules and the multi-head attention. Defaults to 256.
             nheads (int, optional): The number of attention heads in the multi-head attention module. Defaults to 8.
             dropout (float, optional): The dropout probability for the multi-head attention module. Defaults to 0.0.
             bias (bool, optional): Whether to include a bias term in the multi-head attention module. Defaults to True.
 
-        The module consists of two ResNet embeddings for time steps t0 and t1, and a MultiHeadAttention module.
+        The module consists of two CNN embeddings for time steps t0 and t1, and a MultiHeadAttention module.
         """
 
-        super(ResNetAttention, self).__init__()
-        self.resnet_embedding_t0 = ResNetModule(
-            resnet_version="resnet18",
-            resnet_weights="ResNet18_Weights.DEFAULT",
-            do_not_freeze="layer4",
-            embedding_size=embedding_size,
-        )
-        self.resnet_embedding_t1 = ResNetModule(
-            resnet_version="resnet18",
-            resnet_weights="ResNet18_Weights.DEFAULT",
-            do_not_freeze="layer4",
-            embedding_size=embedding_size,
-        )
+        super(CnnAttention, self).__init__()
+        self.cnn_embedding_t0 = CnnPreTrainedModule()
+        self.cnn_embedding_t1 = CnnPreTrainedModule()
 
         self.mha = MultiHeadAttention(
             E_q=embedding_size,
@@ -249,7 +231,7 @@ class ResNetAttention(nn.Module):
         """
         Forward pass; runs the following process:
             1. Flatten the input
-            2. Extract features from t=0 and t=1 using two different ResNets
+            2. Extract features from t=0 and t=1 using two different Cnn modules
             3. Run multi-head attention on the two feature vectors
             4. Reshape the output to match the input shape
 
@@ -261,8 +243,8 @@ class ResNetAttention(nn.Module):
         """
         batch_size, num_examples, times_state, height, width = x.shape
         x = x.view(batch_size * num_examples, times_state, height, width)
-        t0 = self.resnet_embedding_t0(x[:, 0].unsqueeze(1))
-        t1 = self.resnet_embedding_t1(x[:, 1].unsqueeze(1))
+        t0 = self.cnn_embedding_t0(x[:, 0].unsqueeze(1))
+        t1 = self.cnn_embedding_t1(x[:, 1].unsqueeze(1))
         x = self.mha(query=t1, key=t0, value=t0)
         return x.view(batch_size, num_examples, -1)
 
@@ -349,3 +331,6 @@ class CrossAttentionClassifier(nn.Module):
         )
 
         return logits
+
+
+CnnPreTrainedModule()

@@ -20,6 +20,7 @@ import os
 from typing import Dict
 import torch
 from tensordict import TensorDict
+from rlarcworld.utils import enable_cuda
 
 import logging
 
@@ -52,14 +53,18 @@ class ArcCriticNetwork(torch.nn.Module):
         self.color_values = color_values
         self.v_min = v_min
         self.v_max = v_max
+        self.config = enable_cuda()
+        self.device = self.config["device"]
         for key, min_val in v_min.items():
             assert (
                 min_val < self.v_max[key]
             ), f"v_min[{key}]={min_val} is not lower than v_max[{key}]={self.v_max[key]}"
-        self.z_atoms = {
-            key: torch.linspace(v_min[key], v_max[key], value)
-            for key, value in num_atoms.items()
-        }
+        self.z_atoms = TensorDict(
+            {
+                key: torch.linspace(v_min[key], v_max[key], value)
+                for key, value in num_atoms.items()
+            }
+        ).to(self.device)
         self.no_scale_keys = [
             "x_location",
             "y_location",
@@ -105,6 +110,8 @@ class ArcCriticNetwork(torch.nn.Module):
                 for reward_type, num_atoms in self.num_atoms.items()
             }
         )
+
+        self.to(self.device)
 
     @torch.jit.export
     def scale_arc_grids(self, x: torch.Tensor):
@@ -197,12 +204,14 @@ class ArcCriticNetwork(torch.nn.Module):
         state.update(action)
         # Brodcast the state
         for key, value in state.items():
+            value = value.to(self.device)
             if key == "index":
                 max_value = torch.max(value)
-                value = value.float() if max_value == 0 else value / max_value
+                value = value if max_value == 0 else value / max_value
             elif key not in self.no_scale_keys:
                 value = self.scale_arc_grids(value)
-            state[key] = self.inputs_layers[key](value.float())
+            value = value.type(self.inputs_layers["index"].weight.dtype)
+            state[key] = self.inputs_layers[key](value)
             state[key] = torch.relu(state[key])
             state[key] = state[key].view(state[key].shape[0], -1)
             assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"

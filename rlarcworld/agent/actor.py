@@ -13,15 +13,16 @@ and the linear layer is used to output a distribution over the possible actions.
 The actor network is trained using the policy gradient algorithm.
 """
 
-import os
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 from rlarcworld.agent.nn_modules import (
-    ResNetModule,
-    ResNetAttention,
+    CnnPreTrainedModule,
+    CnnAttention,
     CrossAttentionClassifier,
 )
+from rlarcworld.utils import enable_cuda
 
 import logging
 
@@ -43,31 +44,19 @@ class ArcActorNetwork(nn.Module):
         self.color_values = color_values
         self.inputs_layers = torch.nn.ModuleDict(
             {
-                "last_grid": ResNetModule(
-                    resnet_version="resnet18",
-                    resnet_weights="ResNet18_Weights.DEFAULT",
-                    # do_not_freeze="layer4",
+                "last_grid": CnnPreTrainedModule(
                     embedding_size=256,
                 ),
-                "grid": ResNetModule(
-                    resnet_version="resnet18",
-                    resnet_weights="ResNet18_Weights.DEFAULT",
-                    # do_not_freeze="layer4",
+                "grid": CnnPreTrainedModule(
                     embedding_size=256,
                 ),
-                "examples": ResNetAttention(
-                    embedding_size=256, nheads=8, dropout=0.2, bias=True
+                "examples": CnnAttention(
+                    embedding_size=256, nheads=4, dropout=0.2, bias=True
                 ),
-                "initial": ResNetModule(
-                    resnet_version="resnet18",
-                    resnet_weights="ResNet18_Weights.DEFAULT",
-                    # do_not_freeze="layer4",
+                "initial": CnnPreTrainedModule(
                     embedding_size=256,
                 ),
-                "index": ResNetModule(
-                    resnet_version="resnet18",
-                    resnet_weights="ResNet18_Weights.DEFAULT",
-                    # do_not_freeze="layer4",
+                "index": CnnPreTrainedModule(
                     embedding_size=256,
                 ),
                 # "terminated": torch.nn.Linear(1, 1),
@@ -82,18 +71,23 @@ class ArcActorNetwork(nn.Module):
                 "submit": 2,
             },
             embedding_size=256,
-            nheads=8,
+            nheads=4,
             dropout=0.2,
             bias=True,
         )
-        params = torch.tensor(
-            [[p.numel() * int(p.requires_grad), p.numel()] for p in self.parameters()]
-        )
-        print(
-            "Actor Network Params:\n {} trainable, {} total".format(
-                sum(params[:, 0]), sum(params[:, 1])
-            )
-        )
+
+        self.config = enable_cuda()
+        self.device = self.config["device"]
+
+        self.to(self.device)
+        # params = torch.tensor(
+        #     [[p.numel() * int(p.requires_grad), p.numel()] for p in self.parameters()]
+        # )
+        # print(
+        #     "Actor Network Params:\n {} trainable, {} total".format(
+        #         sum(params[:, 0]), sum(params[:, 1])
+        #     )
+        # )
 
     def scale_arc_grids(self, x: torch.Tensor):
         """
@@ -180,20 +174,27 @@ class ArcActorNetwork(nn.Module):
 
         # Brodcast the state
         for key, value in state.items():
+            value = value.to(self.device)
             try:
                 if key == "index":
                     max_value = torch.max(value)
                     value = value.float() if max_value == 0 else value / max_value
                 elif key != "terminated":
                     value = self.scale_arc_grids(value)
-                state[key] = self.inputs_layers[key](value.float())
+
+                if self.config.get("use_checkpointing"):
+                    state[key] = checkpoint.checkpoint(
+                        self.inputs_layers[key], value, use_reentrant=False
+                    )
+                else:
+                    state[key] = self.inputs_layers[key](value)
 
                 if key != "examples":
                     state[key] = state[key].unsqueeze(1)
                 assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
             except Exception as e:
                 logger.error(
-                    f'Error in "{key}" layer, Shape: {value.shape}, and Dtype: {value.dtype}'
+                    f'Error in Actor "{key}" layer, Shape: {value.shape}, and Dtype: {value.dtype}'
                 )
                 raise e
 
@@ -203,8 +204,14 @@ class ArcActorNetwork(nn.Module):
             dim=1,
         )
 
-        state = self.cross_attention_classifier(state)
+        if self.config.get("use_checkpointing"):
+            state = checkpoint.checkpoint(
+                self.cross_attention_classifier, state, use_reentrant=False
+            )
+        else:
+            state = self.cross_attention_classifier(state)
 
+        # Apply softmax
         state = TensorDict(
             {
                 action_type: torch.softmax(logits, dim=-1)

@@ -1,4 +1,39 @@
+import sys
+import argparse
 import torch
+
+
+def enable_cuda(use_amp=True, use_checkpointing=True):
+    """
+    Configures CUDA settings for AMP and gradient checkpointing.
+
+    This function checks the availability of CUDA and its device capability
+    to determine if Automatic Mixed Precision (AMP) and gradient checkpointing
+    can be enabled. It returns a configuration dictionary indicating whether
+    AMP and checkpointing should be used based on the provided flags and
+    hardware capabilities.
+
+    Args:
+        use_amp (bool, optional): Flag to indicate whether to use AMP. Defaults to True.
+        use_checkpointing (bool, optional): Flag to indicate whether to use gradient checkpointing. Defaults to True.
+
+    Returns:
+        dict: Configuration dictionary with keys 'use_amp' and 'use_checkpointing'
+        indicating the enabled settings.
+    """
+
+    amp_available = (
+        torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 7
+    )
+    gradient_checkpointing_enabled = amp_available  # Use only if CUDA is available
+
+    config = {
+        "use_amp": use_amp and amp_available,
+        "use_checkpointing": use_checkpointing and gradient_checkpointing_enabled,
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+    }
+
+    return config
 
 
 def get_nested_ref(dictionary: dict, key: str, sep: str = "/", default=None):
@@ -55,7 +90,7 @@ def categorical_projection(
     u = u.clamp(0, num_atoms - 1)
 
     # Distribute probability mass
-    projected_dist = torch.zeros_like(next_q_dist)
+    projected_dist = torch.zeros_like(next_q_dist).to(next_q_dist.device)
     projected_dist.scatter_add_(dim=-1, index=l, src=next_q_dist * (u.float() - b))
     projected_dist.scatter_add_(dim=-1, index=u, src=next_q_dist * (b - l.float()))
 
@@ -63,49 +98,52 @@ def categorical_projection(
 
 
 class TorchQueue(torch.Tensor):
-    _q_size: tuple
-    _q_dim: int
+    _queue_size: tuple
+    _queue_dim: int
 
-    def __new__(cls, data, q_size: int, q_dim: int = 0, *args, **kwargs):
-        return super().__new__(cls, data, *args, **kwargs)
+    def __new__(cls, data, queue_size: int, queue_dim: int = 0, *args, **kwargs):
+        obj = super().__new__(cls, data, *args, **kwargs)
+        obj._attrs = {"queue_size": queue_size, "queue_dim": queue_dim}
+        return obj
 
-    def __init__(self, data, q_size: int, q_dim: int = 0):
+    def __init__(self, data, queue_size: int, queue_dim: int = 0):
         assert (
-            isinstance(q_size, int) and q_size > 0
-        ), "q_size must be a positive integer."
-        assert isinstance(q_dim, int), "q_dim must be an integer."
-        assert data.shape[q_dim] <= q_size, "Data shape is {}, q_size is {}".format(
-            data.shape[q_dim], q_size
+            isinstance(queue_size, int) and queue_size > 0
+        ), "queue_size must be a positive integer."
+        assert isinstance(queue_dim, int), "queue_dim must be an integer."
+        assert (
+            data.shape[queue_dim] <= queue_size
+        ), "Data shape is {}, queue_size is {}".format(
+            data.shape[queue_dim], queue_size
         )
-        self._q_size = q_size
-        self._q_dim = q_dim
-        self.__reversed_indices = torch.arange(-1 - q_size, 0)
+        self._queue_size = queue_size
+        self._queue_dim = queue_dim
+        self.__reversed_indices = torch.arange(-1 - queue_size, 0).to(self.device)
 
     def clone(self, *args, **kwargs):
         return TorchQueue(
             super().clone(*args, **kwargs),
-            data=self,
-            q_size=self._q_size,
-            q_dim=self._q_dim,
+            queue_size=self._queue_size,
+            queue_dim=self._queue_dim,
         )
 
     def to(self, *args, **kwargs):
         new_obj = super().to(*args, **kwargs)
         if new_obj is self:
             return self
-        return TorchQueue(new_obj, q_size=self._q_size, q_dim=self._q_dim)
+        return TorchQueue(new_obj, queue_size=self.queue_size, queue_dim=self.queue_dim)
 
     @property
-    def q_size(self):
-        return self._q_size
+    def queue_size(self):
+        return self._queue_size
 
     @property
-    def q_dim(self):
-        return self._q_dim
+    def queue_dim(self):
+        return self._queue_dim
 
     @property
     def is_full(self):
-        return self.shape[self._q_dim] == self._q_size
+        return self.shape[self._queue_dim] == self._queue_size
 
     def push(self, item):
         """
@@ -117,18 +155,18 @@ class TorchQueue(torch.Tensor):
         Returns:
             torch.Tensor: The item that was added to the queue.
         """
-        item = torch.cat([self, item], dim=self._q_dim)
-        if item.shape[self._q_dim] > self._q_size:
-            item = self.__correct_q_size(item)
-            assert item.shape[self._q_dim] == self._q_size
+        item = torch.cat([self, item], dim=self._queue_dim)
+        if item.shape[self._queue_dim] > self._queue_size:
+            item = self.__correct_queue_size(item)
+            assert item.shape[self._queue_dim] == self._queue_size
         assert (
-            item.shape[self._q_dim] <= self._q_size
-        ), "Item shape is {}, q_size is {}".format(
-            item.shape[self._q_dim], self._q_size
+            item.shape[self._queue_dim] <= self._queue_size
+        ), "Item shape is {}, queue_size is {}".format(
+            item.shape[self._queue_dim], self._queue_size
         )
-        return TorchQueue(item, q_size=self._q_size, q_dim=self._q_dim)
+        return TorchQueue(item, queue_size=self._queue_size, queue_dim=self._queue_dim)
 
-    def __correct_q_size(self, item=None):
+    def __correct_queue_size(self, item=None):
         """
         Correct the size of the queue along the specified dimension when full.
         """
@@ -136,10 +174,12 @@ class TorchQueue(torch.Tensor):
             item = self
         return TorchQueue(
             torch.index_select(
-                item, self._q_dim, self.__reversed_indices[1:] + self._q_size + 1
+                item,
+                self._queue_dim,
+                self.__reversed_indices[1:] + self._queue_size + 1,
             ),
-            q_size=self._q_size,
-            q_dim=self._q_dim,
+            queue_size=self._queue_size,
+            queue_dim=self._queue_dim,
         )
 
     def pop(self):
@@ -150,4 +190,6 @@ class TorchQueue(torch.Tensor):
             torch.Tensor: The oldest item in the queue.
             TorchQueue: The updated queue without the oldest item.
         """
-        return self[0], TorchQueue(self[1:], q_size=self._q_size, q_dim=self._q_dim)
+        return self[0], TorchQueue(
+            self[1:], queue_size=self._queue_size, queue_dim=self._queue_dim
+        )

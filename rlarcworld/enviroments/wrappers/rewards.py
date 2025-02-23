@@ -41,6 +41,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.v_max = v_max
         self.n_steps = n_steps
         self.gamma = gamma
+        self.device = self.get_wrapper_attr("device")
 
     def reset(self, *, seed=None, options=None):
         reset = super().reset(seed=seed, options=options)
@@ -50,9 +51,14 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             self.gamma ** torch.arange(1, self.n_steps + 1)
         )
         self._reward_storage = TorchQueue(
-            torch.zeros((self.batch_size, self.n_steps)), q_size=self.n_steps, q_dim=1
+            torch.zeros((self.batch_size, self.n_steps)),
+            queue_size=self.n_steps,
+            queue_dim=1,
         )
         self._last_reward = torch.zeros(self.batch_size, dtype=int)
+        self.discount_factor = self.discount_factor.to(self.device)
+        self._reward_storage = self._reward_storage.to(self.device)
+        self._last_reward = self._last_reward.to(self.device)
         return reset
 
     def n_step_reward(
@@ -63,19 +69,32 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         """
         assert isinstance(apply_clamp, bool), "apply_clamp must be a bool"
         if apply_clamp:
-            return torch.clamp(
-                torch.sum(self._reward_storage * self.discount_factor, dim=1),
-                min=v_min,
-                max=v_max,
-            )
+            return torch.tensor(
+                torch.clamp(
+                    torch.sum(self._reward_storage * self.discount_factor, dim=1),
+                    min=v_min,
+                    max=v_max,
+                )
+                .cpu()
+                .numpy()
+            ).to(self.device)
         elif self.apply_clamp:
-            return torch.clamp(
-                torch.sum(self._reward_storage * self.discount_factor, dim=1),
-                min=self.v_min,
-                max=self.v_max,
-            )
+            return torch.tensor(
+                torch.clamp(
+                    torch.sum(self._reward_storage * self.discount_factor, dim=1),
+                    min=self.v_min,
+                    max=self.v_max,
+                )
+                .cpu()
+                .numpy()
+            ).to(self.device)
+
         else:
-            return torch.sum(self._reward_storage * self.discount_factor, dim=1)
+            return torch.tensor(
+                torch.sum(self._reward_storage * self.discount_factor, dim=1)
+                .cpu()
+                .numpy()
+            ).to(self.device)
 
     def get_state(self, **kwargs):
         return self.env.get_state(**kwargs)
@@ -143,7 +162,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         if not isinstance(penalization, torch.Tensor):
             penalization = torch.tensor(
                 penalization, device=grid_diffs.device, dtype=grid_diffs.dtype
-            )
+            ).to(self.device)
         penalization = (grid_diff > 0).long() * penalization
         penalization = grid_diff * penalization
         improvement = last_diffs - grid_diff

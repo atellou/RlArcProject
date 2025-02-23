@@ -6,14 +6,9 @@ import numpy as np
 import gymnasium as gym
 import logging
 
-from rlarcworld.utils import TorchQueue
+from rlarcworld.utils import TorchQueue, enable_cuda
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
 
 class ArcActionSpace:
@@ -64,6 +59,8 @@ class ArcBatchGridEnv(gym.Env):
         assert (
             isinstance(gamma, float) and gamma > 0 and gamma <= 1
         ), "gamma must be a positive float lower or equal than 1.0"
+
+        self.device = enable_cuda().get("device")
 
         # N-step attributes
         self.n_steps = n_steps
@@ -174,7 +171,9 @@ class ArcBatchGridEnv(gym.Env):
             self.gamma ** torch.arange(1, self.n_steps + 1)
         )
         self._reward_storage = TorchQueue(
-            torch.zeros((self.batch_size, self.n_steps)), q_size=self.n_steps, q_dim=1
+            torch.zeros((self.batch_size, self.n_steps)),
+            queue_size=self.n_steps,
+            queue_dim=1,
         )
         self._last_reward = torch.zeros(self.batch_size, dtype=int)
         self._timestep = 0
@@ -189,12 +188,15 @@ class ArcBatchGridEnv(gym.Env):
                 "examples": options["examples"],
             },
             batch_size=self.batch_size,
-        )
+        ).to(self.device)
 
         self.observations = TensorDict(
             {"grid": batch_in.clone(), "target": batch_out.clone()},
             batch_size=self.batch_size,
-        )
+        ).to(self.device)
+
+        self.information = self.information.to(self.device)
+        self.observations = self.observations.to(self.device)
 
         return self.observations, self.information
 
@@ -205,7 +207,7 @@ class ArcBatchGridEnv(gym.Env):
         Returns:
             torch.Tensor: The difference between the current grid and the target grid.
         """
-        return self.observations["grid"] - self.observations["target"]
+        return (self.observations["grid"] - self.observations["target"]).to(self.device)
 
     def episode_terminated(self, submission):
         diff = self.get_difference()
@@ -241,7 +243,9 @@ class ArcBatchGridEnv(gym.Env):
         """
         Computes the reward for the current grid of the environment.
         """
-        return torch.sum(self._reward_storage * self.discount_factor, dim=1)
+        return torch.tensor(
+            torch.sum(self._reward_storage * self.discount_factor, dim=1).cpu().numpy()
+        ).to(self.device)
 
     @property
     def state(self):
@@ -275,10 +279,10 @@ class ArcBatchGridEnv(gym.Env):
                 }
             )
             return state
-        return self.state
+        return self.state.to(self.device)
 
     def step(self, actions: list):
-        if self.action_space.contains(actions.numpy()):
+        if self.action_space.contains(actions.cpu().numpy()):
             self.last_grid = self.observations["grid"].clone()
             logger.debug("Actions are valid")
             # Update the grid with the action.
