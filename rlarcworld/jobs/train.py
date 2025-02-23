@@ -1,6 +1,7 @@
 import os
 import argparse
 import yaml
+import json
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -49,10 +50,17 @@ def check_args(args):
 
 
 def train_d4pg(config_key, args):
+    logger.info(f"D4PG train configuration: \n{json.dumps(args, indent=4)}")
     check_args(args)
     path_uri = os.environ["GCP_STORAGE_URI"]
+    logger.info(
+        f"TensorBoard log directory: {os.path.join(path_uri, 'tensorboard_runs', config_key)}"
+    )
     tb_writer = SummaryWriter(
         log_dir=os.path.join(path_uri, "tensorboard_runs", config_key)
+    )
+    logger.info(
+        f"Saved models directory: {os.path.join(path_uri, 'saved_models', config_key)}"
     )
     models_path = os.path.join(path_uri, "saved_models", config_key)
     # Load Datasets
@@ -115,6 +123,7 @@ def train_d4pg(config_key, args):
     policy_lr = lambda t: args["policy_lr"] * (0.1 ** (t // 100000))
     critic_lr = lambda t: args["critic_lr"] * (0.1 ** (t // 100000))
     SummaryWriter(log_dir="runs/test_validation_d4pg")
+
     d4pg = D4PG(
         env=env,
         train_samples=train_samples,
