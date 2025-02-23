@@ -21,5 +21,5 @@ RUN poetry install
 EXPOSE 6006
 
 # Set entrypoint (change train.py to your script)
-ENTRYPOINT ["poetry", "run", "python", "train.py"]
+ENTRYPOINT ["poetry", "run", "python", "rlarcworld/jobs/train.py"]
 

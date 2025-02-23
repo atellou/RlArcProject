@@ -1,0 +1,25 @@
+services:
+  rl_train_job:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - type: bind
+        source: ./
+        target: /app
+      - type: bind
+        source: $HOME/.config/gcloud/
+        target: /root/.config/gcloud
+        read_only: true
+    working_dir: /app
+    entrypoint: ["bash", "-c"]
+    command: "python3"
+    tty: true
+    stdin_open: true
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - CLOUDSDK_CONFIG=/root/.config/gcloud
+      - GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT
+      - REGION=$GCP_REGION
+    ports:
+      - "6006:6006"

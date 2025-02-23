@@ -77,6 +77,7 @@ class D4PG:
             tb_writer (SummaryWriter, optional): TensorBoard writer for logging
             history_file (str, optional): Path to save training history
             extras_hparams (dict, optional): Dictionary of extra hyperparameters to log
+            save_path (str, optional): Path to save model checkpoints
 
         Methods:
             step(): Performs a single environment step using current policy
