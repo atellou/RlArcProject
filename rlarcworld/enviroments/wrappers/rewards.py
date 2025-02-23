@@ -21,6 +21,21 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         v_min: int = None,
         v_max: int = None,
     ):
+        """
+        Initialize the PixelAwareRewardWrapper.
+
+        Args:
+            env (gym.Env): Environment to wrap.
+            max_penality (float, optional): Maximum penalty for the reward. Defaults to -1.0.
+            n_steps (int, optional): Number of steps in the reward computation. Defaults to 1.
+            gamma (float, optional): Discount factor in the reward computation. Defaults to 1.0.
+            apply_clamp (bool, optional): Whether to apply clamping to the reward. Defaults to False.
+            v_min (int, optional): Minimum value for clamping. Defaults to None.
+            v_max (int, optional): Maximum value for clamping. Defaults to None.
+
+        Raises:
+            AssertionError: If max_penality is not a float, n_steps is not a positive int, gamma is not a positive float lower or equal than 1.0, apply_clamp is not a bool, v_max is not None or an int, v_min is not None or an int or v_min >= v_max when apply_clamp is True.
+        """
         super().__init__(env)
         assert isinstance(max_penality, float), "max_penality must be a float"
         assert (
@@ -44,6 +59,17 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.device = self.get_wrapper_attr("device")
 
     def reset(self, *, seed=None, options=None):
+        """
+        Resets the environment and initializes reward-related attributes.
+
+        Args:
+            seed (int, optional): Seed for random number generation. Defaults to None.
+            options (dict, optional): Additional options for reset, including the batch of samples. Defaults to None.
+
+        Returns:
+            The initial observation and information from the parent environment's reset method.
+        """
+
         reset = super().reset(seed=seed, options=options)
         self.batch_size = options["batch"]["input"].shape[0]
         # Reward attributes
@@ -66,6 +92,14 @@ class PixelAwareRewardWrapper(gym.Wrapper):
     ):
         """
         Computes the reward for the current grid of the environment.
+
+        Args:
+            apply_clamp (bool, optional): Whether to clamp the reward between v_min and v_max. Defaults to False.
+            v_min (int, optional): Minimum value for clamping. Defaults to None.
+            v_max (int, optional): Maximum value for clamping. Defaults to None.
+
+        Returns:
+            torch.Tensor: The computed reward
         """
         assert isinstance(apply_clamp, bool), "apply_clamp must be a bool"
         if apply_clamp:
@@ -97,14 +131,24 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             ).to(self.device)
 
     def get_state(self, **kwargs):
+        """
+        Returns the state of the environment.
+
+        Args:
+            **kwargs: Additional keyword arguments passed to the parent environment's get_state method.
+
+        Returns:
+            The state of the environment, which is a dictionary containing the current grid, last grid, initial grid, index, terminated, and examples.
+        """
         return self.env.get_state(**kwargs)
 
     def get_difference(self, binary: bool = True):
         """
-        Compute the difference between the current grid and the target grid and return ones for differences.
+        Computes the difference between the current grid and the target grid.
 
         Args:
-            binary (bool): Whether to return a binary difference or the actual difference.
+            binary (bool, optional): Whether to return the difference as a binary tensor (True) or as a numerical tensor (False). Defaults to True.
+
         Returns:
             torch.Tensor: The difference between the current grid and the target grid.
         """
