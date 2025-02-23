@@ -32,12 +32,11 @@ logger = logging.getLogger(__name__)
 class ArcActorNetwork(nn.Module):
     """Actor network for the ARC environment."""
 
-    def __init__(self, size: int, color_values, epsilon: float = 1e-6):
+    def __init__(self, size: int, color_values: int, embedding_size=128):
         """
         Args:
             size (int): The size of the grid.
             color_values (int): The number of colors.
-            epsilon (float, optional): The epsilon value for the GRU. Defaults to 1e-6.
         """
         super(ArcActorNetwork, self).__init__()
         self.size = size
@@ -45,35 +44,38 @@ class ArcActorNetwork(nn.Module):
         self.inputs_layers = torch.nn.ModuleDict(
             {
                 "last_grid": CnnPreTrainedModule(
-                    embedding_size=128,
+                    embedding_size=embedding_size,
                 ),
                 "grid": CnnPreTrainedModule(
-                    embedding_size=128,
+                    embedding_size=embedding_size,
                 ),
                 "examples": CnnAttention(
-                    embedding_size=128, nheads=4, dropout=0.2, bias=True
+                    embedding_size=embedding_size, nheads=4, dropout=0.2, bias=True
                 ),
                 "initial": CnnPreTrainedModule(
-                    embedding_size=128,
+                    embedding_size=embedding_size,
                 ),
                 "index": CnnPreTrainedModule(
-                    embedding_size=128,
+                    embedding_size=embedding_size,
                 ),
                 # "terminated": torch.nn.Linear(1, 1),
             }
         )
 
-        self.cross_attention_classifier = CrossAttentionClassifier(
-            output_classes={
-                "x_location": self.size,
-                "y_location": self.size,
-                "color_values": self.color_values,
-                "submit": 2,
-            },
-            embedding_size=128,
-            nheads=4,
-            dropout=0.2,
-            bias=True,
+        self.cross_attention_classifier = torch.nn.Sequential(
+            nn.LayerNorm(embedding_size),
+            CrossAttentionClassifier(
+                output_classes={
+                    "x_location": self.size,
+                    "y_location": self.size,
+                    "color_values": self.color_values,
+                    "submit": 2,
+                },
+                embedding_size=128,
+                nheads=4,
+                dropout=0.2,
+                bias=True,
+            ),
         )
 
         self.config = enable_cuda()
@@ -175,28 +177,22 @@ class ArcActorNetwork(nn.Module):
         # Brodcast the state
         for key, value in state.items():
             value = value.to(self.device)
-            try:
-                if key == "index":
-                    max_value = torch.max(value)
-                    value = value.float() if max_value == 0 else value / max_value
-                elif key != "terminated":
-                    value = self.scale_arc_grids(value)
+            if key == "index":
+                max_value = torch.max(value)
+                value = value.float() if max_value == 0 else value / max_value
+            elif key != "terminated":
+                value = self.scale_arc_grids(value)
 
-                if self.config.get("use_checkpointing"):
-                    state[key] = checkpoint.checkpoint(
-                        self.inputs_layers[key], value, use_reentrant=False
-                    )
-                else:
-                    state[key] = self.inputs_layers[key](value)
-
-                if key != "examples":
-                    state[key] = state[key].unsqueeze(1)
-                assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
-            except Exception as e:
-                logger.error(
-                    f'Error in Actor "{key}" layer, Shape: {value.shape}, and Dtype: {value.dtype}'
+            if self.config.get("use_checkpointing"):
+                state[key] = checkpoint.checkpoint(
+                    self.inputs_layers[key], value, use_reentrant=False
                 )
-                raise e
+            else:
+                state[key] = self.inputs_layers[key](value)
+
+            if key != "examples":
+                state[key] = state[key].unsqueeze(1)
+            assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
 
         # Concatenate flattned states
         state = torch.cat(
@@ -218,11 +214,5 @@ class ArcActorNetwork(nn.Module):
                 for action_type, logits in state.items()
             },
         )
-        self.output_val(state)
-
-        for key in state.keys():
-            assert not torch.isnan(
-                state[key]
-            ).any(), f"NaN detected in actor output for key {key}!"
 
         return state.auto_batch_size_()

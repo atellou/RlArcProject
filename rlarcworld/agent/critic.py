@@ -18,8 +18,15 @@ algorithm.
 
 import os
 from typing import Dict
+import copy
 import torch
+import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
+from rlarcworld.agent.nn_modules import (
+    CnnPreTrainedModule,
+    CnnAttention,
+    CrossAttentionClassifier,
+)
 from rlarcworld.utils import enable_cuda
 
 import logging
@@ -45,7 +52,7 @@ class ArcCriticNetwork(torch.nn.Module):
         num_atoms: Dict[str, int],
         v_min: Dict[str, int],
         v_max: Dict[str, int],
-        test: bool = False,
+        embedding_size: int = 128,
     ):
         super(ArcCriticNetwork, self).__init__()
         self.num_atoms = num_atoms
@@ -72,43 +79,43 @@ class ArcCriticNetwork(torch.nn.Module):
             "submit",
             "terminated",
         ]
+
+        self.actions_mlp = torch.nn.Sequential(
+            torch.nn.Linear(
+                (self.size * 2) + self.color_values + 3, embedding_size * 2
+            ),
+            torch.nn.ReLU(),
+            torch.nn.Linear(embedding_size * 2, embedding_size),
+        )
         self.inputs_layers = torch.nn.ModuleDict(
             {
-                "last_grid": torch.nn.Conv2d(
-                    in_channels=1, out_channels=1, kernel_size=3
+                "last_grid": CnnPreTrainedModule(
+                    embedding_size=embedding_size,
                 ),
-                "grid": torch.nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3),
-                "examples": torch.nn.Conv3d(
-                    in_channels=10, out_channels=1, kernel_size=(1, 3, 3)
+                "grid": CnnPreTrainedModule(
+                    embedding_size=embedding_size,
                 ),
-                "initial": torch.nn.Conv2d(
-                    in_channels=1, out_channels=1, kernel_size=3
+                "examples": CnnAttention(
+                    embedding_size=embedding_size, nheads=4, dropout=0.2, bias=True
                 ),
-                "index": torch.nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3),
-                "x_location": torch.nn.Linear(self.size, 1),
-                "y_location": torch.nn.Linear(self.size, 1),
-                "color_values": torch.nn.Linear(self.color_values, 1),
-                "submit": torch.nn.Linear(2, 1),
-                "terminated": torch.nn.Linear(1, 1),
+                "initial": CnnPreTrainedModule(
+                    embedding_size=embedding_size,
+                ),
+                "index": CnnPreTrainedModule(
+                    embedding_size=embedding_size,
+                ),
             }
         )
 
-        self.linear1 = torch.nn.Linear(16469, 128)
-        self.gru = torch.nn.GRU(
-            input_size=128,
-            hidden_size=128,
-            num_layers=1,
-            batch_first=True,
-            bidirectional=True,
-        )
-        self.outputs_layers = torch.nn.ModuleDict(
-            {
-                reward_type: torch.nn.Linear(
-                    256,
-                    num_atoms,
-                )
-                for reward_type, num_atoms in self.num_atoms.items()
-            }
+        self.cross_attention_classifier = torch.nn.Sequential(
+            torch.nn.LayerNorm(embedding_size),
+            CrossAttentionClassifier(
+                output_classes=self.num_atoms,
+                embedding_size=128,
+                nheads=4,
+                dropout=0.2,
+                bias=True,
+            ),
         )
 
         self.to(self.device)
@@ -202,35 +209,52 @@ class ArcCriticNetwork(torch.nn.Module):
         self.input_val(state)
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
         state.update(action)
+
         # Brodcast the state
+        action_keys = torch.cat(
+            tuple(state.pop(k) for k in self.no_scale_keys),
+            dim=1,
+        ).to(self.device)
+        action_keys = self.actions_mlp(action_keys).unsqueeze(1)
+
+        # Grid inputs
         for key, value in state.items():
             value = value.to(self.device)
             if key == "index":
                 max_value = torch.max(value)
-                value = value if max_value == 0 else value / max_value
-            elif key not in self.no_scale_keys:
+                value = value.float() if max_value == 0 else value / max_value
+            else:
                 value = self.scale_arc_grids(value)
-            value = value.type(self.inputs_layers["index"].weight.dtype)
-            state[key] = self.inputs_layers[key](value)
-            state[key] = torch.relu(state[key])
-            state[key] = state[key].view(state[key].shape[0], -1)
-            assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
+
+            if self.config.get("use_checkpointing"):
+                state[key] = checkpoint.checkpoint(
+                    self.inputs_layers[key], value, use_reentrant=False
+                )
+            else:
+                state[key] = self.inputs_layers[key](value)
+
+            if key != "examples":
+                state[key] = state[key].unsqueeze(1)
 
         # Concatenate flattned states
         state = torch.cat(
-            tuple(state.values()),
+            [*tuple(state.values()), action_keys],
             dim=1,
         )
 
-        # Feed the state to the network
-        state = self.linear1(state)
-        state, _ = self.gru(state)
+        if self.config.get("use_checkpointing"):
+            state = checkpoint.checkpoint(
+                self.cross_attention_classifier, state, use_reentrant=False
+            )
+        else:
+            state = self.cross_attention_classifier(state)
 
+        # Apply softmax
         state = TensorDict(
             {
-                key: torch.softmax(layer(state), dim=-1)
-                for key, layer in self.outputs_layers.items()
-            }
+                action_type: torch.softmax(logits, dim=-1)
+                for action_type, logits in state.items()
+            },
         )
 
         return state.auto_batch_size_()

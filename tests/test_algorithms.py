@@ -213,7 +213,7 @@ class TestD4PG(unittest.TestCase):
         optimizer.zero_grad()
         loss.backward()
         for name, param in self.critic.named_parameters():
-            if param.grad is None:
+            if "base_model" not in name and param.grad is None:
                 raise ValueError(
                     f"Gradient not flowing in D4PG ArcActorNetwork for: {name}"
                 )
