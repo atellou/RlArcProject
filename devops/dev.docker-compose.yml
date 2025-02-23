@@ -1,11 +1,11 @@
 services:
   rl_train_job:
     build:
-      context: .
+      context: ../
       dockerfile: Dockerfile
     volumes:
       - type: bind
-        source: ./
+        source: ../
         target: /app
       - type: bind
         source: $HOME/.config/gcloud/
@@ -19,7 +19,7 @@ services:
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
       - CLOUDSDK_CONFIG=/root/.config/gcloud
-      - GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT
-      - REGION=$GCP_REGION
+    env_file:
+      - .env
     ports:
       - "6006:6006"

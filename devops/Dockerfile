@@ -9,8 +9,6 @@ ENV POETRY_VIRTUALENVS_CREATE=false
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="/root/.local/bin:$PATH"
 
-COPY poetry.lock pyproject.toml /code/
-
 # Copy project files
 COPY . /app
 

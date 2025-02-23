@@ -214,11 +214,32 @@ class D4PG:
                 "Parameters/EntropyCoef", self.entropy_coef, global_step=step
             )
             self.tb_writer.add_scalar("Parameters/Gamma", self.gamma, global_step=step)
+            self.tb_writer.add_scalar(
+                "Parameters/TargetUpdateFrequency",
+                self.target_update_frequency,
+                global_step=step,
+            )
             self.tb_writer.add_scalars(
                 "Parameters/LearningRate",
                 {
                     "Critic": self.critic_optimizer.param_groups[0]["lr"],
                     "Actor": self.actor_optimizer.param_groups[0]["lr"],
+                },
+                global_step=step,
+            )
+            self.tb_writer.add_scalars(
+                "Parameters/ReplayBuffer",
+                {
+                    "Alpha": (
+                        self.replay_buffer.storage.alpha
+                        if self.replay_buffer is not None
+                        else 0
+                    ),
+                    "Beta": (
+                        self.replay_buffer.storage.beta
+                        if self.replay_buffer is not None
+                        else 0
+                    ),
                 },
                 global_step=step,
             )

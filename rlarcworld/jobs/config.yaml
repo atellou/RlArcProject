@@ -1,18 +1,33 @@
-default:
+default: &default
   grid_size: 30
   color_values: 11
-  n_steps: 2
+  n_steps: 10
   gamma: 0.99
-  num_atoms: 51
-  v_min: -40
-  v_max: 2
+  num_atoms:
+    pixel_wise: 50
+    n_reward: 50
+    binary: 3
+  v_min: 
+    pixel_wise: 50
+    n_reward: 50
+    binary: 3
+  v_max: 
+    pixel_wise: 50
+    n_reward: 50
+    binary: 3
   batch_size: 32
+  # Replay buffer
   replay_buffer_size: 1000000
   target_update_frequency: 5
-  policy_lr: 0.001
+  warmup_buffer_ratio: 0.1
+  alpha: 0.6
+  beta: 0.4
+  # D4PG
+  policy_lr: 0.0001
   critic_lr: 0.001
-  alpha: 0.2
-  entropy_tau: 0.01
+  tau: 0.001
+  entropy_coef: 0.01
+  entropy_coef_decay: 0.995
   clip_grad_norm: 10.0
   num_samples: 1000
   num_workers: 4
@@ -20,22 +35,7 @@ default:
   seed: 42
 
 alternative:
+  <<: *default
   grid_size: 40
-  color_values: 12
-  n_steps: 3
-  gamma: 0.98
-  num_atoms: 52
-  v_min: -50
-  v_max: 3
-  batch_size: 64
-  replay_buffer_size: 2000000
-  target_update_frequency: 10
-  policy_lr: 0.01
-  critic_lr: 0.01
-  alpha: 0.3
-  entropy_tau: 0.02
-  clip_grad_norm: 20.0
-  num_samples: 2000
-  num_workers: 8
-  device: cuda
-  seed: 43
+  critic:
+    num_atoms: 52

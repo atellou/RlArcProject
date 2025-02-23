@@ -17,6 +17,7 @@ tensorboard = "^2.19.0"
 standard-imghdr = "^3.13.0"
 torchvision = "^0.21.0"
 pyyaml = "^6.0.2"
+google-cloud-aiplatform = "^1.81.0"
 
 
 [tool.poetry.group.dev.dependencies]

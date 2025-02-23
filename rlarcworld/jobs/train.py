@@ -22,7 +22,27 @@ def load_args_from_yaml(file_path, key):
     return args_dict[key]
 
 
+def check_args(args):
+    assert args.grid_size == 30
+    assert args.color_values == 11
+    if args.n_steps > 1:
+        assert args["num_atoms"].get("n_reward") is not None
+        assert args["v_min"].get("n_reward") is not None
+        assert args["v_max"].get("n_reward") is not None
+    else:
+        assert args["num_atoms"].get("n_reward") is None
+        assert args["v_min"].get("n_reward") is None
+        assert args["v_max"].get("n_reward") is None
+    assert args["num_atoms"].get("binary") is not None
+    assert args["v_min"].get("binary") is not None
+    assert args["v_max"].get("binary") is not None
+    assert args["num_atoms"].get("pixel_wise") is not None
+    assert args["v_min"].get("pixel_wise") is not None
+    assert args["v_max"].get("pixel_wise") is not None
+
+
 def train_d4pg(args):
+    check_args(args)
     # Set up environment
     env = ArcBatchGridEnv(
         grid_size=args.grid_size,
@@ -51,9 +71,8 @@ def train_d4pg(args):
     )
 
     # Set up replay buffer
-    S = args.replay_buffer_size
-    sampler = PrioritizedSampler(S, 1.1, 1.0)
-    storage = LazyMemmapStorage(S)
+    sampler = PrioritizedSampler(args.replay_buffer_size, 1.1, 1.0)
+    storage = LazyMemmapStorage(args.replay_buffer_size)
     rb = TensorDictReplayBuffer(storage=storage, sampler=sampler)
 
     # Set up D4PG algorithm
