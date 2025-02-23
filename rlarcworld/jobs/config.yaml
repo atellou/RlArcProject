@@ -1,41 +1,138 @@
 default: &default
+  # Environment
   grid_size: 30
   color_values: 11
-  n_steps: 10
+  batch_size: 32
+  n_steps: 20
+  max_penality: -0.1
   gamma: 0.99
   num_atoms:
-    pixel_wise: 50
-    n_reward: 50
+    pixel_wise: 60
+    n_reward: 120
     binary: 3
   v_min: 
-    pixel_wise: 50
-    n_reward: 50
-    binary: 3
+    pixel_wise: -50
+    n_reward: -100
+    binary: 0
   v_max: 
-    pixel_wise: 50
-    n_reward: 50
-    binary: 3
-  batch_size: 32
+    pixel_wise: 10
+    n_reward: 20
+    binary: 1
   # Replay buffer
   replay_buffer_size: 1000000
-  target_update_frequency: 5
   warmup_buffer_ratio: 0.1
   alpha: 0.6
   beta: 0.4
   # D4PG
   policy_lr: 0.0001
   critic_lr: 0.001
-  tau: 0.001
   entropy_coef: 0.01
   entropy_coef_decay: 0.995
-  clip_grad_norm: 10.0
-  num_samples: 1000
-  num_workers: 4
-  device: cuda
-  seed: 42
+  tau: 0.001
+  target_update_frequency: 10
+  carsm: false
+  # Fit
+  max_epochs: 1
+  max_steps: 1000000
+  validation_steps_frequency: 1000
+  validation_steps_per_train_step: 100
+  validation_steps_per_episode: 1000
+  logger_frequency: 1000
+  grads_logger_frequency: 100000
+  tb_writer_tag: "Train"
+  validation_tb_writer_tag: "Validation"
+  merge_graphs: true
 
-alternative:
+test: 
   <<: *default
-  grid_size: 40
-  critic:
-    num_atoms: 52
+  batch_size: 32
+  grid_size: 30
+  color_values: 11
+  n_steps: 5
+  max_penality: -0.1
+  gamma: 0.99
+  num_atoms:
+    pixel_wise: 60
+    n_reward: 120
+    binary: 3
+  v_min: 
+    pixel_wise: -50
+    n_reward: -100
+    binary: 0
+  v_max: 
+    pixel_wise: 10
+    n_reward: 20
+    binary: 1
+  # Replay buffer
+  replay_buffer_size: 1000000
+  warmup_buffer_ratio: 0.00001
+  alpha: 0.6
+  beta: 0.4
+  # D4PG
+  policy_lr: 0.0001
+  critic_lr: 0.001
+  entropy_coef: 0.01
+  entropy_coef_decay: 0.995
+  tau: 0.001
+  target_update_frequency: 2
+  carsm: false
+  # Fit
+  max_steps: 20
+  validation_steps_frequency: 5
+  validation_steps_per_train_step: 10
+  validation_steps_per_episode: 15
+  logger_frequency: 5
+  grads_logger_frequency: 100000
+  tb_writer_tag: "TestTrain"
+  validation_tb_writer_tag: "TestValidation"
+  merge_graphs: true
+
+kldiv_loss_n_steps_15:
+  <<: *default
+  n_steps: 15
+
+kldiv_loss_n_steps_10:
+  <<: *default
+  n_steps: 10
+
+kldiv_loss_n_steps_1:
+  <<: *default
+  n_steps: 1
+  num_atoms:
+    pixel_wise: 60
+    binary: 3
+  v_min: 
+    pixel_wise: -50
+    binary: 0
+  v_max: 
+    pixel_wise: 10
+    binary: 1
+
+default_carsm_loss:
+  <<: *default
+  carsm: true
+
+carsm_loss_n_steps_15:
+  <<: *default
+  n_steps: 15
+  carsm: true
+
+carsm_loss_n_steps_10:
+  <<: *default
+  n_steps: 10
+  carsm: true
+
+carsm_loss_n_steps_1:
+  <<: *default
+  n_steps: 1
+  carsm: true
+  num_atoms:
+    pixel_wise: 60
+    binary: 3
+  v_min: 
+    pixel_wise: -50
+    binary: 0
+  v_max: 
+    pixel_wise: 10
+    binary: 1
+  

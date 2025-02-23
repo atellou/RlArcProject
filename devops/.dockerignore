@@ -1,0 +1,5 @@
+./**/dataset/** */
+logs/
+.git
+.cache
+__pycache__

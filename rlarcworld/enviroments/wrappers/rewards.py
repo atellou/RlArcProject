@@ -87,9 +87,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self._last_reward = self._last_reward.to(self.device)
         return reset
 
-    def n_step_reward(
-        self, apply_clamp: bool = False, v_min: int = None, v_max: int = None
-    ):
+    def n_step_reward(self, v_min: int = None, v_max: int = None):
         """
         Computes the reward for the current grid of the environment.
 
@@ -101,8 +99,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             torch.Tensor: The computed reward
         """
-        assert isinstance(apply_clamp, bool), "apply_clamp must be a bool"
-        if apply_clamp:
+        if isinstance(v_min, int) and isinstance(v_max, int):
             return torch.tensor(
                 torch.clamp(
                     torch.sum(self._reward_storage * self.discount_factor, dim=1),

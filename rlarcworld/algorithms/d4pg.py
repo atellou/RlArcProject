@@ -29,8 +29,8 @@ class D4PG:
         actor: torch.nn.Module,
         critic: torch.nn.Module,
         batch_size: int,
-        learning_rate_actor: float = 3e-4,
-        learning_rate_critic: float = 3e-3,
+        policy_lr: float = 3e-4,
+        critic_lr: float = 3e-3,
         validation_samples: DataLoader = None,
         replay_buffer: ReplayBuffer = None,
         warmup_buffer_ratio: float = 0.2,
@@ -62,8 +62,8 @@ class D4PG:
             actor (torch.nn.Module): Actor network that outputs action probabilities
             critic (torch.nn.Module): Critic network that outputs value distributions
             batch_size (int): Size of batches for training
-            learning_rate_actor (float, optional): Learning rate for actor network. Defaults to 3e-4
-            learning_rate_critic (float, optional): Learning rate for critic network. Defaults to 3e-3
+            policy_lr (float, optional): Learning rate for actor network. Defaults to 3e-4
+            critic_lr (float, optional): Learning rate for critic network. Defaults to 3e-3
             validation_samples (DataLoader, optional): DataLoader for validation samples
             replay_buffer (ReplayBuffer, optional): Buffer for experience replay
             warmup_buffer_ratio (float, optional): Ratio of buffer to fill before training. Defaults to 0.2
@@ -111,8 +111,8 @@ class D4PG:
         ), "Replay buffer size is too small for the given batch size. Must grater or equal to batch_size"
 
         # Store parameters
-        self.learning_rate_actor = learning_rate_actor
-        self.learning_rate_critic = learning_rate_critic
+        self.learning_rate_actor = policy_lr
+        self.learning_rate_critic = critic_lr
         self.n_steps = n_steps
         self.gamma = gamma
         self.carsm = carsm
@@ -182,10 +182,8 @@ class D4PG:
         self.critic_target.eval()
 
         # Create optimizers
-        self.actor_optimizer = optim.AdamW(actor.parameters(), lr=learning_rate_actor)
-        self.critic_optimizer = optim.AdamW(
-            critic.parameters(), lr=learning_rate_critic
-        )
+        self.actor_optimizer = optim.AdamW(actor.parameters(), lr=policy_lr)
+        self.critic_optimizer = optim.AdamW(critic.parameters(), lr=critic_lr)
 
         # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
@@ -663,7 +661,19 @@ class D4PG:
             ).auto_batch_size_()
             next_state = env.get_state(unsqueeze=1)
             if self.n_steps > 1:
-                reward["n_reward"] = env.n_step_reward().unsqueeze(-1).to(self.device)
+                if self.critic.v_min.get("n_reward") is not None:
+                    reward["n_reward"] = (
+                        env.n_step_reward(
+                            v_min=self.critic.v_min.get("n_reward"),
+                            v_max=self.critic.v_max.get("n_reward"),
+                        )
+                        .unsqueeze(-1)
+                        .to(self.device)
+                    )
+                else:
+                    reward["n_reward"] = (
+                        env.n_step_reward().unsqueeze(-1).to(self.device)
+                    )
 
         return (
             TensorDict(
@@ -925,33 +935,20 @@ class D4PG:
         merge_graphs=True,
     ):
         """
-        Main training loop that handles training and validation.
+        Train the model using the provided samples.
 
         Args:
-            epochs (int, optional): Number of training epochs. Defaults to 1.
-            max_steps (int, optional): Maximum steps per episode. -1 means no limit. Defaults to -1.
-            validation_steps_frequency (int, optional): Number of training steps between validation runs.
-                -1 means no validation. Defaults to -1.
-            validation_steps_per_train_step (int, optional): Number of validation steps per training step.
-                -1 means run until episode completion. Defaults to -1.
-            validation_steps_per_episode (int, optional): Maximum validation steps per episode.
-                -1 means no limit. Defaults to -1.
-            logger_frequency (int, optional): Steps between logging training metrics. Defaults to 1000.
-            grads_logger_frequency (int, optional): Steps between logging gradients. Defaults to 1000000.
-            tb_writer_tag (str, optional): Tag for training metrics in TensorBoard. Defaults to "Train".
-            validation_tb_writer_tag (str, optional): Tag for validation metrics in TensorBoard.
-                Defaults to "Validation".
-            merge_graphs (bool, optional): Whether to merge training and validation graphs in TensorBoard.
-                Defaults to True.
+            epochs (int, optional): Number of epochs to train. Defaults to 1.
+            max_steps (int, optional): Maximum number of steps per episode. -1 means no limit. Defaults to -1
+            validation_steps_frequency (int, optional): Frequency of validation steps. -1 means no validation. Defaults to -1
+            validation_steps_per_train_step (int, optional): Number of validation steps per train step. -1 means all steps. Defaults to -1
+            validation_steps_per_episode (int, optional): Number of validation steps per episode. -1 means all steps. Defaults to -1
+            logger_frequency (int, optional): Logging frequency. Defaults to 1000
+            grads_logger_frequency (int, optional): Gradient logging frequency. Defaults to 1000000
+            tb_writer_tag (str, optional): Tag for TensorBoard logging. Defaults to "Train"
+            validation_tb_writer_tag (str, optional): Tag for TensorBoard validation logging. Defaults to "Validation"
+            merge_graphs (bool, optional): Whether to merge graphs in TensorBoard. Defaults to True
 
-        The training loop:
-        1. Samples transitions from environment
-        2. Stores transitions in replay buffer if enabled
-        3. Updates actor and critic networks
-        4. Periodically:
-            - Updates target networks
-            - Runs validation if enabled
-            - Logs metrics to TensorBoard
         """
         global_train_step = 0
         for epoch_n in range(epochs):

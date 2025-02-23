@@ -2,7 +2,7 @@ services:
   rl_train_job:
     build:
       context: ../
-      dockerfile: Dockerfile
+      dockerfile: devops/Dockerfile
     volumes:
       - type: bind
         source: ../

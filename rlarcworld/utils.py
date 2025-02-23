@@ -193,3 +193,16 @@ class TorchQueue(torch.Tensor):
         return self[0], TorchQueue(
             self[1:], queue_size=self._queue_size, queue_dim=self._queue_dim
         )
+
+
+class BetaScheduler:
+    def __init__(self, start, end, steps):
+        self.start = start
+        self.end = end
+        self.steps = steps
+
+    def beta_scheduler(
+        self,
+        step,
+    ):
+        return min(self.end, self.start + (self.end - self.start) * step / self.end)
