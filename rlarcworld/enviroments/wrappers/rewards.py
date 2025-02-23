@@ -45,7 +45,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
     def reset(self, *, seed=None, options=None):
         reset = super().reset(seed=seed, options=options)
-        self.batch_size = self.get_wrapper_attr("batch_size")
+        self.batch_size = options["batch"]["input"].shape[0]
         # Reward attributes
         self.discount_factor = torch.ones((self.batch_size, self.n_steps)) * (
             self.gamma ** torch.arange(1, self.n_steps + 1)
@@ -195,6 +195,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         obs, _, terminated, truncated, info = self.env.step(actions)
         self.grid_diffs = self.get_difference()
         reward = self.reward(self.last_diffs, self.grid_diffs, actions["submit"])
-        self._reward_storage = self._reward_storage.push(reward.unsqueeze(1))
+        self._reward_storage = self._reward_storage.push(reward.unsqueeze(-1))
         self._last_reward = reward
         return obs, reward, terminated, truncated, info

@@ -30,7 +30,7 @@ def enable_cuda(use_amp=True, use_checkpointing=True):
     config = {
         "use_amp": use_amp and amp_available,
         "use_checkpointing": use_checkpointing and gradient_checkpointing_enabled,
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "device": "cuda" if torch.cuda.is_available() and use_amp else "cpu",
     }
 
     return config

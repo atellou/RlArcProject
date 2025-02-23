@@ -44,7 +44,7 @@ class D4PG:
         tb_writer: SummaryWriter = None,
         history_file: str = None,
         extras_hparams: dict = None,
-        amp_scaler=None,
+        save_path: str = None,
     ):
         """
         D4PG (Distributed Distributional Deep Deterministic Policy Gradient) implementation.
@@ -136,15 +136,17 @@ class D4PG:
 
         if self.tb_writer is not None:
             self.writer_base_dir = tb_writer.log_dir
-            if history_file is None:
-                history_file = self.writer_base_dir
+            if save_path is None:
+                save_path = self.writer_base_dir
         else:
             self.writer_base_dir = None
 
-        if history_file is not None:
-            self.history_file = history_file
-        elif self.writer_base_dir is not None:
-            self.history_file = self.writer_base_dir
+        if save_path is not None:
+            self.save_path = save_path
+        else:
+            self.save_path = None
+
+        self.history_file = history_file
 
         if self.replay_buffer is None:
             self.batch_size = train_samples.batch_size
@@ -448,14 +450,14 @@ class D4PG:
         Args:
             batch_size (int): The size of the batch to sample.
             state (TensorDict): The state of the environment.
-            actions (torch.Tensor): The actions taken by the actor.
+            actions (TensorDict): The actions taken by the actor.
             reward (TensorDict): The rewards received from the environment.
             next_state (TensorDict): The next state of the environment.
 
         Returns:
             TensorDict or None: A batch of transitions if the replay buffer is full, otherwise None.
         """
-        sampled_batch_size = self.train_samples.batch_size
+        sampled_batch_size = next_state["terminated"].shape[0]
         priority = (
             torch.ones(sampled_batch_size)
             if len(self.replay_buffer.storage) == 0
@@ -689,6 +691,7 @@ class D4PG:
             options={"batch": samples["task"], "examples": samples["examples"]},
             seed=seed,
         )
+
         done = False
         step_number = 0
         while not done and (max_steps <= -1 or max_steps >= step_number):
@@ -939,6 +942,9 @@ class D4PG:
                 )
             ):
                 global_train_step += 1
+                logger.info(
+                    f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
+                )
                 self.apply_decay()
                 self.log_parameters(global_train_step)
                 # Store the experience in the replay buffer
@@ -964,7 +970,7 @@ class D4PG:
                         .to(self.device)
                     )
                 else:
-                    return
+                    batch = None
 
                 if batch is None:
                     continue
@@ -1008,7 +1014,6 @@ class D4PG:
                         self.tb_writer.add_scalars(path, value, global_train_step)
                     else:
                         self.tb_writer.add_scalar(path, value, global_train_step)
-
                 if (
                     validation_steps_frequency > 0
                     and step_number % validation_steps_frequency == 0
@@ -1043,10 +1048,14 @@ class D4PG:
                             initial_episode_number = copy.copy(val_episode_number)
                             break
 
+                logger.info("Step done")
+
                 if step_number % self.target_update_frequency == 0:
+                    logger.info("Updating networks")
                     self.update_target_networks(tau=self.tau)
 
         if hasattr(self, "validation_env"):
+            logger.info("Running last validation process")
             for (
                 val_episode_number,
                 val_step_number,
@@ -1094,3 +1103,18 @@ class D4PG:
             )
             self.tb_writer.flush()
             self.tb_writer.close()
+
+        if self.save_path is not None:
+            self.save_model(self.save_path)
+
+    def save_model(self, path):
+        torch.save(self.actor.state_dict(), os.path.join(path, "actor.pth"))
+        torch.save(self.critic.state_dict(), os.path.join(path, "critic.pth"))
+
+    def load_model(self, path):
+        self.actor.load_state_dict(
+            torch.load(os.path.join(path, "actor.pth"), map_location=self.device)
+        )
+        self.critic.load_state_dict(
+            torch.load(os.path.join(path, "critic.pth"), map_location=self.device)
+        )

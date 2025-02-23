@@ -47,7 +47,12 @@ class ArcActionSpace:
 class ArcBatchGridEnv(gym.Env):
 
     def __init__(
-        self, size: int, color_values: int, n_steps: int = 1, gamma: float = 1.0
+        self,
+        size: int,
+        color_values: int,
+        n_steps: int = 1,
+        gamma: float = 1.0,
+        **kwargs
     ):
         assert isinstance(size, int) and size > 0, "size must be a positive int"
         assert (
@@ -60,7 +65,7 @@ class ArcBatchGridEnv(gym.Env):
             isinstance(gamma, float) and gamma > 0 and gamma <= 1
         ), "gamma must be a positive float lower or equal than 1.0"
 
-        self.device = enable_cuda().get("device")
+        self.device = enable_cuda(**kwargs).get("device")
 
         # N-step attributes
         self.n_steps = n_steps
@@ -197,7 +202,6 @@ class ArcBatchGridEnv(gym.Env):
 
         self.information = self.information.to(self.device)
         self.observations = self.observations.to(self.device)
-
         return self.observations, self.information
 
     def get_difference(self):
@@ -345,6 +349,7 @@ class ArcBatchGridEnv(gym.Env):
 
 
 logger.info("Registering gymnasium environment")
+
 gym.envs.registration.register(
     id="ArcBatchGrid-v0",
     entry_point="rlarcworld.enviroments.arc_batch_grid_env:ArcBatchGridEnv",

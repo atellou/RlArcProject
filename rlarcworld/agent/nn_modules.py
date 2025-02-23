@@ -18,7 +18,7 @@ class CnnPreTrainedModule(nn.Module):
         model_weights="EfficientNet_B0_Weights.DEFAULT",
         freeze: str = "ALL",
         do_not_freeze: str = None,
-        embedding_size=256,
+        embedding_size=128,
     ):
         super(CnnPreTrainedModule, self).__init__()
 
@@ -200,12 +200,12 @@ class MultiHeadAttention(nn.Module):
 
 
 class CnnAttention(nn.Module):
-    def __init__(self, embedding_size=256, nheads=4, dropout=0.0, bias=True):
+    def __init__(self, embedding_size=128, nheads=4, dropout=0.0, bias=True):
         """
         Initializes the CnnAttention module.
 
         Args:
-            embedding_size (int, optional): The size of the embedding for the Cnn modules and the multi-head attention. Defaults to 256.
+            embedding_size (int, optional): The size of the embedding for the Cnn modules and the multi-head attention. Defaults to 128.
             nheads (int, optional): The number of attention heads in the multi-head attention module. Defaults to 8.
             dropout (float, optional): The dropout probability for the multi-head attention module. Defaults to 0.0.
             bias (bool, optional): Whether to include a bias term in the multi-head attention module. Defaults to True.
@@ -253,7 +253,7 @@ class CrossAttentionClassifier(nn.Module):
     def __init__(
         self,
         output_classes: dict,
-        embedding_size=256,
+        embedding_size=128,
         nheads=4,
         dropout=0.0,
         bias=True,
@@ -263,7 +263,7 @@ class CrossAttentionClassifier(nn.Module):
 
         Args:
             output_classes (dict): A dictionary mapping output types to the number of classes in each type.
-            embedding_size (int, optional): The size of the embedding dimension. Defaults to 256.
+            embedding_size (int, optional): The size of the embedding dimension. Defaults to 128.
             num_heads (int, optional): The number of attention heads in the multi-head attention module. Defaults to 4.
             dropout (float, optional): The dropout probability for the multi-head attention module. Defaults to 0.0.
             bias (bool, optional): Whether to include a bias term in the multi-head attention module. Defaults to True.
@@ -274,7 +274,7 @@ class CrossAttentionClassifier(nn.Module):
         # Learnable query vector (1 per sample)
         self.query = nn.Parameter(
             torch.randn(1, 1, embedding_size)
-        )  # Shape: [1, 1, 256]
+        )  # Shape: [1, 1, 128]
 
         # Multihead cross-attention
         self.cross_attention = MultiHeadAttention(
@@ -314,15 +314,15 @@ class CrossAttentionClassifier(nn.Module):
         """
         batch_size = embeddings.size(0)
 
-        # Expand query to match batch size: [batch_size, 1, 256]
+        # Expand query to match batch size: [batch_size, 1, 128]
         query = self.query.expand(batch_size, -1, -1)
 
         # Apply cross-attention (query attends to the embeddings)
         attended_output = self.cross_attention(
             query, embeddings, embeddings
-        )  # Shape: [batch_size, 1, 256]
+        )  # Shape: [batch_size, 1, 128]
 
-        # Remove the sequence dimension (1) -> [batch_size, 256]
+        # Remove the sequence dimension (1) -> [batch_size, 128]
         attended_output = attended_output.squeeze(1)
 
         # Pass through classifier

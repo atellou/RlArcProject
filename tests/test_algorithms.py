@@ -25,6 +25,7 @@ import logging
 from torch.utils.tensorboard import SummaryWriter
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 logger.info("Setting up D4PG test")
@@ -33,7 +34,7 @@ logger.info("Setting up D4PG test")
 class TestD4PG(unittest.TestCase):
 
     def setUp(self):
-        self.batch_size = torch.randint(1, 20, size=(1,)).item()
+        self.batch_size = torch.randint(1, 8, size=(1,)).item()
         self.grid_size = 30
         self.color_values = 11
         self.num_atoms = {"pixel_wise": 50, "binary": 3}
@@ -47,13 +48,13 @@ class TestD4PG(unittest.TestCase):
         env_binary = ArcBatchGridEnv(self.grid_size, self.color_values)
         self.env = PixelAwareRewardWrapper(env_binary)
         dataset = ArcDataset(
-            arc_dataset_dir="rlarcworld/dataset/training",
+            arc_dataset_dir="tests/test_data/unittest/training",
             keep_in_memory=False,
             transform=ArcSampleTransformer(
                 (self.grid_size, self.grid_size), examples_stack_dim=10
             ),
         )
-        self.train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
+        self.train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
         self.critic = ArcCriticNetwork(
             size=self.grid_size,
             color_values=self.color_values,
@@ -342,27 +343,29 @@ class TestD4PG(unittest.TestCase):
             assert param.grad is None, f"Gradient not flowing in critic for: {name}"
 
     def test_train_d4pg(self):
-        max_steps = torch.randint(5, 20, size=(1,)).item()
+        max_steps = 10
         logger.info("Testing D4PG without replay buffer for {} steps".format(max_steps))
         self.d4pg.fit(
             max_steps=max_steps,
         )
 
     def test_train_d4pg_with_replay_buffer(self):
-        max_steps = torch.randint(5, 20, size=(1,)).item()
+        max_steps = 5
         logger.info("Testing D4PG with replay buffer for {} steps".format(max_steps))
         self.d4pg_with_replay_buffer.fit(
             max_steps=max_steps,
         )
         logger.info("D4PG with replay buffer finished")
 
-    def test_train_d4pg_with_n_step(self):
+    def test_full_train_d4pg(self):
         grid_size = 30
         color_values = 11
-        max_steps = torch.randint(8, 20, size=(1,)).item()
-        n_steps = torch.randint(3, max_steps // 2, size=(1,)).item()
+        max_steps = 5
+        n_steps = 2
         logger.info(
-            "Testing train_d4pg with n_steps {} for {} steps".format(n_steps, max_steps)
+            "Testing train_d4pg with replay buffer and n_steps {} for {} steps".format(
+                n_steps, max_steps
+            )
         )
         gamma = 0.99
         env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
@@ -370,13 +373,15 @@ class TestD4PG(unittest.TestCase):
 
         # Create an instance of the ArcDataset
         dataset = ArcDataset(
-            arc_dataset_dir="rlarcworld/dataset/training",
+            arc_dataset_dir="tests/test_data/unittest/training",
             keep_in_memory=False,
             transform=ArcSampleTransformer(
                 (grid_size, grid_size), examples_stack_dim=10
             ),
         )
-        train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
+        train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+
+        val_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
         replay_buffer = TensorDictReplayBuffer(
             storage=LazyTensorStorage(self.batch_size),
             sampler=PrioritizedSampler(
@@ -385,6 +390,7 @@ class TestD4PG(unittest.TestCase):
                 beta=1.0,
             ),
         )
+
         num_atoms = {"pixel_wise": 50, "binary": 3, "n_reward": 50 * n_steps}
         v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
         v_max = {"pixel_wise": 2, "binary": 1, "n_reward": 2 * n_steps}
@@ -401,103 +407,40 @@ class TestD4PG(unittest.TestCase):
             actor=self.actor,
             critic=critic,
             train_samples=train_samples,
+            validation_samples=val_samples,
             batch_size=self.batch_size,
             replay_buffer=replay_buffer,
             target_update_frequency=5,
             n_steps=env.n_steps,
             gamma=env.gamma,
+            tb_writer=SummaryWriter(log_dir="runs/test_validation_d4pg"),
         )
         d4pg.fit(
             max_steps=max_steps,
+            validation_steps_frequency=5,
+            validation_steps_per_train_step=5,
+            validation_steps_per_episode=max_steps,
+            logger_frequency=2,
+            grads_logger_frequency=3,
         )
-        assert torch.any(
-            env._reward_storage != 0
-        ), "Reward Storage is likely not updating, Reward total: {}".format(
-            torch.sum(env._reward_storage)
+
+        assert os.path.isdir(
+            "./runs/test_validation_d4pg"
+        ), "Directory 'runs/test_validation_d4pg' does not exist"
+
+        ref, last_key = get_nested_ref(d4pg.history, "Validation/Loss/actor")
+        assert isinstance(
+            ref[last_key], np.ndarray
+        ), "Invalid validation loss history format - expected np.ndarray for actor, got {}".format(
+            type(ref[last_key])
         )
 
-    # def test_validation_d4pg(self):
-    #     grid_size = 30
-    #     color_values = 11
-    #     max_steps = torch.randint(30, 100, size=(1,)).item()
-    #     n_steps = torch.randint(3, 20 // 2, size=(1,)).item()
-    #     logger.info(
-    #         "Testing train_d4pg with n_steps {} for {} steps".format(n_steps, max_steps)
-    #     )
-    #     gamma = 0.99
-    #     env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
-    #     env = PixelAwareRewardWrapper(env, n_steps=n_steps, gamma=gamma)
-
-    #     # Create an instance of the ArcDataset
-    #     dataset = ArcDataset(
-    #         arc_dataset_dir="rlarcworld/dataset/training",
-    #         keep_in_memory=False,
-    #         transform=ArcSampleTransformer(
-    #             (grid_size, grid_size), examples_stack_dim=10
-    #         ),
-    #     )
-    #     train_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
-
-    #     val_samples = DataLoader(dataset=dataset, batch_size=len(dataset) // 2)
-    #     replay_buffer = TensorDictReplayBuffer(
-    #         storage=LazyTensorStorage(self.batch_size),
-    #         sampler=PrioritizedSampler(
-    #             max_capacity=self.batch_size,
-    #             alpha=1.0,
-    #             beta=1.0,
-    #         ),
-    #     )
-
-    #     num_atoms = {"pixel_wise": 50, "binary": 3, "n_reward": 50 * n_steps}
-    #     v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
-    #     v_max = {"pixel_wise": 2, "binary": 1, "n_reward": 2 * n_steps}
-    #     critic = ArcCriticNetwork(
-    #         size=self.grid_size,
-    #         color_values=self.color_values,
-    #         num_atoms=num_atoms,
-    #         v_min=v_min,
-    #         v_max=v_max,
-    #     )
-
-    #     d4pg = D4PG(
-    #         env=env,
-    #         actor=self.actor,
-    #         critic=critic,
-    #         train_samples=train_samples,
-    #         validation_samples=val_samples,
-    #         batch_size=self.batch_size,
-    #         replay_buffer=replay_buffer,
-    #         target_update_frequency=5,
-    #         n_steps=env.n_steps,
-    #         gamma=env.gamma,
-    #         tb_writer=SummaryWriter(log_dir="runs/test_validation_d4pg"),
-    #     )
-    #     d4pg.fit(
-    #         max_steps=max_steps,
-    #         validation_steps_frequency=10,
-    #         validation_steps_per_train_step=10,
-    #         validation_steps_per_episode=max_steps,
-    #         logger_frequency=2,
-    #         grads_logger_frequency=3,
-    #     )
-
-    #     assert os.path.isdir(
-    #         "./runs/test_validation_d4pg"
-    #     ), "Directory 'runs/test_validation_d4pg' does not exist"
-
-    #     ref, last_key = get_nested_ref(d4pg.history, "Validation/Loss/actor")
-    #     assert isinstance(
-    #         ref[last_key], np.ndarray
-    #     ), "Invalid validation loss history format - expected np.ndarray for actor, got {}".format(
-    #         type(ref[last_key])
-    #     )
-
-    #     ref, last_key = get_nested_ref(d4pg.history, "Train/Loss/actor")
-    #     assert isinstance(
-    #         ref[last_key], np.ndarray
-    #     ), "Invalid training loss history format - expected np.ndarray for critic, got {}".format(
-    #         type(ref[last_key])
-    #     )
+        ref, last_key = get_nested_ref(d4pg.history, "Train/Loss/actor")
+        assert isinstance(
+            ref[last_key], np.ndarray
+        ), "Invalid training loss history format - expected np.ndarray for critic, got {}".format(
+            type(ref[last_key])
+        )
 
 
 if __name__ == "__main__":

@@ -45,19 +45,19 @@ class ArcActorNetwork(nn.Module):
         self.inputs_layers = torch.nn.ModuleDict(
             {
                 "last_grid": CnnPreTrainedModule(
-                    embedding_size=256,
+                    embedding_size=128,
                 ),
                 "grid": CnnPreTrainedModule(
-                    embedding_size=256,
+                    embedding_size=128,
                 ),
                 "examples": CnnAttention(
-                    embedding_size=256, nheads=4, dropout=0.2, bias=True
+                    embedding_size=128, nheads=4, dropout=0.2, bias=True
                 ),
                 "initial": CnnPreTrainedModule(
-                    embedding_size=256,
+                    embedding_size=128,
                 ),
                 "index": CnnPreTrainedModule(
-                    embedding_size=256,
+                    embedding_size=128,
                 ),
                 # "terminated": torch.nn.Linear(1, 1),
             }
@@ -70,7 +70,7 @@ class ArcActorNetwork(nn.Module):
                 "color_values": self.color_values,
                 "submit": 2,
             },
-            embedding_size=256,
+            embedding_size=128,
             nheads=4,
             dropout=0.2,
             bias=True,

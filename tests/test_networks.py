@@ -35,8 +35,8 @@ class ArcNetworksTest(unittest.TestCase):
         optimizer = torch.optim.RMSprop(model.parameters())
         criterion = torch.nn.MSELoss()
         output = model(input_tensor)
-        self.assertEqual(output.shape, (1, 256))
-        loss = criterion(output, torch.randn(1, 256))
+        self.assertEqual(output.shape, (1, 128))
+        loss = criterion(output, torch.randn(1, 128))
         optimizer.zero_grad()
         loss.backward()
         self.assertTrue(model.embedding_layer.weight.grad is not None)
@@ -54,14 +54,14 @@ class ArcNetworksTest(unittest.TestCase):
 
     def test_mha(self):
         logger.info("Testing MultiHeadAttention")
-        model = MultiHeadAttention(E_q=256, E_k=256, E_v=256, E_total=256, nheads=4)
-        q = torch.randn(10, 10, 256)
-        k = torch.randn(10, 10, 256)
+        model = MultiHeadAttention(E_q=128, E_k=128, E_v=128, E_total=128, nheads=4)
+        q = torch.randn(10, 10, 128)
+        k = torch.randn(10, 10, 128)
         v = k
         output = model(q, k, v)
         optimizer = torch.optim.RMSprop(model.parameters())
         criterion = torch.nn.MSELoss()
-        loss = criterion(output, torch.randn(10, 10, 256))
+        loss = criterion(output, torch.randn(10, 10, 128))
         optimizer.zero_grad()
         loss.backward()
         for param in model.parameters():
@@ -71,12 +71,12 @@ class ArcNetworksTest(unittest.TestCase):
 
     def test_cnn_mha(self):
         logger.info("Testing CnnModule + MultiHeadAttention")
-        model = CnnAttention(embedding_size=256, nheads=4, dropout=0.1, bias=True)
+        model = CnnAttention(embedding_size=128, nheads=4, dropout=0.1, bias=True)
         input_tensor = torch.randn(20, 10, 2, 30, 30)
         output = model(input_tensor)
         optimizer = torch.optim.RMSprop(model.parameters())
         criterion = torch.nn.MSELoss()
-        loss = criterion(output, torch.randn(20, 10, 256))
+        loss = criterion(output, torch.randn(20, 10, 128))
         optimizer.zero_grad()
         loss.backward()
         for name, param in model.named_parameters():
@@ -90,10 +90,10 @@ class ArcNetworksTest(unittest.TestCase):
         logger.info("Testing CnnModule + MultiHeadAttention + CrossAttention")
         output_classes = {"x_location": 10, "y_location": 5, "color_values": 2}
         model = torch.nn.Sequential(
-            CnnAttention(embedding_size=256, nheads=4, dropout=0.1, bias=True),
+            CnnAttention(embedding_size=128, nheads=4, dropout=0.1, bias=True),
             CrossAttentionClassifier(
                 output_classes=output_classes,
-                embedding_size=256,
+                embedding_size=128,
                 nheads=4,
                 dropout=0.1,
                 bias=True,
