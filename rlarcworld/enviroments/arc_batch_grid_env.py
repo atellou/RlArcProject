@@ -6,9 +6,9 @@ import numpy as np
 import gymnasium as gym
 import logging
 
-from rlarcworld.utils import TorchQueue, enable_cuda
+from rlarcworld.utils import TorchQueue, enable_cuda, get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ArcActionSpace:

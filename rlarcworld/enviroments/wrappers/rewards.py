@@ -4,9 +4,9 @@ import torch
 import gymnasium as gym
 import logging
 
-from rlarcworld.utils import TorchQueue
+from rlarcworld.utils import TorchQueue, get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PixelAwareRewardWrapper(gym.Wrapper):

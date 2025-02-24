@@ -1,6 +1,10 @@
 import sys
 import argparse
+import google.auth.exceptions
 import torch
+import google.auth
+import logging
+import google.cloud.logging
 
 
 def enable_cuda(use_amp=True, use_checkpointing=False):
@@ -210,3 +214,20 @@ class BetaScheduler:
             self.end,
             self.start + (self.end - self.start) * self.internal_step / self.end,
         )
+
+
+def is_gcp_environment():
+    try:
+        google.auth.default()
+        return True
+    except google.auth.exceptions.DefaultCredentialsError:
+        return False
+
+
+def get_logger(name):
+    logger = logging.getLogger(name)
+    if is_gcp_environment():
+        client = google.cloud.logging.Client()
+        handler = google.cloud.logging.handlers.CloudLoggingHandler(client)
+        logger.addHandler(handler)
+    return logger

@@ -22,11 +22,9 @@ from rlarcworld.agent.nn_modules import (
     CnnAttention,
     CrossAttentionClassifier,
 )
-from rlarcworld.utils import enable_cuda
+from rlarcworld.utils import enable_cuda, get_logger
 
-import logging
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ArcActorNetwork(nn.Module):

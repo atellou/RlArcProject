@@ -19,6 +19,7 @@ torchvision = "^0.21.0"
 pyyaml = "^6.0.2"
 google-cloud-aiplatform = "^1.81.0"
 gcsfs = "^2025.2.0"
+google-cloud-logging = "^3.11.4"
 
 
 [tool.poetry.group.dev.dependencies]

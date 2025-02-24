@@ -17,15 +17,13 @@ from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PG
-from rlarcworld.utils import get_nested_ref, BetaScheduler
-
+from rlarcworld.utils import get_nested_ref, BetaScheduler, get_logger
 
 import unittest
-import logging
 
 from torch.utils.tensorboard import SummaryWriter
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
 
 

@@ -5,10 +5,9 @@ import torch.nn.functional as F
 
 from tensordict import TensorDict
 
+from rlarcworld.utils import get_logger
 
-import logging
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CnnPreTrainedModule(nn.Module):

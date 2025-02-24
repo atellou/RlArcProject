@@ -10,12 +10,10 @@ from rlarcworld.agent.nn_modules import (
     CnnAttention,
     CrossAttentionClassifier,
 )
-
+from rlarcworld.utils import get_logger
 import unittest
-import logging
 
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ArcNetworksTest(unittest.TestCase):

@@ -17,14 +17,12 @@ from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.utils import BetaScheduler, enable_cuda
+from rlarcworld.utils import BetaScheduler, enable_cuda, get_logger
 import torch
 import numpy as np
-
 import logging
 
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def load_args_from_yaml(file_path, key):
