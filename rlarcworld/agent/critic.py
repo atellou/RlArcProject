@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class ArcCriticNetwork(torch.nn.Module):
     r"""
     Args:
-        size (int): Size of the grid.
+        grid_size (int): Size of the grid.
         color_values (int): The number of color values in the grid.
         num_atoms (Dict[str, int]): The number of atoms in the distribution for each reward type.
         v_min (Dict[str, int]): The minimum value for each reward type.
@@ -47,7 +47,7 @@ class ArcCriticNetwork(torch.nn.Module):
 
     def __init__(
         self,
-        size: int,
+        grid_size: int,
         color_values: int,
         num_atoms: Dict[str, int],
         v_min: Dict[str, int],
@@ -56,7 +56,7 @@ class ArcCriticNetwork(torch.nn.Module):
     ):
         super(ArcCriticNetwork, self).__init__()
         self.num_atoms = num_atoms
-        self.size = size
+        self.grid_size = grid_size
         self.color_values = color_values
         self.v_min = v_min
         self.v_max = v_max
@@ -82,7 +82,7 @@ class ArcCriticNetwork(torch.nn.Module):
 
         self.actions_mlp = torch.nn.Sequential(
             torch.nn.Linear(
-                (self.size * 2) + self.color_values + 3, embedding_size * 2
+                (self.grid_size * 2) + self.color_values + 3, embedding_size * 2
             ),
             torch.nn.ReLU(),
             torch.nn.Linear(embedding_size * 2, embedding_size),

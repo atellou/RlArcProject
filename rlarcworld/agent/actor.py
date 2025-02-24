@@ -32,14 +32,14 @@ logger = logging.getLogger(__name__)
 class ArcActorNetwork(nn.Module):
     """Actor network for the ARC environment."""
 
-    def __init__(self, size: int, color_values: int, embedding_size=128):
+    def __init__(self, grid_size: int, color_values: int, embedding_size=128):
         """
         Args:
-            size (int): The size of the grid.
+            grid_size (int): The size of the grid.
             color_values (int): The number of colors.
         """
         super(ArcActorNetwork, self).__init__()
-        self.size = size
+        self.grid_size = grid_size
         self.color_values = color_values
         self.inputs_layers = torch.nn.ModuleDict(
             {
@@ -66,8 +66,8 @@ class ArcActorNetwork(nn.Module):
             nn.LayerNorm(embedding_size),
             CrossAttentionClassifier(
                 output_classes={
-                    "x_location": self.size,
-                    "y_location": self.size,
+                    "x_location": self.grid_size,
+                    "y_location": self.grid_size,
                     "color_values": self.color_values,
                     "submit": 2,
                 },

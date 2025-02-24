@@ -31,7 +31,7 @@ def init_sample(
     )
 
 
-def init_job(config_file: str, config_key: str):
+def create_job(config_file: str, config_key: str):
     init_sample(experiment=f"custom-train-job-{config_key}")
     job = aiplatform.CustomContainerTrainingJob(
         display_name="test-train",
@@ -47,9 +47,5 @@ def init_job(config_file: str, config_key: str):
             config_key,
         ],
         labels={"job-config": config_key},
-    )
-
-    job.run(
-        scheduling_strategy=aiplatform.compat.types.custom_job.Scheduling.Strategy.SPOT
     )
     return job

@@ -100,9 +100,11 @@ def train_d4pg(config_key, args):
     )
 
     # Set up actor and critic networks
-    actor = ArcActorNetwork(size=args["grid_size"], color_values=args["color_values"])
+    actor = ArcActorNetwork(
+        grid_size=args["grid_size"], color_values=args["color_values"]
+    )
     critic = ArcCriticNetwork(
-        size=args["grid_size"],
+        grid_size=args["grid_size"],
         color_values=args["color_values"],
         num_atoms=args["num_atoms"],
         v_min=args["v_min"],
@@ -110,7 +112,7 @@ def train_d4pg(config_key, args):
     )
 
     # Set up replay buffer
-    beta_scheduler = BetaScheduler(start=args["beta"], end=1, steps=args["beta_steps"])
+    beta_scheduler = BetaScheduler(start=args["beta"], end=1, steps=args["max_steps"])
     sampler = PrioritizedSampler(
         args["replay_buffer_size"],
         alpha=args["alpha"],
@@ -172,6 +174,17 @@ if __name__ == "__main__":
         default="test",
         help="Key to use in the YAML configuration file",
     )
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="WARNING",
+        help="Logging level",
+    )
     args = parser.parse_args()
+
+    # Set logging level
+    logging.basicConfig(level=args.log_level)
+
+    # Load configuration
     config_args = load_args_from_yaml(args.config_file, args.config_key)
     train_d4pg(args.config_key, config_args)

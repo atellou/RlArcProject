@@ -12,16 +12,21 @@ logger = logging.getLogger(__name__)
 
 
 class ArcActionSpace:
-    def __init__(self, size: int, color_values: int):
-        self.size = size
+    def __init__(self, grid_size: int, color_values: int):
+        """
+        Args:
+            grid_size (int): The size of the grid.
+            color_values (int): The number of color values in the grid.
+        """
+        self.grid_size = grid_size
         self.color_values = color_values
         self.gym_space = gym.spaces.Dict(
             {
                 "x_location": gym.spaces.Sequence(
-                    gym.spaces.Discrete(size), stack=True
+                    gym.spaces.Discrete(grid_size), stack=True
                 ),
                 "y_location": gym.spaces.Sequence(
-                    gym.spaces.Discrete(size), stack=True
+                    gym.spaces.Discrete(grid_size), stack=True
                 ),
                 "color_values": gym.spaces.Sequence(
                     gym.spaces.Discrete(color_values), stack=True
@@ -29,14 +34,16 @@ class ArcActionSpace:
                 "submit": gym.spaces.Sequence(gym.spaces.Discrete(2), stack=True),
             }
         )
-        self.plain_space = torch.arange(self.size * self.size * self.color_values * 2)
+        self.plain_space = torch.arange(
+            self.grid_size * self.grid_size * self.color_values * 2
+        )
         self.multi_squence_space = self.plain_space.reshape(
-            self.size, self.size, self.color_values, 2
+            self.grid_size, self.grid_size, self.color_values, 2
         )
         self.possible_combinations = np.stack(
             np.meshgrid(
-                np.arange(self.size),
-                np.arange(self.size),
+                np.arange(self.grid_size),
+                np.arange(self.grid_size),
                 np.arange(self.color_values),
                 np.arange(2),
             ),
@@ -48,13 +55,15 @@ class ArcBatchGridEnv(gym.Env):
 
     def __init__(
         self,
-        size: int,
+        grid_size: int,
         color_values: int,
         n_steps: int = 1,
         gamma: float = 1.0,
         **kwargs
     ):
-        assert isinstance(size, int) and size > 0, "size must be a positive int"
+        assert (
+            isinstance(grid_size, int) and grid_size > 0
+        ), "grid_size must be a positive int"
         assert (
             isinstance(color_values, int) and color_values > 0
         ), "color_values must be a positive int"
@@ -75,26 +84,31 @@ class ArcBatchGridEnv(gym.Env):
         self.color_values = color_values
 
         # Size of the grid, assumed to be a MxM grid
-        self.size = size
+        self.grid_size = grid_size
 
         # Here, the observations will be positions on the grid with a value to set. Used mainly to add stochasticity
         self.observation_space = gym.spaces.Dict(
             {
                 "grid": gym.spaces.Sequence(
-                    gym.spaces.Box(0, color_values, shape=(size, size)), stack=True
+                    gym.spaces.Box(0, color_values, shape=(grid_size, grid_size)),
+                    stack=True,
                 ),
                 "target": gym.spaces.Sequence(
-                    gym.spaces.Box(0, color_values, shape=(size, size)), stack=True
+                    gym.spaces.Box(0, color_values, shape=(grid_size, grid_size)),
+                    stack=True,
                 ),
             }
         )
-        self.location_space = gym.spaces.MultiDiscrete([size, size, color_values])
+        self.location_space = gym.spaces.MultiDiscrete(
+            [grid_size, grid_size, color_values]
+        )
 
         # We have actions corresponding to "Y Location", "X Location", "Color Value" and "submission"
         self.action_space = gym.spaces.Sequence(
-            gym.spaces.MultiDiscrete([size, size, color_values, 2]), stack=True
+            gym.spaces.MultiDiscrete([grid_size, grid_size, color_values, 2]),
+            stack=True,
         )
-        self.arc_action_space = ArcActionSpace(size, color_values)
+        self.arc_action_space = ArcActionSpace(grid_size, color_values)
         self.action_space = self.arc_action_space.gym_space
 
     def __len__(self):
@@ -130,9 +144,9 @@ class ArcBatchGridEnv(gym.Env):
             examples.shape[2]
         )
         assert (
-            examples.shape[3] == self.size and examples.shape[3] == self.size
+            examples.shape[3] == self.grid_size and examples.shape[3] == self.grid_size
         ), "Examples grids should have the size {}x{}. Example shape 3 and 4: {}x{}".format(
-            self.size, self.size, examples.shape[3], examples.shape[3]
+            self.grid_size, self.grid_size, examples.shape[3], examples.shape[3]
         )
 
     def reset(self, *, options: dict, seed: Optional[int] = None) -> tuple:
@@ -154,17 +168,17 @@ class ArcBatchGridEnv(gym.Env):
         batch_out = batch["output"]
         assert (
             len(batch_in.shape) == 3
-            and batch_in.shape[1] == self.size
-            and batch_in.shape[2] == self.size
+            and batch_in.shape[1] == self.grid_size
+            and batch_in.shape[2] == self.grid_size
         ), "The batch input shape is not correct. A shape of (batch_size, {size}, {size}) is expected".format(
-            self.size
+            self.grid_size
         )
         assert (
             len(batch_out.shape) == 3
-            and batch_out.shape[1] == self.size
-            and batch_out.shape[2] == self.size
+            and batch_out.shape[1] == self.grid_size
+            and batch_out.shape[2] == self.grid_size
         ), "The batch output (target) shape is not correct. A shape of (batch_size, {size}, {size}) is expected".format(
-            self.size
+            self.grid_size
         )
         self.batch_size = batch_in.shape[0]
 

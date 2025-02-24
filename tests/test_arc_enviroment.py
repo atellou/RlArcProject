@@ -350,8 +350,8 @@ class ArcBatchGridsEnv(unittest.TestCase):
                 grid_size, values
             )
         )
-        env = ArcBatchGridEnv(size=grid_size, color_values=values)
-        assert values == env.color_values and grid_size == env.size
+        env = ArcBatchGridEnv(grid_size=grid_size, color_values=values)
+        assert values == env.color_values and grid_size == env.grid_size
 
         # Valid
         assert env.action_space.contains(self.to_dict_tensors([[0, 0, 0, 0]]))

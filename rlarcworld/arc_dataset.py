@@ -160,6 +160,12 @@ class ArcDataset(Dataset):
             transform (callable, optional): Optional transform to be applied
                 on a sample.
         """
+        if arc_dataset_dir.startswith("gs://"):
+            arc_dataset_dir = arc_dataset_dir.split("gs://")[-1]
+            arc_dataset_dir = arc_dataset_dir.split("/")
+            gcs_bucket_name = arc_dataset_dir[0]
+            arc_dataset_dir = "/".join(arc_dataset_dir[1:])
+
         self.arc_dir = arc_dataset_dir
         self.keep_in_memory = keep_in_memory
         self.transform = transform
@@ -227,18 +233,20 @@ class ArcDataset(Dataset):
                 lambda blob: blob.name, self.bucket.list_blobs(prefix=self.arc_dir)
             )
         else:
-            iterator = os.listdir(self.arc_dir)
+            iterator = map(
+                lambda f: os.path.join(self.arc_dir, f), os.listdir(self.arc_dir)
+            )
         iterator = filter(lambda f: f.endswith(".json"), iterator)
 
         self.samples = {}
         for i, file in enumerate(iterator):
-            sample = self.open_file(os.path.join(self.arc_dir, file))
+            sample = self.open_file(file)
             for i, s_test in enumerate(sample["test"]):
                 key = (file.split(".")[0], i)
                 if self.keep_in_memory:
                     self.samples[key] = {"examples": sample["train"], "task": s_test}
                 else:
-                    self.samples[key] = os.path.join(self.arc_dir, file)
+                    self.samples[key] = file
         self.file_ids = list(self.samples.keys())
 
     def __len__(self):

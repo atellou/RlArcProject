@@ -229,12 +229,12 @@ class D4PG:
                 "Parameters/ReplayBuffer",
                 {
                     "Alpha": (
-                        self.replay_buffer.storage.alpha
+                        self.replay_buffer.sampler.alpha
                         if self.replay_buffer is not None
                         else 0
                     ),
                     "Beta": (
-                        self.replay_buffer.storage.beta
+                        self.replay_buffer.sampler.beta
                         if self.replay_buffer is not None
                         else 0
                     ),

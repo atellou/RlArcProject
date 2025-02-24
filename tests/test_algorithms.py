@@ -40,7 +40,7 @@ class TestD4PG(unittest.TestCase):
         self.num_atoms = {"pixel_wise": 50, "binary": 3}
 
         self.actor = ArcActorNetwork(
-            size=self.grid_size, color_values=self.color_values
+            grid_size=self.grid_size, color_values=self.color_values
         )
         v_min = {"pixel_wise": -40, "binary": 0}
         v_max = {"pixel_wise": 2, "binary": 1}
@@ -56,7 +56,7 @@ class TestD4PG(unittest.TestCase):
         )
         self.train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
         self.critic = ArcCriticNetwork(
-            size=self.grid_size,
+            grid_size=self.grid_size,
             color_values=self.color_values,
             num_atoms=self.num_atoms,
             v_min=v_min,
@@ -395,7 +395,7 @@ class TestD4PG(unittest.TestCase):
         v_min = {"pixel_wise": -40, "binary": 0, "n_reward": -40 * n_steps}
         v_max = {"pixel_wise": 2, "binary": 1, "n_reward": 2 * n_steps}
         critic = ArcCriticNetwork(
-            size=self.grid_size,
+            grid_size=self.grid_size,
             color_values=self.color_values,
             num_atoms=num_atoms,
             v_min=v_min,
