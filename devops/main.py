@@ -34,7 +34,7 @@ def init_sample(
 def create_job(config_file: str, config_key: str):
     init_sample(experiment=f"custom-train-job-{config_key}")
     job = aiplatform.CustomContainerTrainingJob(
-        display_name="test-train",
+        display_name=f"custom-train-job-{config_key}",
         container_uri=os.environ["GCP_TRAIN_IMAGE"],
         command=[
             "poetry",
@@ -49,3 +49,11 @@ def create_job(config_file: str, config_key: str):
         labels={"job-config": config_key},
     )
     return job
+
+
+if __name__ == "__main__":
+    job = create_job("rlarcworld/jobs/config.yaml", "test")
+    job.run(
+        scheduling_strategy=aiplatform.compat.types.custom_job.Scheduling.Strategy.SPOT,
+        timeout=600,
+    )

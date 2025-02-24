@@ -599,21 +599,22 @@ class D4PG:
                         self.amp_scaler.scale(loss_critic).backward()
                 else:
                     loss_critic.backward()
-                if tb_writer_tag is not None and self.tb_writer is not None:
-                    assert global_step is not None, "global_step must be provided"
-                    for name, param in self.critic.named_parameters():
-                        if param.grad is not None:
-                            try:
-                                self.tb_writer.add_histogram(
-                                    os.path.join(tb_writer_tag, "/Grads/critic/", name),
-                                    param.grad,
-                                    global_step,
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to add histogram for {name} of critic params with shape {param.shape} in {tb_writer_tag}. Skipping..."
-                                )
-                                logger.error(e)
+                # NOTE: Generating errors in tensorboard
+                # if tb_writer_tag is not None and self.tb_writer is not None:
+                #     assert global_step is not None, "global_step must be provided"
+                #     for name, param in self.critic.named_parameters():
+                #         if param.grad is not None:
+                #             try:
+                #                 self.tb_writer.add_histogram(
+                #                     os.path.join(tb_writer_tag, "/Grads/critic/", name),
+                #                     param.grad,
+                #                     global_step,
+                #                 )
+                #             except Exception as e:
+                #                 logger.error(
+                #                     f"Failed to add histogram for {name} of critic params with shape {param.shape} in {tb_writer_tag}. Skipping..."
+                #                 )
+                #                 logger.error(e)
 
                 if self.amp_scaler is not None:
                     with torch.amp.autocast(device_type="cuda"):
@@ -640,21 +641,22 @@ class D4PG:
                         self.amp_scaler.scale(loss_actor).backward()
                 else:
                     loss_actor.backward()
-                if tb_writer_tag is not None and self.tb_writer is not None:
-                    assert global_step is not None, "global_step must be provided"
-                    for name, param in self.actor.named_parameters():
-                        try:
-                            if param.grad is not None:
-                                self.tb_writer.add_histogram(
-                                    os.path.join(tb_writer_tag, "/Grads/actor/", name),
-                                    param.grad,
-                                    global_step,
-                                )
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to add histogram for {name} of actor params with shape {param.shape} in {tb_writer_tag}. Skipping..."
-                            )
-                            logger.error(e)
+                # NOTE: Generating errors in tensorboard
+                # if tb_writer_tag is not None and self.tb_writer is not None:
+                #     assert global_step is not None, "global_step must be provided"
+                #     for name, param in self.actor.named_parameters():
+                #         try:
+                #             if param.grad is not None:
+                #                 self.tb_writer.add_histogram(
+                #                     os.path.join(tb_writer_tag, "/Grads/actor/", name),
+                #                     param.grad,
+                #                     global_step,
+                #                 )
+                #         except Exception as e:
+                #             logger.error(
+                #                 f"Failed to add histogram for {name} of actor params with shape {param.shape} in {tb_writer_tag}. Skipping..."
+                #             )
+                #             logger.error(e)
                 if self.amp_scaler is not None:
                     with torch.amp.autocast(device_type="cuda"):
                         self.amp_scaler.step(self.actor_optimizer)
@@ -996,6 +998,7 @@ class D4PG:
         global_train_step = 0
         decay_flag = False
         for epoch_n in range(epochs):
+            logger.info(f"Epoch: {epoch_n}, Step runned: {global_train_step}")
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
                     self.train_env,
@@ -1004,8 +1007,7 @@ class D4PG:
                     tb_writer_tag=tb_writer_tag,
                 )
             ):
-                global_train_step += 1
-                logger.info(
+                logger.debug(
                     f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
                 )
                 self.log_parameters(global_train_step)
@@ -1049,9 +1051,11 @@ class D4PG:
                         tb_writer_tag=tb_writer_tag,
                         global_step=global_train_step,
                     )
+                    logger.info(
+                        f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Loss actor: {loss_actor}, Loss critic: {loss_critic}"
+                    )
                 else:
                     loss_actor, loss_critic = self.compute_loss(batch, training=True)
-
                 if (
                     self.tb_writer is not None
                     and global_train_step % logger_frequency == 0
@@ -1108,18 +1112,23 @@ class D4PG:
                             and val_step_number % validation_steps_per_train_step == 0
                         ):
                             initial_episode_number = copy.copy(val_episode_number)
+                            logger.info(
+                                f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Validation loss actor: {val_loss_actor}, Validation loss critic: {val_loss_critic}"
+                            )
                             break
 
-                logger.info("Step done")
                 if batch is not None:
                     if decay_flag:
                         self.apply_decay()
 
                     if step_number % self.target_update_frequency == 0:
-                        logger.info("Updating networks")
+                        logger.debug("Updating networks step {}".format(step_number))
                         self.update_target_networks(tau=self.tau)
                     decay_flag = True
 
+                global_train_step += 1
+        global_train_step -= 1
+        logger.info("Total steps: {}".format(global_train_step))
         if hasattr(self, "validation_env"):
             logger.info("Running last validation process")
             for (
@@ -1175,13 +1184,33 @@ class D4PG:
             self.save_model(self.save_path)
 
     def save_model(self, path):
-        torch.save(self.actor.state_dict(), os.path.join(path, "actor.pth"))
-        torch.save(self.critic.state_dict(), os.path.join(path, "critic.pth"))
+        if path.startswith("gs://"):
+            from google.cloud import storage
+
+            bucket_name = path.split("gs://")[-1]
+            prefix = bucket_name.split("/")
+            bucket_name = prefix[0]
+            prefix = "/".join(prefix[1:])
+
+            client = storage.Client()
+            bucket = client.get_bucket(bucket_name)
+
+            blob = bucket.blob(os.path.join(prefix, "actor.ptc"))
+            with blob.open("wb", ignore_flush=True) as f:
+                torch.save(self.actor.state_dict(), f)
+
+            blob = bucket.blob(os.path.join(prefix, "critic.ptc"))
+            with blob.open("wb", ignore_flush=True) as f:
+                torch.save(self.critic.state_dict(), f)
+        else:
+            os.makedirs(path, exist_ok=True)
+            torch.save(self.actor.state_dict(), os.path.join(path, "actor.ptc"))
+            torch.save(self.critic.state_dict(), os.path.join(path, "critic.ptc"))
 
     def load_model(self, path):
         self.actor.load_state_dict(
-            torch.load(os.path.join(path, "actor.pth"), map_location=self.device)
+            torch.load(os.path.join(path, "actor.ptc"), map_location=self.device)
         )
         self.critic.load_state_dict(
-            torch.load(os.path.join(path, "critic.pth"), map_location=self.device)
+            torch.load(os.path.join(path, "critic.ptc"), map_location=self.device)
         )

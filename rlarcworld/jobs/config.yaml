@@ -50,36 +50,10 @@ default: &default
 test: 
   <<: *default
   batch_size: 5
-  grid_size: 30
-  color_values: 11
   n_steps: 2
-  max_penality: -0.1
-  gamma: 0.99
-  num_atoms:
-    pixel_wise: 60
-    n_reward: 120
-    binary: 3
-  v_min: 
-    pixel_wise: -50
-    n_reward: -100
-    binary: 0
-  v_max: 
-    pixel_wise: 10
-    n_reward: 20
-    binary: 1
   # Replay buffer
   replay_buffer_size: 10
   warmup_buffer_ratio: 0.1
-  alpha: 0.6
-  beta: 0.4
-  # D4PG
-  policy_lr: 0.0001
-  critic_lr: 0.001
-  entropy_coef: 0.01
-  entropy_coef_decay: 0.995
-  tau: 0.001
-  target_update_frequency: 2
-  carsm: false
   # Fit
   max_steps: 20
   validation_steps_frequency: 5
@@ -89,7 +63,6 @@ test:
   grads_logger_frequency: 100000
   tb_writer_tag: "TestTrain"
   validation_tb_writer_tag: "TestValidation"
-  merge_graphs: true
 
 kldiv_loss_n_steps_15:
   <<: *default

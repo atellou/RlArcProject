@@ -93,6 +93,7 @@ class ArcActorNetwork(nn.Module):
         #     )
         # )
 
+    @torch.jit.export
     def scale_arc_grids(self, x: torch.Tensor):
         """
         Scales the input tensor by the number of color values.
@@ -106,6 +107,7 @@ class ArcActorNetwork(nn.Module):
 
         return x / self.color_values
 
+    @torch.jit.export
     def input_val(self, state: TensorDict):
         """
         Validates the input state TensorDict.
@@ -135,6 +137,7 @@ class ArcActorNetwork(nn.Module):
             "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
         )
 
+    @torch.jit.export
     def output_val(self, action: TensorDict):
         """
         Validates the output action TensorDict.

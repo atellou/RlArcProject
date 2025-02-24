@@ -57,12 +57,16 @@ def train_d4pg(config_key, path_uri, training_data_uri, validation_data_uri, arg
     device_configs = enable_cuda()
     logger.info(f"Device configurations: \n{json.dumps(device_configs, indent=4)}")
     check_args(args)
-    logger.info(
-        f"TensorBoard log directory: {os.path.join(path_uri, 'tensorboard_runs', config_key)}"
-    )
-    tb_writer = SummaryWriter(
-        log_dir=os.path.join(path_uri, "tensorboard_runs", config_key)
-    )
+
+    # Tensorboard
+    log_dir = os.path.join(path_uri, "tensorboard_runs", config_key)
+    tb_writer = SummaryWriter(log_dir=log_dir)
+    logger.info(f"TensorBoard log directory: {log_dir}")
+
+    # Saved models
+    models_path = os.path.join(path_uri, "saved_models", config_key)
+    logger.info(f"Saved models directory: {models_path}")
+
     # Set the seed
     seed = np.random.randint(0, 10000)
     torch.manual_seed(seed)
@@ -73,10 +77,6 @@ def train_d4pg(config_key, path_uri, training_data_uri, validation_data_uri, arg
     tb_writer.add_text(f"Seed for experiment {config_key}:", str(seed))
     logger.info(f"Seed for experiment {config_key}: {seed}")
 
-    logger.info(
-        f"Saved models directory: {os.path.join(path_uri, 'saved_models', config_key)}"
-    )
-    models_path = os.path.join(path_uri, "saved_models", config_key)
     # Load Datasets
     logger.info("Load Datasets from {}".format(training_data_uri))
     dataset = ArcDataset(
