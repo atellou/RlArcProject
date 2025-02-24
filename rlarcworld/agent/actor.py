@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 class ArcActorNetwork(nn.Module):
     """Actor network for the ARC environment."""
 
-    def __init__(self, grid_size: int, color_values: int, embedding_size=128):
+    def __init__(
+        self, grid_size: int, color_values: int, embedding_size=128, config=None
+    ):
         """
         Args:
             grid_size (int): The size of the grid.
@@ -78,7 +80,7 @@ class ArcActorNetwork(nn.Module):
             ),
         )
 
-        self.config = enable_cuda()
+        self.config = enable_cuda() if config is None else config
         self.device = self.config["device"]
 
         self.to(self.device)

@@ -3,7 +3,7 @@ import argparse
 import torch
 
 
-def enable_cuda(use_amp=True, use_checkpointing=True):
+def enable_cuda(use_amp=True, use_checkpointing=False):
     """
     Configures CUDA settings for AMP and gradient checkpointing.
 
@@ -200,9 +200,13 @@ class BetaScheduler:
         self.start = start
         self.end = end
         self.steps = steps
+        self.internal_step = 0
 
-    def beta_scheduler(
+    def step(
         self,
-        step,
     ):
-        return min(self.end, self.start + (self.end - self.start) * step / self.end)
+        self.internal_step += 1
+        return min(
+            self.end,
+            self.start + (self.end - self.start) * self.internal_step / self.end,
+        )

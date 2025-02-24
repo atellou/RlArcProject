@@ -1,8 +1,9 @@
 default: &default
   # Environment
+  batch_size: 128
+  loader_batch_size: 256
   grid_size: 30
   color_values: 11
-  batch_size: 32
   n_steps: 20
   max_penality: -0.1
   gamma: 0.99
@@ -26,6 +27,9 @@ default: &default
   # D4PG
   policy_lr: 0.0001
   critic_lr: 0.001
+  lr_scheduler:
+    step_size: 100000
+    gamma: 0.1
   entropy_coef: 0.01
   entropy_coef_decay: 0.995
   tau: 0.001
@@ -45,10 +49,10 @@ default: &default
 
 test: 
   <<: *default
-  batch_size: 32
+  batch_size: 5
   grid_size: 30
   color_values: 11
-  n_steps: 5
+  n_steps: 2
   max_penality: -0.1
   gamma: 0.99
   num_atoms:
@@ -64,8 +68,8 @@ test:
     n_reward: 20
     binary: 1
   # Replay buffer
-  replay_buffer_size: 1000000
-  warmup_buffer_ratio: 0.00001
+  replay_buffer_size: 10
+  warmup_buffer_ratio: 0.1
   alpha: 0.6
   beta: 0.4
   # D4PG

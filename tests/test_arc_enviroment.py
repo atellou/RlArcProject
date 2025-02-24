@@ -24,8 +24,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
             color_values,
             n_steps=np.random.randint(1, 10),
             gamma=1.0,
-            use_amp=False,
-            use_checkpointing=False,
+            device="cpu",
         )
         self.episodes_simulation(batch_size, size, color_values, env)
 
@@ -35,9 +34,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
         size = np.random.randint(2, 4)
         color_values = np.random.randint(2, 4)
 
-        env = ArcBatchGridEnv(
-            size, color_values, use_amp=False, use_checkpointing=False
-        )
+        env = ArcBatchGridEnv(size, color_values, device="cpu")
         env = PixelAwareRewardWrapper(env, n_steps=np.random.randint(1, 10), gamma=1.0)
         self.episodes_simulation(batch_size, size, color_values, env)
 

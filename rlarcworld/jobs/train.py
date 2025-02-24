@@ -17,9 +17,12 @@ from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.utils import BetaScheduler
+from rlarcworld.utils import BetaScheduler, enable_cuda
+import torch
+import numpy as np
 
 import logging
+
 
 logger = logging.getLogger(__name__)
 
@@ -49,38 +52,59 @@ def check_args(args):
     assert args["v_max"].get("pixel_wise") is not None
 
 
-def train_d4pg(config_key, args):
+def train_d4pg(config_key, path_uri, training_data_uri, validation_data_uri, args):
     logger.info(f"D4PG train configuration: \n{json.dumps(args, indent=4)}")
+    device_configs = enable_cuda()
+    logger.info(f"Device configurations: \n{json.dumps(device_configs, indent=4)}")
     check_args(args)
-    path_uri = os.environ["GCP_STORAGE_URI"]
     logger.info(
         f"TensorBoard log directory: {os.path.join(path_uri, 'tensorboard_runs', config_key)}"
     )
     tb_writer = SummaryWriter(
         log_dir=os.path.join(path_uri, "tensorboard_runs", config_key)
     )
+    # Set the seed
+    seed = np.random.randint(0, 10000)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if device_configs["device"] == "cuda":
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    tb_writer.add_text(f"Seed for experiment {config_key}:", str(seed))
+    logger.info(f"Seed for experiment {config_key}: {seed}")
+
     logger.info(
         f"Saved models directory: {os.path.join(path_uri, 'saved_models', config_key)}"
     )
     models_path = os.path.join(path_uri, "saved_models", config_key)
     # Load Datasets
+    logger.info("Load Datasets from {}".format(training_data_uri))
     dataset = ArcDataset(
-        arc_dataset_dir=os.environ["AIP_TRAINING_DATA_URI"],
+        arc_dataset_dir=training_data_uri,
         keep_in_memory=False,
         transform=ArcSampleTransformer(
             (args["grid_size"], args["grid_size"]), examples_stack_dim=10
         ),
     )
-    train_samples = DataLoader(dataset=dataset, batch_size=args["batch_size"])
+    train_samples = DataLoader(
+        dataset=dataset,
+        batch_size=args["loader_batch_size"],
+        worker_init_fn=lambda worker_id: torch.manual_seed(seed + worker_id),
+    )
 
+    logger.info("Load Datasets from {}".format(validation_data_uri))
     dataset = ArcDataset(
-        arc_dataset_dir=os.environ["AIP_VALIDATION_DATA_URI"],
+        arc_dataset_dir=validation_data_uri,
         keep_in_memory=False,
         transform=ArcSampleTransformer(
             (args["grid_size"], args["grid_size"]), examples_stack_dim=10
         ),
     )
-    validation_samples = DataLoader(dataset=dataset, batch_size=args["batch_size"])
+    validation_samples = DataLoader(
+        dataset=dataset,
+        batch_size=args["loader_batch_size"],
+        worker_init_fn=lambda worker_id: torch.manual_seed(seed + worker_id),
+    )
 
     # Set up environment
     env = ArcBatchGridEnv(
@@ -88,6 +112,7 @@ def train_d4pg(config_key, args):
         color_values=args["color_values"],
         n_steps=args["n_steps"],
         gamma=args["gamma"],
+        device=device_configs["device"],
     )
     env = PixelAwareRewardWrapper(
         env,
@@ -101,7 +126,9 @@ def train_d4pg(config_key, args):
 
     # Set up actor and critic networks
     actor = ArcActorNetwork(
-        grid_size=args["grid_size"], color_values=args["color_values"]
+        grid_size=args["grid_size"],
+        color_values=args["color_values"],
+        config=device_configs,
     )
     critic = ArcCriticNetwork(
         grid_size=args["grid_size"],
@@ -109,6 +136,7 @@ def train_d4pg(config_key, args):
         num_atoms=args["num_atoms"],
         v_min=args["v_min"],
         v_max=args["v_max"],
+        config=device_configs,
     )
 
     # Set up replay buffer
@@ -116,16 +144,12 @@ def train_d4pg(config_key, args):
     sampler = PrioritizedSampler(
         args["replay_buffer_size"],
         alpha=args["alpha"],
-        beta_scheduler=beta_scheduler.beta_scheduler,
+        beta=args["beta"],
     )
     storage = LazyMemmapStorage(args["replay_buffer_size"])
     rb = TensorDictReplayBuffer(storage=storage, sampler=sampler)
 
     # Set up D4PG algorithm
-    policy_lr = lambda t: args["policy_lr"] * (0.1 ** (t // 100000))
-    critic_lr = lambda t: args["critic_lr"] * (0.1 ** (t // 100000))
-    SummaryWriter(log_dir="runs/test_validation_d4pg")
-
     d4pg = D4PG(
         env=env,
         train_samples=train_samples,
@@ -134,24 +158,23 @@ def train_d4pg(config_key, args):
         critic=critic,
         batch_size=args["batch_size"],
         replay_buffer=rb,
+        warmup_buffer_ratio=args["warmup_buffer_ratio"],
         target_update_frequency=args["target_update_frequency"],
+        beta_scheduler=beta_scheduler,
         n_steps=args["n_steps"],
         gamma=args["gamma"],
-        learning_rate_actor=policy_lr,
-        learning_rate_critic=critic_lr,
-        entropy_tau=args["entropy_tau"],
-        clip_grad_norm=args["clip_grad_norm"],
-        num_samples=args["num_samples"],
-        num_workers=args["num_workers"],
+        policy_lr=args["policy_lr"],
+        critic_lr=args["critic_lr"],
+        lr_scheduler_kwargs=args["lr_scheduler"],
+        tau=args["tau"],
         tb_writer=tb_writer,
-        device=args["device"],
-        seed=args["seed"],
         save_path=models_path,
+        config=device_configs,
     )
 
     # Set up training loop
     d4pg.fit(
-        epoch=args["max_epochs"],
+        epochs=args["max_epochs"],
         max_steps=args["max_steps"],
         validation_steps_frequency=args["validation_steps_frequency"],
         validation_steps_per_train_step=args["validation_steps_per_train_step"],
@@ -180,11 +203,34 @@ if __name__ == "__main__":
         default="WARNING",
         help="Logging level",
     )
+    parser.add_argument(
+        "--storage_uri",
+        type=str,
+        default=os.environ.get("STORAGE_URI"),
+        help="Storage URI",
+    )
+    parser.add_argument(
+        "--training_data_uri",
+        type=str,
+        default=os.environ.get("AIP_TRAINING_DATA_URI"),
+        help="Training data URI",
+    )
+    parser.add_argument(
+        "--validation_data_uri",
+        type=str,
+        default=os.environ.get("AIP_VALIDATION_DATA_URI"),
+        help="Validation data URI",
+    )
     args = parser.parse_args()
 
     # Set logging level
     logging.basicConfig(level=args.log_level)
 
-    # Load configuration
     config_args = load_args_from_yaml(args.config_file, args.config_key)
-    train_d4pg(args.config_key, config_args)
+    train_d4pg(
+        config_key=args.config_key,
+        path_uri=args.storage_uri,
+        training_data_uri=args.training_data_uri,
+        validation_data_uri=args.validation_data_uri,
+        args=config_args,
+    )

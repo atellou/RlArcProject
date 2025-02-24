@@ -13,7 +13,12 @@ from torchrl.data import ReplayBuffer
 
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.arc_dataset import ArcDataset
-from rlarcworld.utils import categorical_projection, get_nested_ref, enable_cuda
+from rlarcworld.utils import (
+    categorical_projection,
+    get_nested_ref,
+    enable_cuda,
+    BetaScheduler,
+)
 
 import logging
 
@@ -31,9 +36,11 @@ class D4PG:
         batch_size: int,
         policy_lr: float = 3e-4,
         critic_lr: float = 3e-3,
+        lr_scheduler_kwargs: dict = None,
         validation_samples: DataLoader = None,
         replay_buffer: ReplayBuffer = None,
         warmup_buffer_ratio: float = 0.2,
+        beta_scheduler: BetaScheduler = None,
         n_steps: int = 1,
         gamma: float = 0.99,
         carsm=False,
@@ -45,6 +52,7 @@ class D4PG:
         history_file: str = None,
         extras_hparams: dict = None,
         save_path: str = None,
+        config=None,
     ):
         """
         D4PG (Distributed Distributional Deep Deterministic Policy Gradient) implementation.
@@ -64,9 +72,11 @@ class D4PG:
             batch_size (int): Size of batches for training
             policy_lr (float, optional): Learning rate for actor network. Defaults to 3e-4
             critic_lr (float, optional): Learning rate for critic network. Defaults to 3e-3
+            lr_scheduler_kwargs (dict, optional): Keyword arguments for learning rate scheduler StepLR. Defaults to None
             validation_samples (DataLoader, optional): DataLoader for validation samples
             replay_buffer (ReplayBuffer, optional): Buffer for experience replay
             warmup_buffer_ratio (float, optional): Ratio of buffer to fill before training. Defaults to 0.2
+            beta_scheduler (BetaScheduler, optional): Scheduler for beta values in prioritized experience replay. Defaults to None
             n_steps (int, optional): Number of steps for n-step returns. Defaults to 1
             gamma (float, optional): Discount factor. Defaults to 0.99
             carsam (bool, optional): Whether to use CARSAM actor computation of loss. Defaults to False
@@ -78,6 +88,7 @@ class D4PG:
             history_file (str, optional): Path to save training history
             extras_hparams (dict, optional): Dictionary of extra hyperparameters to log
             save_path (str, optional): Path to save model checkpoints
+            config (dict, optional): Configuration dictionary with device, and weather to use AMP and checkpointing
 
         Methods:
             step(): Performs a single environment step using current policy
@@ -122,8 +133,9 @@ class D4PG:
         self.target_update_frequency = target_update_frequency
         self.replay_buffer = replay_buffer
         self.warmup_buffer_ratio = warmup_buffer_ratio
+        self.beta_scheduler = beta_scheduler
         self.tb_writer = tb_writer
-        self.config = enable_cuda()
+        self.config = enable_cuda() if config is None else config
         self.device = self.config["device"]
         self.amp_scaler = (
             torch.amp.GradScaler(device=self.device)
@@ -185,6 +197,18 @@ class D4PG:
         self.actor_optimizer = optim.AdamW(actor.parameters(), lr=policy_lr)
         self.critic_optimizer = optim.AdamW(critic.parameters(), lr=critic_lr)
 
+        # Create schedulers
+        if lr_scheduler_kwargs is None:
+            self.actor_scheduler = None
+            self.critic_scheduler = None
+        else:
+            self.actor_scheduler = optim.lr_scheduler.StepLR(
+                self.actor_optimizer, **lr_scheduler_kwargs
+            )
+            self.critic_scheduler = optim.lr_scheduler.StepLR(
+                self.critic_optimizer, **lr_scheduler_kwargs
+            )
+
         # Create loss criterion
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
@@ -198,7 +222,13 @@ class D4PG:
         """
         Applies entropy coefficient decay.
         """
+        if self.actor_scheduler is not None:
+            self.actor_scheduler.step()
+        if self.critic_scheduler is not None:
+            self.critic_scheduler.step()
         self.entropy_coef *= self.entropy_coef_decay
+        if self.replay_buffer is not None and self.beta_scheduler is not None:
+            self.replay_buffer.sampler.beta = self.beta_scheduler.step()
 
     def log_parameters(self, step):
         """
@@ -573,11 +603,17 @@ class D4PG:
                     assert global_step is not None, "global_step must be provided"
                     for name, param in self.critic.named_parameters():
                         if param.grad is not None:
-                            self.tb_writer.add_histogram(
-                                os.path.join(tb_writer_tag, "/Grads/critic/", name),
-                                param.grad,
-                                global_step,
-                            )
+                            try:
+                                self.tb_writer.add_histogram(
+                                    os.path.join(tb_writer_tag, "/Grads/critic/", name),
+                                    param.grad,
+                                    global_step,
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to add histogram for {name} of critic params with shape {param.shape} in {tb_writer_tag}. Skipping..."
+                                )
+                                logger.error(e)
 
                 if self.amp_scaler is not None:
                     with torch.amp.autocast(device_type="cuda"):
@@ -607,12 +643,18 @@ class D4PG:
                 if tb_writer_tag is not None and self.tb_writer is not None:
                     assert global_step is not None, "global_step must be provided"
                     for name, param in self.actor.named_parameters():
-                        if param.grad is not None:
-                            self.tb_writer.add_histogram(
-                                os.path.join(tb_writer_tag, "/Grads/actor/", name),
-                                param.grad,
-                                global_step,
+                        try:
+                            if param.grad is not None:
+                                self.tb_writer.add_histogram(
+                                    os.path.join(tb_writer_tag, "/Grads/actor/", name),
+                                    param.grad,
+                                    global_step,
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to add histogram for {name} of actor params with shape {param.shape} in {tb_writer_tag}. Skipping..."
                             )
+                            logger.error(e)
                 if self.amp_scaler is not None:
                     with torch.amp.autocast(device_type="cuda"):
                         self.amp_scaler.step(self.actor_optimizer)
@@ -731,6 +773,7 @@ class D4PG:
             yield step_number, step_state
             done = step_state["done"] or step_state["truncated"]
             step_number += 1
+            logger.debug(f"Episode simulation step: {step_number}")
 
     def env_simulation(
         self,
@@ -951,6 +994,7 @@ class D4PG:
 
         """
         global_train_step = 0
+        decay_flag = False
         for epoch_n in range(epochs):
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
@@ -964,7 +1008,6 @@ class D4PG:
                 logger.info(
                     f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
                 )
-                self.apply_decay()
                 self.log_parameters(global_train_step)
                 # Store the experience in the replay buffer
                 if self.replay_buffer is not None:
@@ -1068,10 +1111,14 @@ class D4PG:
                             break
 
                 logger.info("Step done")
+                if batch is not None:
+                    if decay_flag:
+                        self.apply_decay()
 
-                if step_number % self.target_update_frequency == 0:
-                    logger.info("Updating networks")
-                    self.update_target_networks(tau=self.tau)
+                    if step_number % self.target_update_frequency == 0:
+                        logger.info("Updating networks")
+                        self.update_target_networks(tau=self.tau)
+                    decay_flag = True
 
         if hasattr(self, "validation_env"):
             logger.info("Running last validation process")
@@ -1123,7 +1170,8 @@ class D4PG:
             self.tb_writer.flush()
             self.tb_writer.close()
 
-        if self.save_path is not None:
+        if self.save_path is not None and loss_actor is not None:
+            logger.info("Saving model in {}".format(self.save_path))
             self.save_model(self.save_path)
 
     def save_model(self, path):

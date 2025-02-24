@@ -17,7 +17,8 @@ from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PG
-from rlarcworld.utils import get_nested_ref
+from rlarcworld.utils import get_nested_ref, BetaScheduler
+
 
 import unittest
 import logging
@@ -386,8 +387,8 @@ class TestD4PG(unittest.TestCase):
             storage=LazyTensorStorage(self.batch_size),
             sampler=PrioritizedSampler(
                 max_capacity=self.batch_size,
-                alpha=1.0,
-                beta=1.0,
+                alpha=0.6,
+                beta=0.4,
             ),
         )
 
@@ -406,10 +407,12 @@ class TestD4PG(unittest.TestCase):
             env=env,
             actor=self.actor,
             critic=critic,
+            lr_scheduler_kwargs={"gamma": 0.5, "step_size": 2},
             train_samples=train_samples,
             validation_samples=val_samples,
             batch_size=self.batch_size,
             replay_buffer=replay_buffer,
+            beta_scheduler=BetaScheduler(start=0.4, end=1, steps=max_steps),
             target_update_frequency=5,
             n_steps=env.n_steps,
             gamma=env.gamma,

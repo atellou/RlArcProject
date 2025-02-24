@@ -53,6 +53,7 @@ class ArcCriticNetwork(torch.nn.Module):
         v_min: Dict[str, int],
         v_max: Dict[str, int],
         embedding_size: int = 128,
+        config=None,
     ):
         super(ArcCriticNetwork, self).__init__()
         self.num_atoms = num_atoms
@@ -60,7 +61,7 @@ class ArcCriticNetwork(torch.nn.Module):
         self.color_values = color_values
         self.v_min = v_min
         self.v_max = v_max
-        self.config = enable_cuda()
+        self.config = enable_cuda() if config is None else config
         self.device = self.config["device"]
         for key, min_val in v_min.items():
             assert (

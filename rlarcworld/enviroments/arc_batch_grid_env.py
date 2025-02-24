@@ -59,7 +59,7 @@ class ArcBatchGridEnv(gym.Env):
         color_values: int,
         n_steps: int = 1,
         gamma: float = 1.0,
-        **kwargs
+        device=None,
     ):
         assert (
             isinstance(grid_size, int) and grid_size > 0
@@ -74,7 +74,7 @@ class ArcBatchGridEnv(gym.Env):
             isinstance(gamma, float) and gamma > 0 and gamma <= 1
         ), "gamma must be a positive float lower or equal than 1.0"
 
-        self.device = enable_cuda(**kwargs).get("device")
+        self.device = device or enable_cuda().get("device")
 
         # N-step attributes
         self.n_steps = n_steps
