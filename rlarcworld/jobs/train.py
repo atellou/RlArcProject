@@ -223,6 +223,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    assert args.storage_uri is not None
+    assert args.training_data_uri is not None
+    assert args.validation_data_uri is not None
+
     # Set logging level
     logging.basicConfig(level=args.log_level)
 
