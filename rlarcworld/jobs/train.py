@@ -50,20 +50,32 @@ def check_args(args):
     assert args["v_max"].get("pixel_wise") is not None
 
 
-def train_d4pg(config_key, path_uri, training_data_uri, validation_data_uri, args):
+def train_d4pg(
+    config_key,
+    training_data_uri,
+    validation_data_uri,
+    models_dir,
+    checkpoint_dir,
+    tensorboard_log_dir,
+    args,
+):
     logger.info(f"D4PG train configuration: \n{json.dumps(args, indent=4)}")
     device_configs = enable_cuda()
     logger.info(f"Device configurations: \n{json.dumps(device_configs, indent=4)}")
     check_args(args)
 
-    # Tensorboard
-    log_dir = os.path.join(path_uri, "tensorboard_runs", config_key)
-    tb_writer = SummaryWriter(log_dir=log_dir)
-    logger.info(f"TensorBoard log directory: {log_dir}")
-
     # Saved models
-    models_path = os.path.join(path_uri, "saved_models", config_key)
-    logger.info(f"Saved models directory: {models_path}")
+    models_dir = os.path.join(models_dir, config_key)
+    logger.info(f"Saved models directory: {models_dir}")
+
+    # Checkpoints
+    checkpoint_dir = os.path.join(checkpoint_dir, config_key)
+    logger.info(f"Checkpoints directory: {checkpoint_dir}")
+
+    # Tensorboard
+    tensorboard_log_dir = os.path.join(tensorboard_log_dir, config_key)
+    tb_writer = SummaryWriter(log_dir=tensorboard_log_dir)
+    logger.info(f"TensorBoard log directory: {tensorboard_log_dir}")
 
     # Set the seed
     seed = np.random.randint(0, 10000)
@@ -166,7 +178,7 @@ def train_d4pg(config_key, path_uri, training_data_uri, validation_data_uri, arg
         lr_scheduler_kwargs=args["lr_scheduler"],
         tau=args["tau"],
         tb_writer=tb_writer,
-        save_path=models_path,
+        save_path=models_dir,
         config=device_configs,
     )
 
@@ -219,11 +231,37 @@ if __name__ == "__main__":
         default=os.environ.get("AIP_VALIDATION_DATA_URI"),
         help="Validation data URI",
     )
+    parser.add_argument(
+        "--models_dir",
+        type=str,
+        default=os.environ.get("AIP_MODEL_DIR"),
+        help="Directory to save models",
+    )
+    parser.add_argument(
+        "--checkpoint_dir",
+        type=str,
+        default=os.environ.get("AIP_CHECKPOINT_DIR"),
+        help="Directory to save checkpoints",
+    )
+    parser.add_argument(
+        "--tensorboard_log_dir",
+        type=str,
+        default=os.environ.get("AIP_TENSORBOARD_LOG_DIR"),
+        help="Directory to save tensorboard logs",
+    )
+
     args = parser.parse_args()
 
     assert args.storage_uri is not None
     assert args.training_data_uri is not None
     assert args.validation_data_uri is not None
+
+    if args.models_dir is None:
+        args.models_dir = os.path.join(args.storage_uri, "models")
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = os.path.join(args.storage_uri, "checkpoints")
+    if args.tensorboard_log_dir is None:
+        args.tensorboard_log_dir = os.path.join(args.storage_uri, "tensorboard_logs")
 
     # Set logging level
     logging.basicConfig(level=args.log_level)
@@ -231,8 +269,10 @@ if __name__ == "__main__":
     config_args = load_args_from_yaml(args.config_file, args.config_key)
     train_d4pg(
         config_key=args.config_key,
-        path_uri=args.storage_uri,
         training_data_uri=args.training_data_uri,
         validation_data_uri=args.validation_data_uri,
+        models_dir=args.models_dir,
+        checkpoint_dir=args.checkpoint_dir,
+        tensorboard_log_dir=args.tensorboard_log_dir,
         args=config_args,
     )

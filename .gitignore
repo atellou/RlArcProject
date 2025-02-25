@@ -162,7 +162,9 @@ cython_debug/
 #.idea/
 
 # Custom
-rlarcworld/**/dataset/**
+rlarcworld/**/dataset/
+gcs/
+
 *test*.ipynb
 # Tensorboard
 **runs**
