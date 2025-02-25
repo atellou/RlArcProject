@@ -1,8 +1,13 @@
 import os
+import argparse
 from typing import Optional
 import google.auth
 import vertexai
-from google.cloud import aiplatform, aiplatform_v1
+from google.cloud import aiplatform
+
+from rlarcworld.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def init_sample(
@@ -31,37 +36,40 @@ def init_sample(
     )
 
 
-def create_job(config_key: str, continer_uri: str):
-    job = aiplatform.CustomContainerTrainingJob(
-        display_name=f"custom-train-job-{config_key}",
-        container_uri=continer_uri,
-        command=["poetry", "run", "python3", "rlarcworld/jobs/train.py"],
-        labels={"job-config": config_key},
-    )
-    return job
-
-
 if __name__ == "__main__":
     try:
-        config_file = "rlarcworld/jobs/config.yaml"
-        config_key = "test"
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--config_file", type=str, required=True)
+        parser.add_argument("--config_key", type=str, required=True)
+        parser.add_argument("--log_level", type=str, default="INFO")
+        args = parser.parse_args()
+
         continer_uri = os.environ["GCP_TRAIN_IMAGE"]
         service_account = os.environ["SERVICE_ACCOUNT"]
-        init_sample(experiment=f"custom-train-job-{config_key}")
-        job = create_job(config_key=config_key, continer_uri=continer_uri)
+        init_sample(experiment=f"custom-train-job-{args.config_key}")
+
+        job = aiplatform.CustomContainerTrainingJob(
+            display_name=f"custom-train-job-{args.config_key}",
+            container_uri=continer_uri,
+            command=["poetry", "run", "python3", "rlarcworld/jobs/train.py"],
+            labels={"job-config": args.config_key},
+        )
         job.run(
+            sync=True,
             scheduling_strategy=aiplatform.compat.types.custom_job.Scheduling.Strategy.SPOT,
             timeout=600,
-            machine_type="n1-standard-4",  # Define machine type here
+            machine_type="n1-standard-4",
             accelerator_type="NVIDIA_TESLA_T4",
             accelerator_count=1,
-            replica_count=1,  # Set number of replicas here
+            replica_count=1,
             enable_web_access=True,
             args=[
                 "--config_file",
-                config_file,
+                args.config_file,
                 "--config_key",
-                config_key,
+                args.config_key,
+                "--log_level",
+                args.log_level,
             ],
             service_account=service_account,
             environment_variables={
@@ -78,4 +86,5 @@ if __name__ == "__main__":
             },
         )
     except Exception as e:
+        logger.error(e)
         exit(1)
