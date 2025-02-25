@@ -84,6 +84,7 @@ if __name__ == "__main__":
                 "GCP_TRAIN_IMAGE": os.environ["GCP_TRAIN_IMAGE"],
                 "SERVICE_ACCOUNT": os.environ["SERVICE_ACCOUNT"],
             },
+            base_output_dir=os.environ["STORAGE_URI"],
         )
     except Exception as e:
         logger.error(e)

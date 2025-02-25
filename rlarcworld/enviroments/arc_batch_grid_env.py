@@ -127,9 +127,9 @@ class ArcBatchGridEnv(gym.Env):
     def reward_storage(self):
         return self._reward_storage
 
-    @property
-    def last_reward(self):
-        return self._last_reward
+    @reward_storage.setter
+    def reward_storage(self, value):
+        self._reward_storage = TorchQueue(value, queue_size=self.n_steps, queue_dim=1)
 
     def validate_examples(self, examples: torch.Tensor):
         assert len(examples.shape) == 5, "Examples grids should be 5D"
@@ -194,8 +194,8 @@ class ArcBatchGridEnv(gym.Env):
             queue_size=self.n_steps,
             queue_dim=1,
         )
-        self._last_reward = torch.zeros(self.batch_size, dtype=int)
-        self._timestep = 0
+        self.last_reward = torch.zeros(self.batch_size, dtype=int)
+        self.timestep = 0
 
         # Validate examples
         self.validate_examples(options["examples"])
@@ -217,6 +217,59 @@ class ArcBatchGridEnv(gym.Env):
         self.information = self.information.to(self.device)
         self.observations = self.observations.to(self.device)
         return self.observations, self.information
+
+    def save(self, path):
+        logger.debug("Saving environment to {}".format(path))
+        try:
+            torch.save(
+                {
+                    "observations": self.observations,
+                    "information": self.information,
+                    "last_grid": self.last_grid,
+                    "last_reward": self.last_reward,
+                    "timestep": self.timestep,
+                    "reward_storage": self.reward_storage,
+                    "discount_factor": self.discount_factor,
+                    "is_train_episode": self.is_train_episode,
+                    "n_steps": self.n_steps,
+                    "gamma": self.gamma,
+                    "grid_size": self.grid_size,
+                    "color_values": self.color_values,
+                    "batch_size": self.batch_size,
+                },
+                path,
+            )
+        except AttributeError as e:
+            logger.error(
+                "Error saving environment, reset should have been called by now: {}".format(
+                    e
+                )
+            )
+            raise
+
+    def load(self, path, weights_only=True, device=None):
+        checkpoint = torch.load(path, weights_only=weights_only)
+        self.observations = checkpoint["observations"]
+        self.information = checkpoint["information"]
+        self.last_grid = checkpoint["last_grid"]
+        self.last_reward = checkpoint["last_reward"]
+        self.timestep = checkpoint["timestep"]
+        self.reward_storage = checkpoint["reward_storage"]
+        self.is_train_episode = checkpoint["is_train_episode"]
+        self.discount_factor = checkpoint["discount_factor"]
+        self.batch_size = checkpoint["batch_size"]
+
+        assert self.n_steps == checkpoint["n_steps"]
+        assert self.gamma == checkpoint["gamma"]
+        assert self.grid_size == checkpoint["grid_size"]
+        assert self.color_values == checkpoint["color_values"]
+
+        if device is not None:
+            self.observations = self.observations.to(device)
+            self.information = self.information.to(device)
+            self.last_grid = self.last_grid.to(device)
+            self.reward_storage = self.reward_storage.to(device)
+            self.discount_factor = self.discount_factor.to(device)
 
     def get_difference(self):
         """
@@ -304,7 +357,7 @@ class ArcBatchGridEnv(gym.Env):
             self.last_grid = self.observations["grid"].clone()
             logger.debug("Actions are valid")
             # Update the grid with the action.
-            self._timestep += 1
+            self.timestep += 1
             logger.debug(
                 "Action performed shapes: Y={}, X={}, Color={}, Submission={}".format(
                     actions["y_location"].shape,
@@ -322,7 +375,7 @@ class ArcBatchGridEnv(gym.Env):
                 list(range(self.batch_size)),
                 actions["y_location"],
                 actions["x_location"],
-            ] = self._timestep
+            ] = self.timestep
         else:
             logger.error(
                 "No action performed due to invalid action, sequence of values"
@@ -344,7 +397,7 @@ class ArcBatchGridEnv(gym.Env):
             dtype=self._reward_storage.dtype,
         )
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(1))
-        self._last_reward = reward
+        self.last_reward = reward
 
         # TODO: No truncate version, evaluate time constraints
         truncated = (

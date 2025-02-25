@@ -1,5 +1,4 @@
-import sys
-import argparse
+import os
 import google.auth.exceptions
 import torch
 import google.auth
@@ -199,6 +198,9 @@ class TorchQueue(torch.Tensor):
         )
 
 
+torch.serialization.safe_globals([TorchQueue])
+
+
 class BetaScheduler:
     def __init__(self, start, end, steps):
         self.start = start
@@ -219,15 +221,15 @@ class BetaScheduler:
 def is_gcp_environment():
     try:
         google.auth.default()
-        return True
+        return not os.environ.get("RUNNING_LOCAL", False)
     except google.auth.exceptions.DefaultCredentialsError:
         return False
 
 
 def get_logger(name):
     logger = logging.getLogger(name)
-    if is_gcp_environment():
-        client = google.cloud.logging.Client()
-        handler = google.cloud.logging.handlers.CloudLoggingHandler(client)
-        logger.addHandler(handler)
+    # if is_gcp_environment():
+    #     client = google.cloud.logging.Client()
+    #     handler = google.cloud.logging.handlers.CloudLoggingHandler(client)
+    #     logger.addHandler(handler)
     return logger
