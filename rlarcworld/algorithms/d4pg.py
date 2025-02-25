@@ -18,10 +18,10 @@ from rlarcworld.utils import (
     get_nested_ref,
     enable_cuda,
     BetaScheduler,
-    get_logger,
 )
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class D4PG:

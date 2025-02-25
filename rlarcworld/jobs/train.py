@@ -17,12 +17,12 @@ from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.utils import BetaScheduler, enable_cuda, get_logger
+from rlarcworld.utils import BetaScheduler, enable_cuda, configure_logger
 import torch
 import numpy as np
 import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def load_args_from_yaml(file_path, key):
@@ -214,6 +214,12 @@ if __name__ == "__main__":
         help="Logging level",
     )
     parser.add_argument(
+        "--log_convention",
+        type=str,
+        default="json",
+        help="Logging convention",
+    )
+    parser.add_argument(
         "--storage_uri",
         type=str,
         default=os.environ.get("STORAGE_URI"),
@@ -264,7 +270,10 @@ if __name__ == "__main__":
         args.tensorboard_log_dir = os.path.join(args.storage_uri, "tensorboard_logs")
 
     # Set logging level
-    logging.basicConfig(level=args.log_level)
+    if args.log_convention == "json":
+        configure_logger(level=args.log_level)
+    else:
+        logging.basicConfig(level=args.log_level)
 
     config_args = load_args_from_yaml(args.config_file, args.config_key)
     train_d4pg(

@@ -5,10 +5,10 @@ import numpy as np
 import torch
 from tensordict import TensorDict
 import unittest
-from rlarcworld.utils import get_logger
+import logging
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class ArcBatchGridsEnv(unittest.TestCase):

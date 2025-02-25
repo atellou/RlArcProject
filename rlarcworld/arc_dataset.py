@@ -6,12 +6,10 @@ import numpy as np
 from tensordict import TensorDict
 import torch
 from torch.utils.data import Dataset
-
 from google.cloud import storage
+import logging
 
-from rlarcworld.utils import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class ArcSampleTransformer(object):

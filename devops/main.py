@@ -5,9 +5,9 @@ import google.auth
 import vertexai
 from google.cloud import aiplatform
 
-from rlarcworld.utils import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def init_sample(

@@ -1,14 +1,12 @@
-import os
+import logging
 from typing import Optional, List
 import torch
 from tensordict import TensorDict
 import numpy as np
 import gymnasium as gym
-import logging
+from rlarcworld.utils import TorchQueue, enable_cuda
 
-from rlarcworld.utils import TorchQueue, enable_cuda, get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class ArcActionSpace:

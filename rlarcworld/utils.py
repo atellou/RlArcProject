@@ -1,9 +1,7 @@
 import os
-import google.auth.exceptions
 import torch
-import google.auth
 import logging
-import google.cloud.logging
+from pythonjsonlogger import jsonlogger
 
 
 def enable_cuda(use_amp=True, use_checkpointing=False):
@@ -218,18 +216,28 @@ class BetaScheduler:
         )
 
 
-def is_gcp_environment():
-    try:
-        google.auth.default()
-        return not os.environ.get("RUNNING_LOCAL", False)
-    except google.auth.exceptions.DefaultCredentialsError:
-        return False
+class CustomJsonFormatter(jsonlogger.JsonFormatter):
+    """Formats log lines in JSON."""
+
+    def process_log_record(self, log_record):
+        """Modifies fields in the log_record to match Cloud Logging's expectations."""
+        log_record["severity"] = log_record["levelname"]
+        log_record["timestampSeconds"] = int(log_record["created"])
+        log_record["timestampNanos"] = int(
+            (log_record["created"] % 1) * 1000 * 1000 * 1000
+        )
+
+        return log_record
 
 
-def get_logger(name):
-    logger = logging.getLogger(name)
-    # if is_gcp_environment():
-    #     client = google.cloud.logging.Client(os.environ["ML_PROJECT_ID"])
-    #     handler = google.cloud.logging.handlers.CloudLoggingHandler(client)
-    #     logger.addHandler(handler)
-    return logger
+def configure_logger(level="WARNING"):
+    """Configures python logger to format logs as JSON."""
+    formatter = CustomJsonFormatter(
+        "%(name)s|%(levelname)s|%(message)s|%(created)f" "|%(lineno)d|%(pathname)s",
+        "%Y-%m-%dT%H:%M:%S",
+    )
+    root_logger = logging.getLogger()
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
+    root_logger.setLevel(getattr(logging, level.upper()))
