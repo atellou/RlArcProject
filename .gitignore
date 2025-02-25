@@ -164,6 +164,9 @@ cython_debug/
 # Custom
 rlarcworld/**/dataset/
 gcs/
+**.ptc
+**.pt
+**.pth
 
 *test*.ipynb
 # Tensorboard
