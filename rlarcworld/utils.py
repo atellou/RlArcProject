@@ -229,7 +229,7 @@ def is_gcp_environment():
 def get_logger(name):
     logger = logging.getLogger(name)
     # if is_gcp_environment():
-    #     client = google.cloud.logging.Client()
+    #     client = google.cloud.logging.Client(os.environ["ML_PROJECT_ID"])
     #     handler = google.cloud.logging.handlers.CloudLoggingHandler(client)
     #     logger.addHandler(handler)
     return logger

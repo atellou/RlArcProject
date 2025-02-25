@@ -1191,7 +1191,7 @@ class D4PG:
             bucket_name = prefix[0]
             prefix = "/".join(prefix[1:])
 
-            client = storage.Client()
+            client = storage.Client(os.environ["ML_PROJECT_ID"])
             bucket = client.get_bucket(bucket_name)
 
             blob = bucket.blob(os.path.join(prefix, "actor.ptc"))

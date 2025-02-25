@@ -171,7 +171,7 @@ class ArcDataset(Dataset):
         self.transform = transform
         self.transformed = set()
         self.gcs_bucket_name = gcs_bucket_name
-        self.storage_client = storage.Client()
+        self.storage_client = storage.Client(os.environ["ML_PROJECT_ID"])
         if self.gcs_bucket_name is not None:
             self.bucket = self.storage_client.bucket(self.gcs_bucket_name)
         else:
