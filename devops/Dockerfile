@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1-labs
-FROM pytorch/pytorch:2.6.0-cuda11.8-cudnn9-devel
+FROM us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-3.py310:latest
 
 RUN apt-get update && apt-get install -y curl apt-utils
 # Set up working directory
