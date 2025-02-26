@@ -38,6 +38,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
             color_values=color_values,
             n_steps=10,
             gamma=0.9,
+            device="cpu",
         )
         dummy_batch = TensorDict(
             {
@@ -67,13 +68,15 @@ class ArcBatchGridsEnv(unittest.TestCase):
         env.is_train_episode = True
 
         # Save the environment to a file
-        env.save("test_checkpoint.ptc")
+        env.save("test_checkpoint")
 
         # Load the environment from the file
         loaded_env = ArcBatchGridEnv(
             grid_size=grid_size, color_values=color_values, n_steps=10, gamma=0.9
         )
-        loaded_env.load("test_checkpoint.ptc", weights_only=False)
+        loaded_env.load(
+            f"test_checkpoint/{loaded_env.__class__.__name__}.ptc", weights_only=False
+        )
 
         # Check that the attributes were loaded correctly
         torch.testing.assert_close(env.observations, loaded_env.observations)
@@ -92,6 +95,98 @@ class ArcBatchGridsEnv(unittest.TestCase):
         torch.testing.assert_close(env.batch_size, loaded_env.batch_size)
         torch.testing.assert_close(env.n_steps, loaded_env.n_steps)
         torch.testing.assert_close(env.gamma, loaded_env.gamma)
+
+    def test_arc_wrapper_save_and_load(self):
+        # Create an instance of the environment
+        color_values = 10
+        batch_size = 32
+        grid_size = 10
+        env0 = ArcBatchGridEnv(
+            grid_size=grid_size,
+            color_values=color_values,
+            n_steps=10,
+            gamma=0.9,
+            device="cpu",
+        )
+        env1 = PixelAwareRewardWrapper(
+            env0, n_steps=10, gamma=0.9, apply_clamp=True, v_min=0, v_max=1
+        )
+        dummy_batch = TensorDict(
+            {
+                "batch": {
+                    "input": torch.randint(
+                        0, color_values - 1, size=(batch_size, grid_size, grid_size)
+                    ),
+                    "output": torch.randint(
+                        0, color_values, size=(batch_size, grid_size, grid_size)
+                    ),
+                },
+                "examples": torch.randint(
+                    0,
+                    color_values,
+                    size=(batch_size, np.random.randint(2, 5), 2, grid_size, grid_size),
+                ),
+            }
+        )
+        env1.reset(options=dummy_batch)
+        # Set some attributes to test
+        env0.observations = torch.randn(32, 10)
+        env0.information = TensorDict({"key": torch.randn(32, 10)})
+        env0.last_grid = torch.randn(32, 10)
+        env0.last_reward = 1.0
+        env0.timestep = 10
+        env0.reward_storage = torch.randn(32, 10)
+        env0.is_train_episode = True
+
+        env1.last_reward = 1.0
+        env1.reward_storage = torch.randn(32, 10)
+
+        # Save the environment to a file
+        env1.save("test_checkpoint")
+
+        # Load the environment from the file
+        loaded_env0 = ArcBatchGridEnv(
+            grid_size=grid_size, color_values=color_values, n_steps=10, gamma=0.9
+        )
+        loaded_env1 = PixelAwareRewardWrapper(
+            loaded_env0, n_steps=10, gamma=0.9, apply_clamp=True, v_min=0, v_max=1
+        )
+        loaded_env1.load(
+            parent_path=f"test_checkpoint/parent/{loaded_env0.__class__.__name__}.ptc",
+            child_path=f"test_checkpoint/child/{loaded_env1.__class__.__name__}.ptc",
+            weights_only=False,
+            device="cpu",
+        )
+
+        # Check that the attributes were loaded correctly
+        torch.testing.assert_close(env0.observations, loaded_env0.observations)
+        torch.testing.assert_close(env0.information, loaded_env0.information)
+        torch.testing.assert_close(env0.last_grid, loaded_env0.last_grid)
+        torch.testing.assert_close(env0.last_reward, loaded_env0.last_reward)
+        torch.testing.assert_close(env0.timestep, loaded_env0.timestep)
+        torch.testing.assert_close(env0.reward_storage, loaded_env0.reward_storage)
+        torch.testing.assert_close(env0.discount_factor, loaded_env0.discount_factor)
+        torch.testing.assert_close(env0.is_train_episode, loaded_env0.is_train_episode)
+        torch.testing.assert_close(env0.n_steps, loaded_env0.n_steps)
+        torch.testing.assert_close(env0.gamma, loaded_env0.gamma)
+
+        torch.testing.assert_close(env1.last_reward, loaded_env1.last_reward)
+        torch.testing.assert_close(env1.reward_storage, loaded_env1.reward_storage)
+        torch.testing.assert_close(env1.discount_factor, loaded_env1.discount_factor)
+
+        # Check that the initialization parameters match
+        torch.testing.assert_close(env0.discount_factor, loaded_env0.discount_factor)
+        torch.testing.assert_close(env0.batch_size, loaded_env0.batch_size)
+        torch.testing.assert_close(env0.n_steps, loaded_env0.n_steps)
+        torch.testing.assert_close(env0.gamma, loaded_env0.gamma)
+
+        torch.testing.assert_close(env1.batch_size, loaded_env1.batch_size)
+        torch.testing.assert_close(env1.n_steps, loaded_env1.n_steps)
+        torch.testing.assert_close(env1.gamma, loaded_env1.gamma)
+        torch.testing.assert_close(env1.max_penality, loaded_env1.max_penality)
+        torch.testing.assert_close(env1.apply_clamp, loaded_env1.apply_clamp)
+        torch.testing.assert_close(env1.v_min, loaded_env1.v_min)
+        torch.testing.assert_close(env1.v_max, loaded_env1.v_max)
 
     def test_wrapper(self):
         logger.info("\nTesting ArcBatchGridEnv with wrapper PixelAwareRewardWrapper")

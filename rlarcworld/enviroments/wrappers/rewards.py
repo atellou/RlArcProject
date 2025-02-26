@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional
+from typing import List
 import torch
 import gymnasium as gym
 import logging
@@ -58,6 +58,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
 
+    def get_discount_factor(self):
+        return torch.ones((self.batch_size, self.n_steps)) * (
+            self.gamma ** torch.arange(1, self.n_steps + 1)
+        )
+
     def reset(self, *, seed=None, options=None):
         """
         Resets the environment and initializes reward-related attributes.
@@ -73,18 +78,16 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         reset = super().reset(seed=seed, options=options)
         self.batch_size = options["batch"]["input"].shape[0]
         # Reward attributes
-        self.discount_factor = torch.ones((self.batch_size, self.n_steps)) * (
-            self.gamma ** torch.arange(1, self.n_steps + 1)
-        )
+        self.discount_factor = self.get_discount_factor().to(self.device)
         self._reward_storage = TorchQueue(
             torch.zeros((self.batch_size, self.n_steps)),
             queue_size=self.n_steps,
             queue_dim=1,
         )
-        self._last_reward = torch.zeros(self.batch_size, dtype=int)
+        self.last_reward = torch.zeros(self.batch_size, dtype=int)
         self.discount_factor = self.discount_factor.to(self.device)
         self._reward_storage = self._reward_storage.to(self.device)
-        self._last_reward = self._last_reward.to(self.device)
+        self.last_reward = self.last_reward.to(self.device)
         return reset
 
     def n_step_reward(self, v_min: int = None, v_max: int = None):
@@ -168,6 +171,62 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         """
         return self.__max_penality
 
+    @property
+    def reward_storage(self):
+        return self._reward_storage
+
+    @reward_storage.setter
+    def reward_storage(self, value):
+        self._reward_storage = TorchQueue(value, queue_size=self.n_steps, queue_dim=1)
+
+    def save(self, path):
+        logger.debug("Saving environment to {}".format(path))
+        parent_path = os.path.join(path, "parent")
+        child_path = os.path.join(path, "child")
+        self.env.save(parent_path)
+        try:
+            os.makedirs(child_path, exist_ok=True)
+            torch.save(
+                {
+                    "reward_storage": self.reward_storage,
+                    "last_reward": self.last_reward,
+                    "max_penality": self.max_penality,
+                    "batch_size": self.batch_size,
+                    "n_steps": self.n_steps,
+                    "gamma": self.gamma,
+                    "apply_clamp": self.apply_clamp,
+                    "v_min": self.v_min,
+                    "v_max": self.v_max,
+                },
+                os.path.join(child_path, self.__class__.__name__ + ".ptc"),
+            )
+        except AttributeError as e:
+            logger.error(
+                "Error saving environment, reset should have been called by now: {}".format(
+                    e
+                )
+            )
+            raise
+
+    def load(self, parent_path, child_path, weights_only=True, device=None):
+        self.env.load(parent_path, weights_only=weights_only, device=device)
+        checkpoint = torch.load(child_path, weights_only=weights_only)
+        self.reward_storage = checkpoint["reward_storage"]
+        self.last_reward = checkpoint["last_reward"]
+        self.batch_size = checkpoint["batch_size"]
+
+        assert self.max_penality == checkpoint["max_penality"]
+        assert self.n_steps == checkpoint["n_steps"]
+        assert self.gamma == checkpoint["gamma"]
+        assert self.apply_clamp == checkpoint["apply_clamp"]
+        assert self.v_min == checkpoint["v_min"]
+        assert self.v_max == checkpoint["v_max"]
+
+        self.discount_factor = self.get_discount_factor()
+        if device is not None:
+            self.reward_storage = self.reward_storage.to(device)
+            self.discount_factor = self.discount_factor.to(device)
+
     def reward(
         self,
         last_diffs: torch.Tensor,
@@ -237,5 +296,5 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.grid_diffs = self.get_difference()
         reward = self.reward(self.last_diffs, self.grid_diffs, actions["submit"])
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(-1))
-        self._last_reward = reward
+        self.last_reward = reward
         return obs, reward, terminated, truncated, info

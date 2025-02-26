@@ -1,3 +1,4 @@
+import os
 import logging
 from typing import Optional, List
 import torch
@@ -147,6 +148,11 @@ class ArcBatchGridEnv(gym.Env):
             self.grid_size, self.grid_size, examples.shape[3], examples.shape[3]
         )
 
+    def get_discount_factor(self):
+        return torch.ones((self.batch_size, self.n_steps)) * (
+            self.gamma ** torch.arange(1, self.n_steps + 1)
+        )
+
     def reset(self, *, options: dict, seed: Optional[int] = None) -> tuple:
         """
         Resets the environment to an initial internal grid, returning an initial observation and info.
@@ -184,9 +190,7 @@ class ArcBatchGridEnv(gym.Env):
         self.last_grid = batch_in.clone()
 
         # Reward attributes
-        self.discount_factor = torch.ones((self.batch_size, self.n_steps)) * (
-            self.gamma ** torch.arange(1, self.n_steps + 1)
-        )
+        self.discount_factor = self.get_discount_factor().to(self.device)
         self._reward_storage = TorchQueue(
             torch.zeros((self.batch_size, self.n_steps)),
             queue_size=self.n_steps,
@@ -219,6 +223,7 @@ class ArcBatchGridEnv(gym.Env):
     def save(self, path):
         logger.debug("Saving environment to {}".format(path))
         try:
+            os.makedirs(path, exist_ok=True)
             torch.save(
                 {
                     "observations": self.observations,
@@ -227,7 +232,6 @@ class ArcBatchGridEnv(gym.Env):
                     "last_reward": self.last_reward,
                     "timestep": self.timestep,
                     "reward_storage": self.reward_storage,
-                    "discount_factor": self.discount_factor,
                     "is_train_episode": self.is_train_episode,
                     "n_steps": self.n_steps,
                     "gamma": self.gamma,
@@ -235,7 +239,7 @@ class ArcBatchGridEnv(gym.Env):
                     "color_values": self.color_values,
                     "batch_size": self.batch_size,
                 },
-                path,
+                os.path.join(path, self.__class__.__name__ + ".ptc"),
             )
         except AttributeError as e:
             logger.error(
@@ -254,7 +258,6 @@ class ArcBatchGridEnv(gym.Env):
         self.timestep = checkpoint["timestep"]
         self.reward_storage = checkpoint["reward_storage"]
         self.is_train_episode = checkpoint["is_train_episode"]
-        self.discount_factor = checkpoint["discount_factor"]
         self.batch_size = checkpoint["batch_size"]
 
         assert self.n_steps == checkpoint["n_steps"]
@@ -262,6 +265,7 @@ class ArcBatchGridEnv(gym.Env):
         assert self.grid_size == checkpoint["grid_size"]
         assert self.color_values == checkpoint["color_values"]
 
+        self.discount_factor = self.get_discount_factor()
         if device is not None:
             self.observations = self.observations.to(device)
             self.information = self.information.to(device)
