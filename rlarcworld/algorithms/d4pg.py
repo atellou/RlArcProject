@@ -994,10 +994,10 @@ class D4PG:
             merge_graphs (bool, optional): Whether to merge graphs in TensorBoard. Defaults to True
 
         """
-        global_train_step = 0
+        self.iteration = 0
         decay_flag = False
         for epoch_n in range(epochs):
-            logger.info(f"Epoch: {epoch_n}, Step runned: {global_train_step}")
+            logger.info(f"Epoch: {epoch_n}, Step runned: {self.iteration}")
             for step_number, (episode_number, step_state) in enumerate(
                 self.env_simulation(
                     self.train_env,
@@ -1009,7 +1009,7 @@ class D4PG:
                 logger.debug(
                     f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
                 )
-                self.log_parameters(global_train_step)
+                self.log_parameters(self.iteration)
                 # Store the experience in the replay buffer
                 if self.replay_buffer is not None:
                     batch = self.replay_buffer_step(
@@ -1042,13 +1042,13 @@ class D4PG:
 
                 if (
                     self.tb_writer is not None
-                    and global_train_step % grads_logger_frequency == 0
+                    and self.iteration % grads_logger_frequency == 0
                 ):
                     loss_actor, loss_critic = self.compute_loss(
                         batch,
                         training=True,
                         tb_writer_tag=tb_writer_tag,
-                        global_step=global_train_step,
+                        global_step=self.iteration,
                     )
                     logger.info(
                         f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Loss actor: {loss_actor}, Loss critic: {loss_critic}"
@@ -1057,7 +1057,7 @@ class D4PG:
                     loss_actor, loss_critic = self.compute_loss(batch, training=True)
                 if (
                     self.tb_writer is not None
-                    and global_train_step % logger_frequency == 0
+                    and self.iteration % logger_frequency == 0
                 ):
                     batch_size = step_state["reward"].batch_size[0]
                     value = loss_actor.item() / batch_size
@@ -1066,9 +1066,9 @@ class D4PG:
                     if merge_graphs:
                         path = "Loss/actor"
                         value = {tb_writer_tag: value}
-                        self.tb_writer.add_scalars(path, value, global_train_step)
+                        self.tb_writer.add_scalars(path, value, self.iteration)
                     else:
-                        self.tb_writer.add_scalar(path, value, global_train_step)
+                        self.tb_writer.add_scalar(path, value, self.iteration)
 
                     value = loss_critic.item() / batch_size
                     path = os.path.join(tb_writer_tag, "Loss/critic")
@@ -1076,9 +1076,9 @@ class D4PG:
                     if merge_graphs:
                         path = "Loss/critic"
                         value = {tb_writer_tag: value}
-                        self.tb_writer.add_scalars(path, value, global_train_step)
+                        self.tb_writer.add_scalars(path, value, self.iteration)
                     else:
-                        self.tb_writer.add_scalar(path, value, global_train_step)
+                        self.tb_writer.add_scalar(path, value, self.iteration)
                 if (
                     validation_steps_frequency > 0
                     and step_number % validation_steps_frequency == 0
@@ -1125,9 +1125,9 @@ class D4PG:
                         self.update_target_networks(tau=self.tau)
                     decay_flag = True
 
-                global_train_step += 1
-        global_train_step -= 1
-        logger.info("Total steps: {}".format(global_train_step))
+                self.iteration += 1
+        self.iteration -= 1
+        logger.info("Total steps: {}".format(self.iteration))
         if hasattr(self, "validation_env"):
             logger.info("Running last validation process")
             for (
@@ -1181,6 +1181,46 @@ class D4PG:
         if self.save_path is not None and loss_actor is not None:
             logger.info("Saving model in {}".format(self.save_path))
             self.save_model(self.save_path)
+
+    def checkpoint(
+        self,
+        epoch_number=None,
+        episode_number=None,
+        step_number=None,
+        loss_actor=None,
+        loss_critic=None,
+    ):
+        logger.debug("Saving checkpoint for iteration {}".format(self.iteration))
+        checkpoint = {
+            "actor": self.actor.state_dict(),
+            "critic": self.critic.state_dict(),
+            "optimizer_actor": self.actor_optimizer.state_dict(),
+            "optimizer_critic": self.critic_optimizer.state_dict(),
+            "lr_schedules": {
+                "actor": self.actor_scheduler.state_dict(),
+                "critic": self.critic_scheduler.state_dict(),
+            },
+            "iteration": self.iteration,
+            "hyperparameters": {
+                "batch_size": self.batch_size,
+                "gamma": self.gamma,
+                "carsm": self.carsm,
+                "tau": self.tau,
+                "target_update_frequency": self.target_update_frequency,
+                "entropy_coef": self.entropy_coef,
+                "entropy_coef_decay": self.entropy_coef_decay,
+                "n_steps": self.n_steps,
+            },
+        }
+        checkpoint["hyperparameters"].update(self.extras_hparams)
+        return checkpoint
+
+    def save_checkpoint(self, path):
+        torch.save(self.checkpoint(), path)
+
+    def load_checkpoint(self, checkpoint):
+        self.actor.load_state_dict(checkpoint["actor"])
+        self.critic.load_state_dict(checkpoint["critic"])
 
     def save_model(self, path):
         if path.startswith("gs://"):
