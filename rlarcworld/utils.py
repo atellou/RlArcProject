@@ -200,20 +200,31 @@ torch.serialization.safe_globals([TorchQueue])
 
 
 class BetaScheduler:
-    def __init__(self, start, end, steps):
+    def __init__(self, start, end, steps, internal_step=0):
         self.start = start
         self.end = end
         self.steps = steps
-        self.internal_step = 0
+        self.internal_step = internal_step
+        self.beta = self.start
 
     def step(
         self,
     ):
         self.internal_step += 1
-        return min(
+        self.beta = min(
             self.end,
             self.start + (self.end - self.start) * self.internal_step / self.end,
         )
+        return self.beta
+
+    def state_dict(self):
+        return {
+            "start": self.start,
+            "end": self.end,
+            "steps": self.steps,
+            "internal_step": self.internal_step,
+            "beta": self.beta,
+        }
 
 
 class CustomJsonFormatter(jsonlogger.JsonFormatter):

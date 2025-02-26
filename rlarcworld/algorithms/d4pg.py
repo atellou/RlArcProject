@@ -998,14 +998,13 @@ class D4PG:
         decay_flag = False
         for epoch_n in range(epochs):
             logger.info(f"Epoch: {epoch_n}, Step runned: {self.iteration}")
-            for step_number, (episode_number, step_state) in enumerate(
-                self.env_simulation(
-                    self.train_env,
-                    self.train_samples,
-                    max_steps=max_steps,
-                    tb_writer_tag=tb_writer_tag,
-                )
-            ):
+            self.train_env_simulator = self.env_simulation(
+                self.train_env,
+                self.train_samples,
+                max_steps=max_steps,
+                tb_writer_tag=tb_writer_tag,
+            )
+            for step_number, (episode_number, step_state) in enumerate():
                 logger.debug(
                     f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
                 )
@@ -1164,6 +1163,8 @@ class D4PG:
                     "n_steps": self.n_steps,
                 }
             )
+            if self.lr_scheduler is not None:
+                self.extras_hparams.update(self.lr_scheduler_kwargs)
             self.tb_writer.add_hparams(
                 self.extras_hparams,
                 {
@@ -1189,6 +1190,8 @@ class D4PG:
         step_number=None,
         loss_actor=None,
         loss_critic=None,
+        replay_buffer=False,
+        data_loaders=False,
     ):
         logger.debug("Saving checkpoint for iteration {}".format(self.iteration))
         checkpoint = {
@@ -1212,11 +1215,46 @@ class D4PG:
                 "n_steps": self.n_steps,
             },
         }
+        # Save replay buffer
+        if replay_buffer and self.replay_buffer is not None:
+            if self.beta_scheduler is not None:
+                checkpoint["replay_buffer"] = {
+                    "sampler": {
+                        "alpha": self.replay_buffer.sampler.alpha,
+                        "beta": self.beta_scheduler.step(),
+                    },
+                    "scheduler": self.beta_scheduler.state_dict(),
+                }
+        if data_loaders:
+            checkpoint["data_loaders"] = {
+                "train": {
+                    "sampler_state": self.train_samples.state_dict(),
+                    "rng_state": torch.get_rng_state(),
+                }
+            }
+            if self.validation_samples is not None:
+                checkpoint["data_loaders"]["validation"] = {
+                    "sampler_state": self.validation_samples.state_dict(),
+                    "rng_state": torch.get_rng_state(),
+                }
+
+        # Fit parameters
+        if epoch_number is not None:
+            checkpoint["epoch"] = epoch_number
+        if episode_number is not None:
+            checkpoint["episode"] = episode_number
+        if step_number is not None:
+            checkpoint["step"] = step_number
+        if loss_actor is not None:
+            checkpoint["loss_actor"] = loss_actor
+        if loss_critic is not None:
+            checkpoint["loss_critic"] = loss_critic
         checkpoint["hyperparameters"].update(self.extras_hparams)
         return checkpoint
 
-    def save_checkpoint(self, path):
-        torch.save(self.checkpoint(), path)
+    def save_checkpoint(self, path, **kwargs):
+        logger.debug("Saved checkpoint in {}".format(path))
+        torch.save(self.checkpoint(**kwargs), path)
 
     def load_checkpoint(self, checkpoint):
         self.actor.load_state_dict(checkpoint["actor"])

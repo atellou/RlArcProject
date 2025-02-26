@@ -17,7 +17,8 @@ from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PG
-from rlarcworld.utils import get_nested_ref, BetaScheduler, logging.getLogger
+from rlarcworld.utils import get_nested_ref, BetaScheduler
+import logging
 
 import unittest
 
