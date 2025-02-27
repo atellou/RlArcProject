@@ -217,6 +217,8 @@ class D4PG:
         self.actor_target = self.actor_target.to(self.device)
         self.critic_target = self.critic_target.to(self.device)
 
+        self.loaded_checkpoint = False
+
     def apply_decay(self):
         """
         Applies entropy coefficient decay.
@@ -733,7 +735,9 @@ class D4PG:
             .to(self.device)
         )
 
-    def episodes_simulation(self, env, samples, max_steps: int = -1, seed: int = None):
+    def episodes_simulation(
+        self, env, samples, max_steps: int = -1, seed: int = None, **kwargs
+    ):
         """
         Simulates episodes in the environment using the current policy.
 
@@ -762,11 +766,14 @@ class D4PG:
         assert (
             self.n_steps <= max_steps or max_steps < 0
         ), "max_steps must be greater or equal to n_steps"
-        env.reset(
-            options={"batch": samples["task"], "examples": samples["examples"]},
-            seed=seed,
-        )
 
+        if not self.loaded_checkpoint:
+            kwargs.update({"batch": samples["task"], "examples": samples["examples"]})
+            env.reset(
+                options=kwargs,
+                seed=seed,
+            )
+        self.loaded_checkpoint = False
         done = False
         step_number = 0
         while not done and (max_steps <= -1 or max_steps >= step_number):
@@ -815,16 +822,6 @@ class D4PG:
 
         for episode_number, sample_batch in enumerate(samples):
             sample_batch = TensorDict(sample_batch).to(self.device)
-            kwargs.update(
-                {
-                    "batch": sample_batch["task"],
-                    "examples": sample_batch["examples"],
-                }
-            )
-            env.reset(
-                options=kwargs,
-                seed=episode_number,
-            )
             for step_number, step_state in self.episodes_simulation(
                 env, sample_batch, max_steps, seed=episode_number
             ):
@@ -998,13 +995,14 @@ class D4PG:
         decay_flag = False
         for epoch_n in range(epochs):
             logger.info(f"Epoch: {epoch_n}, Step runned: {self.iteration}")
-            self.train_env_simulator = self.env_simulation(
-                self.train_env,
-                self.train_samples,
-                max_steps=max_steps,
-                tb_writer_tag=tb_writer_tag,
-            )
-            for step_number, (episode_number, step_state) in enumerate():
+            for step_number, (episode_number, step_state) in enumerate(
+                self.env_simulation(
+                    self.train_env,
+                    self.train_samples,
+                    max_steps=max_steps,
+                    tb_writer_tag=tb_writer_tag,
+                )
+            ):
                 logger.debug(
                     f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
                 )
@@ -1199,10 +1197,6 @@ class D4PG:
             "critic": self.critic.state_dict(),
             "optimizer_actor": self.actor_optimizer.state_dict(),
             "optimizer_critic": self.critic_optimizer.state_dict(),
-            "lr_schedules": {
-                "actor": self.actor_scheduler.state_dict(),
-                "critic": self.critic_scheduler.state_dict(),
-            },
             "iteration": self.iteration,
             "hyperparameters": {
                 "batch_size": self.batch_size,
@@ -1215,13 +1209,19 @@ class D4PG:
                 "n_steps": self.n_steps,
             },
         }
+        if self.actor_scheduler is not None and self.critic_scheduler is not None:
+            checkpoint["lr_schedules"] = {
+                "actor": self.actor_scheduler.state_dict(),
+                "critic": self.critic_scheduler.state_dict(),
+            }
         # Save replay buffer
         if replay_buffer and self.replay_buffer is not None:
             if self.beta_scheduler is not None:
+                self.replay_buffer.save()
                 checkpoint["replay_buffer"] = {
                     "sampler": {
                         "alpha": self.replay_buffer.sampler.alpha,
-                        "beta": self.beta_scheduler.step(),
+                        "beta": self.beta_scheduler.beta,
                     },
                     "scheduler": self.beta_scheduler.state_dict(),
                 }
@@ -1254,11 +1254,35 @@ class D4PG:
 
     def save_checkpoint(self, path, **kwargs):
         logger.debug("Saved checkpoint in {}".format(path))
-        torch.save(self.checkpoint(**kwargs), path)
+        torch.save(self.checkpoint(**kwargs), os.path.join(path, "attributes.ptc"))
 
-    def load_checkpoint(self, checkpoint):
+        if kwargs.get("replay_buffer", False) and self.replay_buffer:
+            self.replay_buffer.save(os.path.join(path, "replay_buffer.ptc"))
+        self.train_env.save(os.path.join(path, "environment", "train"))
+        self.validation_env.save(os.path.join(path, "environment", "validation"))
+
+    def load_checkpoint(self, path):
+        checkpoint = torch.load(os.path.join(path, "attributes.ptc"))
         self.actor.load_state_dict(checkpoint["actor"])
         self.critic.load_state_dict(checkpoint["critic"])
+        self.actor_target.load_state_dict(checkpoint["actor"])
+        self.critic_target.load_state_dict(checkpoint["critic"])
+        self.actor_optimizer.load_state_dict(checkpoint["optimizer_actor"])
+        self.critic_optimizer.load_state_dict(checkpoint["optimizer_critic"])
+        if checkpoint.get("lr_schedules") is not None:
+            self.actor_scheduler.load_state_dict(checkpoint["lr_schedules"]["actor"])
+            self.critic_scheduler.load_state_dict(checkpoint["lr_schedules"]["critic"])
+        if checkpoint.get("replay_buffer") is not None:
+            self.replay_buffer.load(os.path.join(path, "replay_buffer.ptc"))
+            self.replay_buffer.sampler.alpha = checkpoint["replay_buffer"]["sampler"][
+                "alpha"
+            ]
+            self.replay_buffer.sampler.beta = checkpoint["replay_buffer"]["sampler"][
+                "beta"
+            ]
+            if self.beta_scheduler is not None:
+                self.beta_scheduler.load(checkpoint["replay_buffer"]["scheduler"])
+        # NOTE: Load the env here
 
     def save_model(self, path):
         if path.startswith("gs://"):

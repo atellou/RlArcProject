@@ -226,6 +226,13 @@ class BetaScheduler:
             "beta": self.beta,
         }
 
+    def load(self, state_dict):
+        self.start = state_dict["start"]
+        self.end = state_dict["end"]
+        self.steps = state_dict["steps"]
+        self.internal_step = state_dict["internal_step"]
+        self.beta = state_dict["beta"]
+
 
 class CustomJsonFormatter(jsonlogger.JsonFormatter):
     """Formats log lines in JSON."""
