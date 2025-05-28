@@ -248,12 +248,17 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
         return log_record
 
 
-def configure_logger(level="WARNING"):
+def configure_logger(level="WARNING", json_format=True):
     """Configures python logger to format logs as JSON."""
-    formatter = CustomJsonFormatter(
-        "%(name)s|%(levelname)s|%(message)s|%(created)f" "|%(lineno)d|%(pathname)s",
-        "%Y-%m-%dT%H:%M:%S",
-    )
+    if json_format:
+        formatter = CustomJsonFormatter(
+            "%(name)s|%(levelname)s|%(message)s|%(created)f" "|%(lineno)d|%(pathname)s",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+    else:
+        formatter = logging.Formatter(
+            "%(lineno)d|%(pathname)s|%(name)s|%(levelname)s:%(message)s"
+        )
     root_logger = logging.getLogger()
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)

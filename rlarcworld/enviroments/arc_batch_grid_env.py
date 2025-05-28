@@ -15,7 +15,7 @@ class ArcActionSpace:
         """
         Args:
             grid_size (int): The size of the grid.
-            color_values (int): The number of color values in the grid.
+            color_values (int): The number of color values in the grid non-inclusive.
         """
         self.grid_size = grid_size
         self.color_values = color_values
@@ -247,7 +247,11 @@ class ArcBatchGridEnv(gym.Env):
                     e
                 )
             )
-            raise
+            raise AttributeError(
+                "Error saving environment, reset should have been called by now: {}".format(
+                    e
+                )
+            )
 
     def load(self, path, weights_only=True, device=None):
         checkpoint = torch.load(path, weights_only=weights_only)

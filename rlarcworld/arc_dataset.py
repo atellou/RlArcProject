@@ -78,9 +78,9 @@ class ArcSampleTransformer(object):
         Returns:
             torch.Tensor: The concatenated grid.
         """
-        assert grid_one.shape == grid_two.shape, (
-            "The input and output grids should have the same shape." ""
-        )
+        assert (
+            grid_one.shape == grid_two.shape
+        ), "The input and output grids should have the same shape."
         return torch.cat((grid_one.unsqueeze(0), grid_two.unsqueeze(0)), dim=0)
 
     def concat_examples(self, train_examples: list[dict]) -> torch.Tensor:

@@ -208,7 +208,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             )
             raise
 
-    def load(self, parent_path, child_path, weights_only=True, device=None):
+    def load(self, parent_path, child_path, weights_only=False, device=None):
         self.env.load(parent_path, weights_only=weights_only, device=device)
         checkpoint = torch.load(child_path, weights_only=weights_only)
         self.reward_storage = checkpoint["reward_storage"]

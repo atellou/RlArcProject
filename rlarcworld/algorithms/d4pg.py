@@ -1,3 +1,4 @@
+from multiprocessing import ProcessError
 import os
 import copy
 import numpy as np
@@ -198,9 +199,13 @@ class D4PG:
 
         # Create schedulers
         if lr_scheduler_kwargs is None:
+            self.lr_scheduler_kwargs = None
+
             self.actor_scheduler = None
             self.critic_scheduler = None
         else:
+            self.lr_scheduler_kwargs = lr_scheduler_kwargs
+
             self.actor_scheduler = optim.lr_scheduler.StepLR(
                 self.actor_optimizer, **lr_scheduler_kwargs
             )
@@ -1161,7 +1166,7 @@ class D4PG:
                     "n_steps": self.n_steps,
                 }
             )
-            if self.lr_scheduler is not None:
+            if self.lr_scheduler_kwargs is not None:
                 self.extras_hparams.update(self.lr_scheduler_kwargs)
             self.tb_writer.add_hparams(
                 self.extras_hparams,
@@ -1191,7 +1196,11 @@ class D4PG:
         replay_buffer=False,
         data_loaders=False,
     ):
-        logger.debug("Saving checkpoint for iteration {}".format(self.iteration))
+        if not hasattr(self, "iteration"):
+            raise AttributeError(
+                "Iteration not found in D4PG object, no checkpoint to save"
+            )
+        logger.info("Creating checkpoint for iteration {}...".format(self.iteration))
         checkpoint = {
             "actor": self.actor.state_dict(),
             "critic": self.critic.state_dict(),
@@ -1253,13 +1262,17 @@ class D4PG:
         return checkpoint
 
     def save_checkpoint(self, path, **kwargs):
-        logger.debug("Saved checkpoint in {}".format(path))
+        logger.info("Saving checkpoint in {}...".format(path))
         torch.save(self.checkpoint(**kwargs), os.path.join(path, "attributes.ptc"))
 
         if kwargs.get("replay_buffer", False) and self.replay_buffer:
+            logger.info("Saving replay buffer in {}...".format(path))
             self.replay_buffer.save(os.path.join(path, "replay_buffer.ptc"))
         self.train_env.save(os.path.join(path, "environment", "train"))
-        self.validation_env.save(os.path.join(path, "environment", "validation"))
+        if hasattr(self, "validation_env"):
+            logger.info("Saving validation environment in {}...".format(path))
+            self.validation_env.save(os.path.join(path, "environment", "validation"))
+        logger.info("Checkpoint saved in {}".format(path))
 
     def load_checkpoint(self, path):
         checkpoint = torch.load(os.path.join(path, "attributes.ptc"))
@@ -1269,6 +1282,8 @@ class D4PG:
         self.critic_target.load_state_dict(checkpoint["critic"])
         self.actor_optimizer.load_state_dict(checkpoint["optimizer_actor"])
         self.critic_optimizer.load_state_dict(checkpoint["optimizer_critic"])
+        self.iteration = checkpoint["iteration"]
+
         if checkpoint.get("lr_schedules") is not None:
             self.actor_scheduler.load_state_dict(checkpoint["lr_schedules"]["actor"])
             self.critic_scheduler.load_state_dict(checkpoint["lr_schedules"]["critic"])
@@ -1282,7 +1297,57 @@ class D4PG:
             ]
             if self.beta_scheduler is not None:
                 self.beta_scheduler.load(checkpoint["replay_buffer"]["scheduler"])
-        # NOTE: Load the env here
+        env_path = os.path.join(
+            path,
+            "environment",
+            "{sample_type}",
+            "{level}",
+            "{env_class}.ptc",
+        )
+        self.train_env.load(
+            parent_path=env_path.format(
+                sample_type="train",
+                level="parent",
+                env_class=self.train_env.env.__class__.__name__,
+            ),
+            child_path=env_path.format(
+                sample_type="train",
+                level="child",
+                env_class=self.train_env.__class__.__name__,
+            ),
+            weights_only=False,
+            device=self.device,
+        )
+        if hasattr(self, "validation_env"):
+            self.validation_env.load(
+                parent_path=env_path.format(
+                    sample_type="validation",
+                    level="parent",
+                    env_class=self.validation_env.__class__.__name__,
+                ),
+                child_path=env_path.format(
+                    sample_type="validation",
+                    level="child",
+                    env_class=self.validation_env.__class__.__name__,
+                ),
+                weights_only=False,
+                device=self.device,
+            )
+
+        assert self.batch_size == checkpoint["hyperparameters"]["batch_size"]
+        assert self.gamma == checkpoint["hyperparameters"]["gamma"]
+        assert self.carsm == checkpoint["hyperparameters"]["carsm"]
+        assert self.tau == checkpoint["hyperparameters"]["tau"]
+        assert (
+            self.target_update_frequency
+            == checkpoint["hyperparameters"]["target_update_frequency"]
+        )
+        assert self.entropy_coef == checkpoint["hyperparameters"]["entropy_coef"]
+        assert (
+            self.entropy_coef_decay
+            == checkpoint["hyperparameters"]["entropy_coef_decay"]
+        )
+        assert self.n_steps == checkpoint["hyperparameters"]["n_steps"]
 
     def save_model(self, path):
         if path.startswith("gs://"):

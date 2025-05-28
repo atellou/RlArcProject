@@ -1,15 +1,14 @@
 import os
-import argparse
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-import tensordict
 from tensordict import TensorDict
 from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
     LazyTensorStorage,
     PrioritizedSampler,
 )
+import json
 
 from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
@@ -21,13 +20,13 @@ from rlarcworld.utils import get_nested_ref, BetaScheduler
 import logging
 
 import unittest
-
+import os
 from torch.utils.tensorboard import SummaryWriter
+from rlarcworld.utils import configure_logger
 
+# Configure root logger with debug level
+configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-
 logger.info("Setting up D4PG test")
 
 
@@ -356,6 +355,173 @@ class TestD4PG(unittest.TestCase):
             max_steps=max_steps,
         )
         logger.info("D4PG with replay buffer finished")
+
+    def test_checkpoint_save_load(self):
+        """Test saving and loading D4PG checkpoints."""
+        # Setup test environment and agent
+        grid_size = 30
+        color_values = 11
+        n_steps = 2
+        gamma = 0.99
+
+        # Create environment and wrap it
+        env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps, gamma=gamma)
+        env = PixelAwareRewardWrapper(env, n_steps=n_steps, gamma=gamma)
+
+        # Create dataset and dataloader
+        dataset = ArcDataset(
+            arc_dataset_dir="tests/test_data/unittest/training",
+            keep_in_memory=False,
+            transform=ArcSampleTransformer(
+                output_size=(grid_size, grid_size), examples_stack_dim=10
+            ),
+        )
+        train_loader = DataLoader(
+            dataset,
+            batch_size=2,
+            shuffle=True,
+        )
+
+        # Initialize D4PG agent
+        actor = ArcActorNetwork(grid_size=grid_size, color_values=color_values)
+        critic = ArcCriticNetwork(
+            grid_size=grid_size,
+            color_values=color_values,
+            num_atoms={"pixel_wise": 50, "binary": 3},
+            v_min={"pixel_wise": -40, "binary": 0},
+            v_max={"pixel_wise": 2, "binary": 1},
+        )
+
+        d4pg = D4PG(
+            env=env,
+            train_samples=train_loader,
+            actor=actor,
+            critic=critic,
+            batch_size=2,
+            policy_lr=1e-4,
+            critic_lr=1e-3,
+            n_steps=n_steps,
+            gamma=gamma,
+            tau=0.005,
+            target_update_frequency=100,
+            entropy_coef=0.01,
+        )
+
+        # Create a temporary directory for saving checkpoints
+        import tempfile
+        import shutil
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Initialize the environment with some data
+            sample = next(iter(train_loader))
+            env.reset(options={"batch": sample["task"], "examples": sample["examples"]})
+
+            # Initialize the iteration counter
+            d4pg.iteration = 0
+
+            # Save the checkpoint
+            d4pg.save_checkpoint(temp_dir)
+
+            try:
+                # Check that the checkpoint was saved
+                assert os.path.exists(
+                    os.path.join(
+                        temp_dir,
+                        "attributes.ptc",
+                    )
+                ), "Checkpoint attributes not saved in {}".format(temp_dir)
+                assert os.path.exists(
+                    os.path.join(
+                        temp_dir,
+                        "environment/train/parent/ArcBatchGridEnv.ptc",
+                    )
+                ), "Checkpoint environment train parent not saved in {}".format(
+                    temp_dir
+                )
+                assert os.path.exists(
+                    os.path.join(
+                        temp_dir,
+                        "environment/train/child/PixelAwareRewardWrapper.ptc",
+                    )
+                ), "Checkpoint environment train child not saved in {}".format(temp_dir)
+
+                # Create a new D4PG instance
+                new_actor = ArcActorNetwork(
+                    grid_size=grid_size, color_values=color_values
+                )
+                new_critic = ArcCriticNetwork(
+                    grid_size=grid_size,
+                    color_values=color_values,
+                    num_atoms={"pixel_wise": 50, "binary": 3},
+                    v_min={"pixel_wise": -40, "binary": 0},
+                    v_max={"pixel_wise": 2, "binary": 1},
+                )
+
+                new_d4pg = D4PG(
+                    env=env,
+                    train_samples=train_loader,
+                    actor=new_actor,
+                    critic=new_critic,
+                    batch_size=2,
+                    policy_lr=1e-4,
+                    critic_lr=1e-3,
+                    n_steps=n_steps,
+                    gamma=gamma,
+                    tau=0.005,
+                    target_update_frequency=100,
+                    entropy_coef=0.01,
+                )
+
+                # Load the checkpoint
+                new_d4pg.load_checkpoint(temp_dir)
+            except Exception as e:
+                # Print the contents of the directory
+                checkpoint_dir_contents = "Checkpoint directory contents:\n"
+                for i, (path, dirs, files) in enumerate(os.walk(temp_dir)):
+                    checkpoint_dir_contents += (
+                        f"{i}: Path: {path}\n\tDirs: {dirs}\n\tFiles: {files}\n"
+                    )
+                logger.error(checkpoint_dir_contents)
+                raise e
+
+            # Verify that the models were loaded correctly
+            for (name, param), (new_name, new_param) in zip(
+                d4pg.actor.named_parameters(), new_d4pg.actor.named_parameters()
+            ):
+                assert torch.allclose(
+                    param, new_param
+                ), f"Actor parameter {name} mismatch"
+
+            for (name, param), (new_name, new_param) in zip(
+                d4pg.critic.named_parameters(), new_d4pg.critic.named_parameters()
+            ):
+                assert torch.allclose(
+                    param, new_param
+                ), f"Critic parameter {name} mismatch"
+
+            # Verify optimizer states
+            for param_group, new_param_group in zip(
+                d4pg.actor_optimizer.param_groups,
+                new_d4pg.actor_optimizer.param_groups,
+            ):
+                for key in param_group:
+                    if key != "params":
+                        assert (
+                            param_group[key] == new_param_group[key]
+                        ), f"Actor optimizer {key} mismatch"
+
+            # Verify hyperparameters
+            assert d4pg.iteration == new_d4pg.iteration
+            assert d4pg.gamma == new_d4pg.gamma
+            assert d4pg.tau == new_d4pg.tau
+            assert d4pg.n_steps == new_d4pg.n_steps
+
+            logger.info("Checkpoint save/load test passed successfully!")
+
+        finally:
+            # Clean up
+            shutil.rmtree(temp_dir)
 
     def test_full_train_d4pg(self):
         grid_size = 30
