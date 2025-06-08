@@ -1234,17 +1234,14 @@ class D4PG:
                     },
                     "scheduler": self.beta_scheduler.state_dict(),
                 }
+        checkpoint["torch_rng_state"] = torch.get_rng_state()
         if data_loaders:
             checkpoint["data_loaders"] = {
-                "train": {
-                    "sampler_state": self.train_samples.state_dict(),
-                    "rng_state": torch.get_rng_state(),
-                }
+                "train": {"sampler_state": self.train_samples.state_dict()}
             }
             if self.validation_samples is not None:
                 checkpoint["data_loaders"]["validation"] = {
                     "sampler_state": self.validation_samples.state_dict(),
-                    "rng_state": torch.get_rng_state(),
                 }
 
         # Fit parameters
@@ -1297,6 +1294,24 @@ class D4PG:
             ]
             if self.beta_scheduler is not None:
                 self.beta_scheduler.load(checkpoint["replay_buffer"]["scheduler"])
+
+        # Restore PyTorch's RNG state
+        torch.set_rng_state(checkpoint["torch_rng_state"].cpu())
+        # Restore data loaders and RNG states if available
+        if checkpoint.get("data_loaders") is not None:
+            if hasattr(self, "train_samples") and "train" in checkpoint["data_loaders"]:
+                self.train_samples.load_state_dict(
+                    checkpoint["data_loaders"]["train"]["sampler_state"]
+                )
+
+            if (
+                hasattr(self, "validation_samples")
+                and "validation" in checkpoint["data_loaders"]
+            ):
+                self.validation_samples.load_state_dict(
+                    checkpoint["data_loaders"]["validation"]["sampler_state"]
+                )
+
         env_path = os.path.join(
             path,
             "environment",
