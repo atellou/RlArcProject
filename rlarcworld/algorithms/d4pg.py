@@ -1264,7 +1264,9 @@ class D4PG:
         logger.info("Checkpoint saved in {}".format(path))
 
     def load_checkpoint(self, path):
-        checkpoint = torch.load(os.path.join(path, "attributes.ptc"))
+        checkpoint = torch.load(
+            os.path.join(path, "attributes.ptc"), map_location=self.device
+        )
         self.actor.load_state_dict(checkpoint["actor"])
         self.critic.load_state_dict(checkpoint["critic"])
         self.actor_target.load_state_dict(checkpoint["actor"])

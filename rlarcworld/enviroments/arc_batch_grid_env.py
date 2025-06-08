@@ -254,7 +254,7 @@ class ArcBatchGridEnv(gym.Env):
             )
 
     def load(self, path, weights_only=True, device=None):
-        checkpoint = torch.load(path, weights_only=weights_only)
+        checkpoint = torch.load(path, weights_only=weights_only, map_location=device)
         self.observations = checkpoint["observations"]
         self.information = checkpoint["information"]
         self.last_grid = checkpoint["last_grid"]
