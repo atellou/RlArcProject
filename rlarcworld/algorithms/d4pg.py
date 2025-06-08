@@ -1024,13 +1024,11 @@ class D4PG:
                         .to(self.device)
                     )
                 else:
-                    batch = None
-
-                if batch is None:
                     continue
 
                 batch = self.fileter_compleated_state(batch)
 
+                ## Compute training loss
                 if (
                     self.tb_writer is not None
                     and self.iteration % grads_logger_frequency == 0
@@ -1046,6 +1044,8 @@ class D4PG:
                     )
                 else:
                     loss_actor, loss_critic = self.compute_loss(batch, training=True)
+
+                ## Log training loss
                 if (
                     self.tb_writer is not None
                     and self.iteration % logger_frequency == 0
@@ -1070,10 +1070,11 @@ class D4PG:
                         self.tb_writer.add_scalars(path, value, self.iteration)
                     else:
                         self.tb_writer.add_scalar(path, value, self.iteration)
+
+                ## Validation
                 if (
                     validation_steps_frequency > 0
                     and step_number % validation_steps_frequency == 0
-                    and batch is not None
                 ):
                     if not hasattr(
                         self, "running_validation_process"
@@ -1107,13 +1108,12 @@ class D4PG:
                             )
                             break
 
-                if batch is not None:
-                    if decay_flag:
-                        self.apply_decay()
+                if decay_flag:
+                    self.apply_decay()
 
-                    if step_number % self.target_update_frequency == 0:
-                        logger.debug("Updating networks step {}".format(step_number))
-                        self.update_target_networks(tau=self.tau)
+                if step_number % self.target_update_frequency == 0:
+                    logger.debug("Updating networks step {}".format(step_number))
+                    self.update_target_networks(tau=self.tau)
                     decay_flag = True
 
                 self.iteration += 1
