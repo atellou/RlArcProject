@@ -1191,6 +1191,15 @@ class D4PG:
             )
         logger.info("Creating checkpoint for iteration {}...".format(self.iteration))
         checkpoint = {
+            "version": "1.0.0",
+            "device": self.device,
+            "info": {
+                "epoch_number": epoch_number,
+                "episode_number": episode_number,
+                "step_number": step_number,
+                "loss_actor": loss_actor,
+                "loss_critic": loss_critic,
+            },
             "actor": self.actor.state_dict(),
             "critic": self.critic.state_dict(),
             "optimizer_actor": self.actor_optimizer.state_dict(),
@@ -1236,17 +1245,6 @@ class D4PG:
                     "sampler_state": self.validation_samples.state_dict(),
                 }
 
-        # Fit parameters
-        if epoch_number is not None:
-            checkpoint["epoch"] = epoch_number
-        if episode_number is not None:
-            checkpoint["episode"] = episode_number
-        if step_number is not None:
-            checkpoint["step"] = step_number
-        if loss_actor is not None:
-            checkpoint["loss_actor"] = loss_actor
-        if loss_critic is not None:
-            checkpoint["loss_critic"] = loss_critic
         checkpoint["hyperparameters"].update(self.extras_hparams)
         return checkpoint
 
@@ -1266,6 +1264,11 @@ class D4PG:
     def load_checkpoint(self, path):
         checkpoint = torch.load(
             os.path.join(path, "attributes.ptc"), map_location=self.device
+        )
+        logger.info(
+            "Loading checkpoint from {} from model version {}...".format(
+                path, checkpoint["version"]
+            )
         )
         self.actor.load_state_dict(checkpoint["actor"])
         self.critic.load_state_dict(checkpoint["critic"])
