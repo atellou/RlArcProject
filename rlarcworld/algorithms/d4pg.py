@@ -53,6 +53,7 @@ class D4PG:
         extras_hparams: dict = None,
         save_path: str = None,
         config=None,
+        max_grad_norm: float = 0.0,
     ):
         """
         D4PG (Distributed Distributional Deep Deterministic Policy Gradient) implementation.
@@ -89,6 +90,7 @@ class D4PG:
             extras_hparams (dict, optional): Dictionary of extra hyperparameters to log
             save_path (str, optional): Path to save model checkpoints
             config (dict, optional): Configuration dictionary with device, and weather to use AMP and checkpointing
+            max_grad_norm (float, optional): Maximum gradient norm for gradient clipping. Defaults to 0.0
 
         Methods:
             step(): Performs a single environment step using current policy
@@ -142,6 +144,7 @@ class D4PG:
             if self.config.get("use_amp", False)
             else None
         )
+        self.max_grad_norm = max_grad_norm
 
         self.history = {}
         if extras_hparams is None:
@@ -595,6 +598,8 @@ class D4PG:
                 target_probs,
                 compute_td_error=self.replay_buffer is not None,
             )
+
+            ## Critic loss computations
             loss_critic = tuple(loss_critic.values())
             loss_critic = sum(loss_critic) / len(loss_critic)
 
@@ -605,22 +610,12 @@ class D4PG:
                         self.amp_scaler.scale(loss_critic).backward()
                 else:
                     loss_critic.backward()
-                # NOTE: Generating errors in tensorboard
-                # if tb_writer_tag is not None and self.tb_writer is not None:
-                #     assert global_step is not None, "global_step must be provided"
-                #     for name, param in self.critic.named_parameters():
-                #         if param.grad is not None:
-                #             try:
-                #                 self.tb_writer.add_histogram(
-                #                     os.path.join(tb_writer_tag, "/Grads/critic/", name),
-                #                     param.grad,
-                #                     global_step,
-                #                 )
-                #             except Exception as e:
-                #                 logger.error(
-                #                     f"Failed to add histogram for {name} of critic params with shape {param.shape} in {tb_writer_tag}. Skipping..."
-                #                 )
-                #                 logger.error(e)
+                if hasattr(self, "max_grad_norm") and self.max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.critic.parameters(),
+                        max_norm=self.max_grad_norm,
+                        norm_type=2.0,
+                    )
 
                 if self.amp_scaler is not None:
                     with torch.amp.autocast(device_type="cuda"):
@@ -637,6 +632,8 @@ class D4PG:
                     action_probs=batch["actions"],
                     critic_probs=q_dist,
                 )
+
+            ## Actor loss computations
             loss_actor = tuple(loss_actor.values())
             loss_actor = sum(loss_actor) / len(loss_actor)
 
@@ -647,22 +644,14 @@ class D4PG:
                         self.amp_scaler.scale(loss_actor).backward()
                 else:
                     loss_actor.backward()
-                # NOTE: Generating errors in tensorboard
-                # if tb_writer_tag is not None and self.tb_writer is not None:
-                #     assert global_step is not None, "global_step must be provided"
-                #     for name, param in self.actor.named_parameters():
-                #         try:
-                #             if param.grad is not None:
-                #                 self.tb_writer.add_histogram(
-                #                     os.path.join(tb_writer_tag, "/Grads/actor/", name),
-                #                     param.grad,
-                #                     global_step,
-                #                 )
-                #         except Exception as e:
-                #             logger.error(
-                #                 f"Failed to add histogram for {name} of actor params with shape {param.shape} in {tb_writer_tag}. Skipping..."
-                #             )
-                #             logger.error(e)
+                # Clip gradients for actor
+                if hasattr(self, "max_grad_norm") and self.max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.actor.parameters(),
+                        max_norm=self.max_grad_norm,
+                        norm_type=2.0,
+                    )
+                # Optimize the actor
                 if self.amp_scaler is not None:
                     with torch.amp.autocast(device_type="cuda"):
                         self.amp_scaler.step(self.actor_optimizer)
@@ -1216,6 +1205,9 @@ class D4PG:
                 "entropy_coef": self.entropy_coef,
                 "entropy_coef_decay": self.entropy_coef_decay,
                 "n_steps": self.n_steps,
+                "max_grad_norm": (
+                    self.max_grad_norm if hasattr(self, "max_grad_norm") else 0.0
+                ),
             },
         }
         if self.actor_scheduler is not None and self.critic_scheduler is not None:
@@ -1363,6 +1355,7 @@ class D4PG:
             == checkpoint["hyperparameters"]["entropy_coef_decay"]
         )
         assert self.n_steps == checkpoint["hyperparameters"]["n_steps"]
+        assert self.max_grad_norm == checkpoint["hyperparameters"]["max_grad_norm"]
 
     def save_model(self, path):
         if path.startswith("gs://"):
