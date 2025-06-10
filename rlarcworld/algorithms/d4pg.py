@@ -1250,50 +1250,222 @@ class D4PG:
 
     def save_checkpoint(self, path, **kwargs):
         logger.info("Saving checkpoint in {}...".format(path))
+        os.makedirs(path, exist_ok=True)
         torch.save(self.checkpoint(**kwargs), os.path.join(path, "attributes.ptc"))
 
+        # Save replay buffer if requested and exists
         if kwargs.get("replay_buffer", False) and self.replay_buffer:
             logger.info("Saving replay buffer in {}...".format(path))
             self.replay_buffer.save(os.path.join(path, "replay_buffer.ptc"))
-        self.train_env.save(os.path.join(path, "environment", "train"))
+
+        # Save environment states
+        env_path = os.path.join(path, "environment")
+        os.makedirs(env_path, exist_ok=True)
+
+        # Save train environment
+        train_env_path = os.path.join(env_path, "train")
+        os.makedirs(train_env_path, exist_ok=True)
+        self.train_env.save(os.path.join(train_env_path))
+
         if hasattr(self, "validation_env"):
+            # Save validation environment
+            val_env_path = os.path.join(env_path, "validation")
+            os.makedirs(val_env_path, exist_ok=True)
             logger.info("Saving validation environment in {}...".format(path))
-            self.validation_env.save(os.path.join(path, "environment", "validation"))
+            self.validation_env.save(os.path.join(val_env_path))
+
         logger.info("Checkpoint saved in {}".format(path))
 
     def load_checkpoint(self, path):
-        checkpoint = torch.load(
-            os.path.join(path, "attributes.ptc"), map_location=self.device
-        )
-        logger.info(
-            "Loading checkpoint from {} from model version {}...".format(
-                path, checkpoint["version"]
+        """Load model checkpoint with comprehensive error handling and validation.
+
+        Args:
+            path (str): Path to the checkpoint directory
+
+        Raises:
+            FileNotFoundError: If checkpoint files are missing
+            RuntimeError: If there are issues with model compatibility or loading
+            KeyError: If required checkpoint components are missing
+            ValueError: If there are hyperparameter mismatches
+        """
+        try:
+            # Verify checkpoint file exists
+            checkpoint_path = os.path.join(path, "attributes.ptc")
+            if not os.path.exists(checkpoint_path):
+                raise FileNotFoundError(
+                    f"Checkpoint file not found at {checkpoint_path}"
+                )
+
+            # Load checkpoint with error handling
+            try:
+                checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            except Exception as e:
+                raise RuntimeError(f"Failed to load checkpoint: {str(e)}") from e
+
+            # Validate checkpoint structure
+            required_keys = {
+                "version",
+                "device",
+                "info",
+                "actor",
+                "critic",
+                "optimizer_actor",
+                "optimizer_critic",
+                "iteration",
+                "hyperparameters",
+            }
+            missing_keys = required_keys - set(checkpoint.keys())
+            if missing_keys:
+                raise KeyError(f"Checkpoint is missing required keys: {missing_keys}")
+
+            logger.info(
+                "Loading checkpoint from {} (version: {})".format(
+                    path, checkpoint.get("version", "unknown")
+                )
             )
-        )
-        self.actor.load_state_dict(checkpoint["actor"])
-        self.critic.load_state_dict(checkpoint["critic"])
-        self.actor_target.load_state_dict(checkpoint["actor"])
-        self.critic_target.load_state_dict(checkpoint["critic"])
-        self.actor_optimizer.load_state_dict(checkpoint["optimizer_actor"])
-        self.critic_optimizer.load_state_dict(checkpoint["optimizer_critic"])
-        self.iteration = checkpoint["iteration"]
 
-        if checkpoint.get("lr_schedules") is not None:
-            self.actor_scheduler.load_state_dict(checkpoint["lr_schedules"]["actor"])
-            self.critic_scheduler.load_state_dict(checkpoint["lr_schedules"]["critic"])
-        if checkpoint.get("replay_buffer") is not None:
-            self.replay_buffer.load(os.path.join(path, "replay_buffer.ptc"))
-            self.replay_buffer.sampler.alpha = checkpoint["replay_buffer"]["sampler"][
-                "alpha"
-            ]
-            self.replay_buffer.sampler.beta = checkpoint["replay_buffer"]["sampler"][
-                "beta"
-            ]
-            if self.beta_scheduler is not None:
-                self.beta_scheduler.load(checkpoint["replay_buffer"]["scheduler"])
+            # Load model states with validation
+            try:
+                self.actor.load_state_dict(checkpoint["actor"])
+                self.critic.load_state_dict(checkpoint["critic"])
+                self.actor_target.load_state_dict(checkpoint["actor"])
+                self.critic_target.load_state_dict(checkpoint["critic"])
+            except RuntimeError as e:
+                if "Missing key(s)" in str(e) or "Unexpected key(s)" in str(e):
+                    logger.error("Model architecture mismatch with checkpoint")
+                    logger.error(str(e))
+                    raise RuntimeError(
+                        "Cannot load checkpoint: model architecture doesn't match"
+                    ) from e
+                raise
 
-        # Restore PyTorch's RNG state
-        torch.set_rng_state(checkpoint["torch_rng_state"].cpu())
+            # Load optimizers
+            self.actor_optimizer.load_state_dict(checkpoint["optimizer_actor"])
+            self.critic_optimizer.load_state_dict(checkpoint["optimizer_critic"])
+            self.iteration = checkpoint["iteration"]
+
+            # Restore learning rate schedulers if they exist
+            if checkpoint.get("lr_schedules") is not None:
+                try:
+                    self.actor_scheduler.load_state_dict(
+                        checkpoint["lr_schedules"]["actor"]
+                    )
+                    self.critic_scheduler.load_state_dict(
+                        checkpoint["lr_schedules"]["critic"]
+                    )
+                except (KeyError, AttributeError) as e:
+                    logger.warning(
+                        "Failed to restore learning rate schedulers: %s", str(e)
+                    )
+
+            # Restore replay buffer if it exists
+            if checkpoint.get("replay_buffer") is not None:
+                replay_buffer_path = os.path.join(path, "replay_buffer.ptc")
+                if os.path.exists(replay_buffer_path):
+                    try:
+                        self.replay_buffer.load(replay_buffer_path)
+                        self.replay_buffer.sampler.alpha = checkpoint["replay_buffer"][
+                            "sampler"
+                        ]["alpha"]
+                        self.replay_buffer.sampler.beta = checkpoint["replay_buffer"][
+                            "sampler"
+                        ]["beta"]
+                        if (
+                            self.beta_scheduler is not None
+                            and "scheduler" in checkpoint["replay_buffer"]
+                        ):
+                            self.beta_scheduler.load(
+                                checkpoint["replay_buffer"]["scheduler"]
+                            )
+                    except Exception as e:
+                        logger.error("Failed to restore replay buffer: %s", str(e))
+                        if self.config.get("strict_checkpoint_loading", True):
+                            raise
+
+            # Restore RNG states if available
+            if "torch_rng_state" in checkpoint:
+                torch.set_rng_state(checkpoint["torch_rng_state"].cpu())
+
+            # Restore environment states
+            try:
+                env_path = os.path.join(path, "environment")
+                train_env_path = os.path.join(env_path, "train")
+
+                # Load train environment
+                self.train_env.load(
+                    parent_path=os.path.join(
+                        train_env_path,
+                        "parent",
+                        self.train_env.env.__class__.__name__ + ".ptc",
+                    ),
+                    child_path=os.path.join(
+                        train_env_path,
+                        "child",
+                        self.train_env.__class__.__name__ + ".ptc",
+                    ),
+                    device=self.device,
+                )
+
+                # Load validation environment if it exists
+                if hasattr(self, "validation_env"):
+                    val_env_path = os.path.join(env_path, "validation")
+                    self.validation_env.load(
+                        parent_path=os.path.join(
+                            val_env_path,
+                            "parent",
+                            self.validation_env.env.__class__.__name__ + ".ptc",
+                        ),
+                        child_path=os.path.join(
+                            val_env_path,
+                            "child",
+                            self.validation_env.__class__.__name__ + ".ptc",
+                        ),
+                        device=self.device,
+                    )
+            except Exception as e:
+                logger.error(
+                    "Failed to restore environment states: %s", str(e), exc_info=True
+                )
+                if self.config.get("strict_checkpoint_loading", True):
+                    raise
+
+            # Validate hyperparameters
+            required_hparams = {
+                "batch_size",
+                "gamma",
+                "carsm",
+                "tau",
+                "target_update_frequency",
+                "entropy_coef",
+                "entropy_coef_decay",
+                "n_steps",
+                "max_grad_norm",
+            }
+            for param in required_hparams:
+                if param not in checkpoint["hyperparameters"]:
+                    logger.warning(f"Missing hyperparameter in checkpoint: {param}")
+                    continue
+                if getattr(self, param) != checkpoint["hyperparameters"][param]:
+                    logger.warning(
+                        f"Hyperparameter mismatch for {param}: "
+                        f"current={getattr(self, param)}, "
+                        f"checkpoint={checkpoint['hyperparameters'][param]}"
+                    )
+                    if self.config.get("strict_checkpoint_loading", True):
+                        raise ValueError(
+                            f"Hyperparameter mismatch for {param}: "
+                            f"current={getattr(self, param)}, "
+                            f"checkpoint={checkpoint['hyperparameters'][param]}"
+                        )
+
+            logger.info(
+                f"Successfully loaded checkpoint from iteration {self.iteration}"
+            )
+
+        except Exception as e:
+            logger.error("Failed to load checkpoint: %s", str(e), exc_info=True)
+            raise
+
         # Restore data loaders and RNG states if available
         if checkpoint.get("data_loaders") is not None:
             if hasattr(self, "train_samples") and "train" in checkpoint["data_loaders"]:
