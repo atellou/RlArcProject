@@ -1279,6 +1279,21 @@ class D4PG:
         replay_buffer=False,
         data_loaders=False,
     ):
+        """
+        Create a checkpoint of the current state of the D4PG object.
+
+        Args:
+            epoch_number (int, optional): Epoch number. Defaults to None.
+            episode_number (int, optional): Episode number. Defaults to None.
+            step_number (int, optional): Step number. Defaults to None.
+            loss_actor (float, optional): Actor loss. Defaults to None.
+            loss_critic (float, optional): Critic loss. Defaults to None.
+            replay_buffer (bool, optional): Whether to save the replay buffer. Defaults to False.
+            data_loaders (bool, optional): Whether to save the data loaders. Defaults to False.
+
+        Returns:
+            dict: Checkpoint dictionary.
+        """
         if not hasattr(self, "iteration"):
             raise AttributeError(
                 "Iteration not found in D4PG object, no checkpoint to save"
@@ -1343,6 +1358,13 @@ class D4PG:
         return checkpoint
 
     def save_checkpoint(self, path, **kwargs):
+        """
+        Save the checkpoint to a file.
+
+        Args:
+            path (str): Path to save the checkpoint.
+            **kwargs: Additional keyword arguments to pass to the checkpoint method.
+        """
         logger.info("Saving checkpoint in {}...".format(path))
         os.makedirs(path, exist_ok=True)
         torch.save(self.checkpoint(**kwargs), os.path.join(path, "attributes.ptc"))
@@ -1629,6 +1651,13 @@ class D4PG:
         assert self.max_grad_norm == checkpoint["hyperparameters"]["max_grad_norm"]
 
     def save_model(self, path):
+        """
+        Save the model to a file.
+
+        Args:
+            path (str): Path to save the model.
+        """
+        os.makedirs(path, exist_ok=True)
         if path.startswith("gs://"):
             from google.cloud import storage
 
