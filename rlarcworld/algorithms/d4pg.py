@@ -968,6 +968,8 @@ class D4PG:
         tb_writer_tag="Train",
         validation_tb_writer_tag="Validation",
         merge_graphs=True,
+        checkpoint_frequency=-1,
+        checkpoint_path=None,
     ):
         """
         Train the model using the provided samples.
@@ -983,197 +985,289 @@ class D4PG:
             tb_writer_tag (str, optional): Tag for TensorBoard logging. Defaults to "Train"
             validation_tb_writer_tag (str, optional): Tag for TensorBoard validation logging. Defaults to "Validation"
             merge_graphs (bool, optional): Whether to merge graphs in TensorBoard. Defaults to True
-
+            checkpoint_frequency (int, optional): Frequency of checkpoint saving. Defaults to -1
+            checkpoint_path (str, optional): Path to save the checkpoint. Defaults to None
         """
+        if checkpoint_frequency > 0 and checkpoint_path is None:
+            raise ValueError(
+                "Checkpoint path is required when checkpoint frequency is greater than 0"
+            )
+        elif checkpoint_path is None:
+            logger.warning(
+                "Checkpoint path is not specified. Checkpoint will not be saved in case of error."
+            )
         self.iteration = 0
         decay_flag = False
-        for epoch_n in range(epochs):
-            logger.info(f"Epoch: {epoch_n}, Step runned: {self.iteration}")
-            for step_number, (episode_number, step_state) in enumerate(
-                self.env_simulation(
-                    self.train_env,
-                    self.train_samples,
-                    max_steps=max_steps,
-                    tb_writer_tag=tb_writer_tag,
-                )
-            ):
-                logger.debug(
-                    f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
-                )
-                self.log_parameters(self.iteration)
-                # Store the experience in the replay buffer
-                if self.replay_buffer is not None:
-                    batch = self.replay_buffer_step(
-                        step_state["state"],
-                        step_state["actions"],
-                        step_state["reward"],
-                        step_state["next_state"],
-                    )
-                elif self.replay_buffer is None:
-                    batch = (
-                        TensorDict(
-                            {
-                                "state": step_state["state"],
-                                "actions": step_state["actions"],
-                                "reward": step_state["reward"],
-                                "next_state": step_state["next_state"],
-                                "terminated": step_state["next_state"]["terminated"],
-                            },
-                        )
-                        .auto_batch_size_()
-                        .to(self.device)
-                    )
-                else:
-                    continue
-
-                batch = self.fileter_compleated_state(batch)
-
-                ## Compute training loss
-                if (
-                    self.tb_writer is not None
-                    and self.iteration % grads_logger_frequency == 0
-                ):
-                    loss_actor, loss_critic = self.compute_loss(
-                        batch,
-                        training=True,
+        actor_lowest_val_loss = float("inf")
+        critic_lowest_val_loss = float("inf")
+        val_loss_actor = None
+        val_loss_critic = None
+        save_path = self.save_path
+        try:
+            for epoch_n in range(epochs):
+                logger.info(f"Epoch: {epoch_n}, Step runned: {self.iteration}")
+                for step_number, (episode_number, step_state) in enumerate(
+                    self.env_simulation(
+                        self.train_env,
+                        self.train_samples,
+                        max_steps=max_steps,
                         tb_writer_tag=tb_writer_tag,
-                        global_step=self.iteration,
                     )
-                    logger.info(
-                        f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Loss actor: {loss_actor}, Loss critic: {loss_critic}"
+                ):
+                    logger.debug(
+                        f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
                     )
-                else:
-                    loss_actor, loss_critic = self.compute_loss(batch, training=True)
-
-                ## Log training loss
-                if (
-                    self.tb_writer is not None
-                    and self.iteration % logger_frequency == 0
-                ):
-                    batch_size = step_state["reward"].batch_size[0]
-                    value = loss_actor.item() / batch_size
-                    path = os.path.join(tb_writer_tag, "Loss/actor")
-                    self.history_add(path, value)
-                    if merge_graphs:
-                        path = "Loss/actor"
-                        value = {tb_writer_tag: value}
-                        self.tb_writer.add_scalars(path, value, self.iteration)
-                    else:
-                        self.tb_writer.add_scalar(path, value, self.iteration)
-
-                    value = loss_critic.item() / batch_size
-                    path = os.path.join(tb_writer_tag, "Loss/critic")
-                    self.history_add(path, value)
-                    if merge_graphs:
-                        path = "Loss/critic"
-                        value = {tb_writer_tag: value}
-                        self.tb_writer.add_scalars(path, value, self.iteration)
-                    else:
-                        self.tb_writer.add_scalar(path, value, self.iteration)
-
-                ## Validation
-                if (
-                    validation_steps_frequency > 0
-                    and step_number % validation_steps_frequency == 0
-                ):
-                    if not hasattr(
-                        self, "running_validation_process"
-                    ) or initial_episode_number == (len(self.validation_samples) - 1):
-                        if validation_steps_per_episode < 0:
-                            logger.warning(
-                                "VALIDATION process could take a long time,"
-                                " it will run indeterminately until the end of the environment."
-                                " Meaning, that all grids should be completed to end the process."
-                            )
-                        initial_episode_number = 0
-                        self.running_validation_process = self.validation_process(
-                            max_steps=validation_steps_per_episode,
-                            tb_writer_tag=validation_tb_writer_tag,
-                            merge_graphs=merge_graphs,
+                    self.log_parameters(self.iteration)
+                    # Store the experience in the replay buffer
+                    if self.replay_buffer is not None:
+                        batch = self.replay_buffer_step(
+                            step_state["state"],
+                            step_state["actions"],
+                            step_state["reward"],
+                            step_state["next_state"],
                         )
-                    for (
-                        val_episode_number,
-                        val_step_number,
-                        val_loss_actor,
-                        val_loss_critic,
-                        val_step_state,
-                    ) in self.running_validation_process:
-                        if val_episode_number > initial_episode_number or (
-                            validation_steps_per_train_step > 0
-                            and val_step_number % validation_steps_per_train_step == 0
-                        ):
-                            initial_episode_number = copy.copy(val_episode_number)
-                            logger.info(
-                                f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Validation loss actor: {val_loss_actor}, Validation loss critic: {val_loss_critic}"
+                    elif self.replay_buffer is None:
+                        batch = (
+                            TensorDict(
+                                {
+                                    "state": step_state["state"],
+                                    "actions": step_state["actions"],
+                                    "reward": step_state["reward"],
+                                    "next_state": step_state["next_state"],
+                                    "terminated": step_state["next_state"][
+                                        "terminated"
+                                    ],
+                                },
                             )
-                            break
+                            .auto_batch_size_()
+                            .to(self.device)
+                        )
+                    else:
+                        continue
 
-                if decay_flag:
-                    self.apply_decay()
+                    batch = self.fileter_compleated_state(batch)
 
-                if step_number % self.target_update_frequency == 0:
-                    logger.debug("Updating networks step {}".format(step_number))
-                    self.update_target_networks(tau=self.tau)
-                    decay_flag = True
+                    ## Compute training loss
+                    if (
+                        self.tb_writer is not None
+                        and self.iteration % grads_logger_frequency == 0
+                    ):
+                        loss_actor, loss_critic = self.compute_loss(
+                            batch,
+                            training=True,
+                            tb_writer_tag=tb_writer_tag,
+                            global_step=self.iteration,
+                        )
+                        logger.info(
+                            f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Loss actor: {loss_actor}, Loss critic: {loss_critic}"
+                        )
+                    else:
+                        loss_actor, loss_critic = self.compute_loss(
+                            batch, training=True
+                        )
 
-                self.iteration += 1
-        self.iteration -= 1
-        logger.info("Total steps: {}".format(self.iteration))
-        if hasattr(self, "validation_env"):
-            logger.info("Running last validation process")
-            for (
-                val_episode_number,
-                val_step_number,
-                val_loss_actor,
-                val_loss_critic,
-                val_step_state,
-            ) in self.validation_process(
-                max_steps=validation_steps_per_episode,
-                tb_writer_tag="End" + validation_tb_writer_tag,
-                merge_graphs=merge_graphs,
-            ):
-                pass
+                    ## Log training loss
+                    if (
+                        self.tb_writer is not None
+                        and self.iteration % logger_frequency == 0
+                    ):
+                        batch_size = step_state["reward"].batch_size[0]
+                        value = loss_actor.item() / batch_size
+                        path = os.path.join(tb_writer_tag, "Loss/actor")
+                        self.history_add(path, value)
+                        if merge_graphs:
+                            path = "Loss/actor"
+                            value = {tb_writer_tag: value}
+                            self.tb_writer.add_scalars(path, value, self.iteration)
+                        else:
+                            self.tb_writer.add_scalar(path, value, self.iteration)
 
-        if self.tb_writer is not None:
-            comp_percent = step_state["state"]["terminated"].sum().item() / len(
-                step_state["state"]["terminated"]
-            )
-            val_comp_percent = val_step_state["state"]["terminated"].sum().item() / len(
-                val_step_state["state"]["terminated"]
-            )
-            self.extras_hparams.update(
-                {
-                    "lr_actor": self.learning_rate_actor,
-                    "lr_critic": self.learning_rate_critic,
-                    "bsize": self.batch_size,
-                    "gamma": self.gamma,
-                    "carsm": self.carsm,
-                    "tau": self.tau,
-                    "target_update_frequency": self.target_update_frequency,
-                    "entropy_coef": self.entropy_coef,
-                    "entropy_coef_decay": self.entropy_coef_decay,
-                    "n_steps": self.n_steps,
-                }
-            )
-            if self.lr_scheduler_kwargs is not None:
-                self.extras_hparams.update(self.lr_scheduler_kwargs)
-            self.tb_writer.add_hparams(
-                self.extras_hparams,
-                {
-                    "hparam/train_loss_actor": loss_actor,
-                    "hparam/train_loss_critic": loss_critic,
-                    "hparam/validation_loss_actor": val_loss_actor,
-                    "hparam/validation_loss_critic": val_loss_critic,
-                    "hparam/train_completion": comp_percent,
-                    "hparam/validation_completion": val_comp_percent,
-                },
-            )
-            self.tb_writer.flush()
-            self.tb_writer.close()
+                        value = loss_critic.item() / batch_size
+                        path = os.path.join(tb_writer_tag, "Loss/critic")
+                        self.history_add(path, value)
+                        if merge_graphs:
+                            path = "Loss/critic"
+                            value = {tb_writer_tag: value}
+                            self.tb_writer.add_scalars(path, value, self.iteration)
+                        else:
+                            self.tb_writer.add_scalar(path, value, self.iteration)
 
-        if self.save_path is not None and loss_actor is not None:
-            logger.info("Saving model in {}".format(self.save_path))
-            self.save_model(self.save_path)
+                    ## Validation
+                    if (
+                        validation_steps_frequency > 0
+                        and step_number % validation_steps_frequency == 0
+                    ):
+                        if not hasattr(
+                            self, "running_validation_process"
+                        ) or initial_episode_number == (
+                            len(self.validation_samples) - 1
+                        ):
+                            if validation_steps_per_episode < 0:
+                                logger.warning(
+                                    "VALIDATION process could take a long time,"
+                                    " it will run indeterminately until the end of the environment."
+                                    " Meaning, that all grids should be completed to end the process."
+                                )
+                            initial_episode_number = 0
+                            self.running_validation_process = self.validation_process(
+                                max_steps=validation_steps_per_episode,
+                                tb_writer_tag=validation_tb_writer_tag,
+                                merge_graphs=merge_graphs,
+                            )
+                        for (
+                            val_episode_number,
+                            val_step_number,
+                            val_loss_actor,
+                            val_loss_critic,
+                            val_step_state,
+                        ) in self.running_validation_process:
+                            if val_episode_number > initial_episode_number or (
+                                validation_steps_per_train_step > 0
+                                and val_step_number % validation_steps_per_train_step
+                                == 0
+                            ):
+                                initial_episode_number = copy.copy(val_episode_number)
+                                logger.info(
+                                    f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Validation loss actor: {val_loss_actor}, Validation loss critic: {val_loss_critic}"
+                                )
+                                break
+
+                    if decay_flag:
+                        self.apply_decay()
+
+                    if step_number % self.target_update_frequency == 0:
+                        logger.debug("Updating networks step {}".format(step_number))
+                        self.update_target_networks(tau=self.tau)
+                        decay_flag = True
+
+                    if checkpoint_frequency > 0 and (
+                        step_number % checkpoint_frequency == 0
+                        or actor_lowest_val_loss > val_loss_actor
+                        or critic_lowest_val_loss > val_loss_critic
+                    ):
+                        tmp_checkpoint_path = checkpoint_path
+                        if (
+                            actor_lowest_val_loss > val_loss_actor
+                            or critic_lowest_val_loss > val_loss_critic
+                        ):
+                            if actor_lowest_val_loss > val_loss_actor:
+                                actor_lowest_val_loss = val_loss_actor
+                            if critic_lowest_val_loss > val_loss_critic:
+                                critic_lowest_val_loss = val_loss_critic
+                            tmp_checkpoint_path = os.path.join(
+                                checkpoint_path, "on_loss"
+                            )
+                        tmp_checkpoint_path = os.path.join(
+                            tmp_checkpoint_path,
+                            format(
+                                "epoch_{}-episode_{}-step_{}",
+                                epoch_n,
+                                episode_number,
+                                step_number,
+                            ),
+                        )
+                        self.save_checkpoint(
+                            tmp_checkpoint_path,
+                            epoch_number=epoch_n,
+                            episode_number=episode_number,
+                            step_number=step_number,
+                            loss_actor=loss_actor,
+                            loss_critic=loss_critic,
+                            replay_buffer=True,
+                            data_loaders=True,
+                        )
+
+                    self.iteration += 1
+            self.iteration -= 1
+            logger.info("Total steps: {}".format(self.iteration))
+            if hasattr(self, "validation_env"):
+                logger.info("Running last validation process")
+                for (
+                    val_episode_number,
+                    val_step_number,
+                    val_loss_actor,
+                    val_loss_critic,
+                    val_step_state,
+                ) in self.validation_process(
+                    max_steps=validation_steps_per_episode,
+                    tb_writer_tag="End" + validation_tb_writer_tag,
+                    merge_graphs=merge_graphs,
+                ):
+                    pass
+
+            if self.tb_writer is not None:
+                comp_percent = step_state["state"]["terminated"].sum().item() / len(
+                    step_state["state"]["terminated"]
+                )
+                val_comp_percent = val_step_state["state"][
+                    "terminated"
+                ].sum().item() / len(val_step_state["state"]["terminated"])
+                self.extras_hparams.update(
+                    {
+                        "lr_actor": self.learning_rate_actor,
+                        "lr_critic": self.learning_rate_critic,
+                        "bsize": self.batch_size,
+                        "gamma": self.gamma,
+                        "carsm": self.carsm,
+                        "tau": self.tau,
+                        "target_update_frequency": self.target_update_frequency,
+                        "entropy_coef": self.entropy_coef,
+                        "entropy_coef_decay": self.entropy_coef_decay,
+                        "n_steps": self.n_steps,
+                    }
+                )
+                if self.lr_scheduler_kwargs is not None:
+                    self.extras_hparams.update(self.lr_scheduler_kwargs)
+                self.tb_writer.add_hparams(
+                    self.extras_hparams,
+                    {
+                        "hparam/train_loss_actor": loss_actor,
+                        "hparam/train_loss_critic": loss_critic,
+                        "hparam/validation_loss_actor": val_loss_actor,
+                        "hparam/validation_loss_critic": val_loss_critic,
+                        "hparam/train_completion": comp_percent,
+                        "hparam/validation_completion": val_comp_percent,
+                    },
+                )
+                self.tb_writer.flush()
+                self.tb_writer.close()
+
+        except Exception as e:
+            logger.error("Error training D4PG: {}".format(e))
+            checkpoint_path = os.path.join(checkpoint_path, "on_error")
+            save_path = os.path.join(save_path, "on_error")
+            if checkpoint_path is not None:
+                logger.info("Saving checkpoint in {}".format(checkpoint_path))
+                self.save_checkpoint(
+                    checkpoint_path,
+                    epoch_number=epoch_n,
+                    episode_number=episode_number,
+                    step_number=step_number,
+                    loss_actor=loss_actor,
+                    loss_critic=loss_critic,
+                    replay_buffer=True,
+                    data_loaders=True,
+                )
+            if save_path is not None and loss_actor is not None:
+                logger.info("Saving model in {}".format(save_path))
+                self.save_model(save_path)
+            raise
+        else:
+            if checkpoint_path is not None:
+                logger.info("Saving checkpoint in {}".format(checkpoint_path))
+                self.save_checkpoint(
+                    checkpoint_path,
+                    epoch_number=epoch_n,
+                    episode_number=episode_number,
+                    step_number=step_number,
+                    loss_actor=loss_actor,
+                    loss_critic=loss_critic,
+                    replay_buffer=True,
+                    data_loaders=True,
+                )
+            if save_path is not None and loss_actor is not None:
+                logger.info("Saving model in {}".format(save_path))
+                self.save_model(save_path)
 
     def checkpoint(
         self,
