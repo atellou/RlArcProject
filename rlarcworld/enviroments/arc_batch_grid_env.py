@@ -60,6 +60,14 @@ class ArcBatchGridEnv(gym.Env):
         gamma: float = 1.0,
         device=None,
     ):
+        """
+        Args:
+            grid_size (int): The size of the grid.
+            color_values (int): The number of color values in the grid non-inclusive.
+            n_steps (int, optional): The number of steps to look ahead. Defaults to 1.
+            gamma (float, optional): The discount factor. Defaults to 1.0.
+            device (str, optional): The device to use. Defaults to None.
+        """
         assert (
             isinstance(grid_size, int) and grid_size > 0
         ), "grid_size must be a positive int"

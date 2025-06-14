@@ -106,7 +106,7 @@ class D4PG:
             env_simulation(): Handles environment simulation with logging
             categorize_actions(): Converts action probabilities to discrete actions
             history_add(): Adds values to training history
-            fileter_compleated_state(): Filters out completed states from batches
+            filter_completed_state(): Filters out completed states from batches
         """
         assert isinstance(
             train_samples, DataLoader
@@ -348,7 +348,9 @@ class D4PG:
 
         # Project the distribution using the categorical projection
         assert best_next_q_dist.keys() == reward.keys(), ValueError(
-            "Keys of best_next_q_dist and reward must be the same"
+            "Keys of best_next_q_dist and reward must be the same: \n best_next_q_dist: {}, reward: {}".format(
+                best_next_q_dist.keys(), reward.keys()
+            )
         )
         target_dist = TensorDict(
             {
@@ -548,7 +550,7 @@ class D4PG:
             batch = None
         return batch
 
-    def fileter_compleated_state(
+    def filter_completed_state(
         self,
         batch,
     ):
@@ -692,27 +694,34 @@ class D4PG:
                 action_probs = self.actor(state)
             actions = self.categorize_actions(action_probs, as_dict=True)
             __, reward, done, truncated, __ = env.step(actions)
-            reward = TensorDict(
-                {
-                    "pixel_wise": reward.unsqueeze(-1),
-                    "binary": env.get_wrapper_attr("last_reward").unsqueeze(-1),
-                }
-            ).auto_batch_size_()
-            next_state = env.get_state(unsqueeze=1)
+            # Initialize reward with always-present keys
+            reward_dict = {
+                "pixel_wise": reward.unsqueeze(-1),
+                "binary": env.get_wrapper_attr("last_reward").unsqueeze(-1),
+            }
+
+            # Only add n_reward if n_steps > 1
             if self.n_steps > 1:
-                if self.critic.v_min.get("n_reward") is not None:
-                    reward["n_reward"] = (
-                        env.n_step_reward(
-                            v_min=self.critic.v_min.get("n_reward"),
-                            v_max=self.critic.v_max.get("n_reward"),
+                if hasattr(self.critic, "v_min") and hasattr(self.critic, "v_max"):
+                    if (
+                        "n_reward" in self.critic.v_min
+                        and "n_reward" in self.critic.v_max
+                    ):
+                        reward_dict["n_reward"] = (
+                            env.n_step_reward(
+                                v_min=self.critic.v_min["n_reward"],
+                                v_max=self.critic.v_max["n_reward"],
+                            )
+                            .unsqueeze(-1)
+                            .to(self.device)
                         )
-                        .unsqueeze(-1)
-                        .to(self.device)
-                    )
-                else:
-                    reward["n_reward"] = (
-                        env.n_step_reward().unsqueeze(-1).to(self.device)
-                    )
+                    else:
+                        reward_dict["n_reward"] = (
+                            env.n_step_reward().unsqueeze(-1).to(self.device)
+                        )
+
+            reward = TensorDict(reward_dict).auto_batch_size_()
+            next_state = env.get_state(unsqueeze=1)
 
         return (
             TensorDict(
@@ -996,16 +1005,18 @@ class D4PG:
             logger.warning(
                 "Checkpoint path is not specified. Checkpoint will not be saved in case of error."
             )
-        self.iteration = 0
+        iteration = 0
         decay_flag = False
         actor_lowest_val_loss = float("inf")
         critic_lowest_val_loss = float("inf")
+        loss_actor = None
+        loss_critic = None
         val_loss_actor = None
         val_loss_critic = None
         save_path = self.save_path
         try:
             for epoch_n in range(epochs):
-                logger.info(f"Epoch: {epoch_n}, Step runned: {self.iteration}")
+                logger.info(f"Epoch: {epoch_n}, Step runned: {iteration}")
                 for step_number, (episode_number, step_state) in enumerate(
                     self.env_simulation(
                         self.train_env,
@@ -1017,7 +1028,7 @@ class D4PG:
                     logger.debug(
                         f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}"
                     )
-                    self.log_parameters(self.iteration)
+                    self.log_parameters(iteration)
                     # Store the experience in the replay buffer
                     if self.replay_buffer is not None:
                         batch = self.replay_buffer_step(
@@ -1045,18 +1056,18 @@ class D4PG:
                     else:
                         continue
 
-                    batch = self.fileter_compleated_state(batch)
+                    batch = self.filter_completed_state(batch)
 
                     ## Compute training loss
                     if (
                         self.tb_writer is not None
-                        and self.iteration % grads_logger_frequency == 0
+                        and iteration % grads_logger_frequency == 0
                     ):
                         loss_actor, loss_critic = self.compute_loss(
                             batch,
                             training=True,
                             tb_writer_tag=tb_writer_tag,
-                            global_step=self.iteration,
+                            global_step=iteration,
                         )
                         logger.info(
                             f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Loss actor: {loss_actor}, Loss critic: {loss_critic}"
@@ -1067,10 +1078,7 @@ class D4PG:
                         )
 
                     ## Log training loss
-                    if (
-                        self.tb_writer is not None
-                        and self.iteration % logger_frequency == 0
-                    ):
+                    if self.tb_writer is not None and iteration % logger_frequency == 0:
                         batch_size = step_state["reward"].batch_size[0]
                         value = loss_actor.item() / batch_size
                         path = os.path.join(tb_writer_tag, "Loss/actor")
@@ -1078,9 +1086,9 @@ class D4PG:
                         if merge_graphs:
                             path = "Loss/actor"
                             value = {tb_writer_tag: value}
-                            self.tb_writer.add_scalars(path, value, self.iteration)
+                            self.tb_writer.add_scalars(path, value, iteration)
                         else:
-                            self.tb_writer.add_scalar(path, value, self.iteration)
+                            self.tb_writer.add_scalar(path, value, iteration)
 
                         value = loss_critic.item() / batch_size
                         path = os.path.join(tb_writer_tag, "Loss/critic")
@@ -1088,9 +1096,9 @@ class D4PG:
                         if merge_graphs:
                             path = "Loss/critic"
                             value = {tb_writer_tag: value}
-                            self.tb_writer.add_scalars(path, value, self.iteration)
+                            self.tb_writer.add_scalars(path, value, iteration)
                         else:
-                            self.tb_writer.add_scalar(path, value, self.iteration)
+                            self.tb_writer.add_scalar(path, value, iteration)
 
                     ## Validation
                     if (
@@ -1132,6 +1140,8 @@ class D4PG:
                                 )
                                 break
 
+                    # At this point, it is considered to have run one step, so all variables are initialized
+                    iteration += 1
                     if decay_flag:
                         self.apply_decay()
 
@@ -1159,8 +1169,7 @@ class D4PG:
                             )
                         tmp_checkpoint_path = os.path.join(
                             tmp_checkpoint_path,
-                            format(
-                                "epoch_{}-episode_{}-step_{}",
+                            "epoch_{}-episode_{}-step_{}".format(
                                 epoch_n,
                                 episode_number,
                                 step_number,
@@ -1168,6 +1177,7 @@ class D4PG:
                         )
                         self.save_checkpoint(
                             tmp_checkpoint_path,
+                            iteration=iteration,
                             epoch_number=epoch_n,
                             episode_number=episode_number,
                             step_number=step_number,
@@ -1176,10 +1186,8 @@ class D4PG:
                             replay_buffer=True,
                             data_loaders=True,
                         )
-
-                    self.iteration += 1
-            self.iteration -= 1
-            logger.info("Total steps: {}".format(self.iteration))
+            iteration -= 1
+            logger.info("Total steps: {}".format(iteration))
             if hasattr(self, "validation_env"):
                 logger.info("Running last validation process")
                 for (
@@ -1240,6 +1248,7 @@ class D4PG:
                 logger.info("Saving checkpoint in {}".format(checkpoint_path))
                 self.save_checkpoint(
                     checkpoint_path,
+                    iteration=iteration,
                     epoch_number=epoch_n,
                     episode_number=episode_number,
                     step_number=step_number,
@@ -1257,6 +1266,7 @@ class D4PG:
                 logger.info("Saving checkpoint in {}".format(checkpoint_path))
                 self.save_checkpoint(
                     checkpoint_path,
+                    iteration=iteration,
                     epoch_number=epoch_n,
                     episode_number=episode_number,
                     step_number=step_number,
@@ -1271,6 +1281,7 @@ class D4PG:
 
     def checkpoint(
         self,
+        iteration,
         epoch_number=None,
         episode_number=None,
         step_number=None,
@@ -1294,11 +1305,14 @@ class D4PG:
         Returns:
             dict: Checkpoint dictionary.
         """
-        if not hasattr(self, "iteration"):
+        if iteration < 0:
+            logger.warning(
+                "Iteration is less than 0, variables may not be correctly initialized, no checkpoint to save"
+            )
             raise AttributeError(
                 "Iteration not found in D4PG object, no checkpoint to save"
             )
-        logger.info("Creating checkpoint for iteration {}...".format(self.iteration))
+        logger.info("Creating checkpoint for iteration {}...".format(iteration))
         checkpoint = {
             "version": "1.0.0",
             "device": self.device,
@@ -1313,7 +1327,7 @@ class D4PG:
             "critic": self.critic.state_dict(),
             "optimizer_actor": self.actor_optimizer.state_dict(),
             "optimizer_critic": self.critic_optimizer.state_dict(),
-            "iteration": self.iteration,
+            "iteration": iteration,
             "hyperparameters": {
                 "batch_size": self.batch_size,
                 "gamma": self.gamma,
@@ -1346,13 +1360,22 @@ class D4PG:
                 }
         checkpoint["torch_rng_state"] = torch.get_rng_state()
         if data_loaders:
-            checkpoint["data_loaders"] = {
-                "train": {"sampler_state": self.train_samples.state_dict()}
-            }
-            if self.validation_samples is not None:
-                checkpoint["data_loaders"]["validation"] = {
-                    "sampler_state": self.validation_samples.state_dict(),
-                }
+            checkpoint["data_loaders"] = {"train": {}}
+            # Only save sampler state if it has state_dict method
+            if hasattr(self.train_samples.sampler, "state_dict"):
+                checkpoint["data_loaders"]["train"][
+                    "sampler_state"
+                ] = self.train_samples.sampler.state_dict()
+
+            if (
+                hasattr(self, "validation_samples")
+                and self.validation_samples is not None
+            ):
+                checkpoint["data_loaders"]["validation"] = {}
+                if hasattr(self.validation_samples.sampler, "state_dict"):
+                    checkpoint["data_loaders"]["validation"][
+                        "sampler_state"
+                    ] = self.validation_samples.sampler.state_dict()
 
         checkpoint["hyperparameters"].update(self.extras_hparams)
         return checkpoint
@@ -1458,7 +1481,6 @@ class D4PG:
             # Load optimizers
             self.actor_optimizer.load_state_dict(checkpoint["optimizer_actor"])
             self.critic_optimizer.load_state_dict(checkpoint["optimizer_critic"])
-            self.iteration = checkpoint["iteration"]
 
             # Restore learning rate schedulers if they exist
             if checkpoint.get("lr_schedules") is not None:
@@ -1575,7 +1597,7 @@ class D4PG:
                         )
 
             logger.info(
-                f"Successfully loaded checkpoint from iteration {self.iteration}"
+                f"Successfully loaded checkpoint from iteration {checkpoint['iteration']}"
             )
 
         except Exception as e:
@@ -1583,19 +1605,25 @@ class D4PG:
             raise
 
         # Restore data loaders and RNG states if available
-        if checkpoint.get("data_loaders") is not None:
-            if hasattr(self, "train_samples") and "train" in checkpoint["data_loaders"]:
-                self.train_samples.load_state_dict(
-                    checkpoint["data_loaders"]["train"]["sampler_state"]
-                )
+        if "data_loaders" in checkpoint:
+            if "train" in checkpoint["data_loaders"] and hasattr(
+                self.train_samples.sampler, "load_state_dict"
+            ):
+                if "sampler_state" in checkpoint["data_loaders"]["train"]:
+                    self.train_samples.sampler.load_state_dict(
+                        checkpoint["data_loaders"]["train"]["sampler_state"]
+                    )
 
             if (
-                hasattr(self, "validation_samples")
-                and "validation" in checkpoint["data_loaders"]
+                "validation" in checkpoint["data_loaders"]
+                and hasattr(self, "validation_samples")
+                and self.validation_samples is not None
+                and hasattr(self.validation_samples.sampler, "load_state_dict")
             ):
-                self.validation_samples.load_state_dict(
-                    checkpoint["data_loaders"]["validation"]["sampler_state"]
-                )
+                if "sampler_state" in checkpoint["data_loaders"]["validation"]:
+                    self.validation_samples.sampler.load_state_dict(
+                        checkpoint["data_loaders"]["validation"]["sampler_state"]
+                    )
 
         env_path = os.path.join(
             path,
