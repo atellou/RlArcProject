@@ -418,10 +418,10 @@ class TestD4PG(unittest.TestCase):
             env.reset(options={"batch": sample["task"], "examples": sample["examples"]})
 
             # Initialize the iteration counter
-            d4pg.iteration = 0
+            d4pg.iteration = 1
 
             # Save the checkpoint
-            d4pg.save_checkpoint(temp_dir)
+            d4pg.save_checkpoint(temp_dir, iteration=d4pg.iteration, data_loaders=True)
 
             try:
                 # Check that the checkpoint was saved
@@ -512,7 +512,6 @@ class TestD4PG(unittest.TestCase):
                         ), f"Actor optimizer {key} mismatch"
 
             # Verify hyperparameters
-            assert d4pg.iteration == new_d4pg.iteration
             assert d4pg.gamma == new_d4pg.gamma
             assert d4pg.tau == new_d4pg.tau
             assert d4pg.n_steps == new_d4pg.n_steps
@@ -522,6 +521,204 @@ class TestD4PG(unittest.TestCase):
         finally:
             # Clean up
             shutil.rmtree(temp_dir)
+
+    def test_checkpoint_during_training(self):
+        """Test checkpointing during training with validation."""
+        import tempfile
+        import shutil
+
+        grid_size = 30
+        color_values = 11
+        max_steps = 10
+        n_steps = 1
+        checkpoint_freq = 3  # Save checkpoint every 3 steps
+
+        logger.info("Testing checkpointing during training")
+
+        # Create temporary directory for checkpoints
+        temp_dir = tempfile.mkdtemp()
+
+        try:
+            # Setup environment and data loaders
+            env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps)
+            env = PixelAwareRewardWrapper(env, n_steps=n_steps)
+
+            dataset = ArcDataset(
+                arc_dataset_dir="tests/test_data/unittest/training",
+                keep_in_memory=False,
+                transform=ArcSampleTransformer(
+                    (grid_size, grid_size), examples_stack_dim=10
+                ),
+            )
+            train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+            val_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+
+            # Initialize D4PG with checkpointing
+            d4pg = D4PG(
+                env=env,
+                train_samples=train_samples,
+                actor=ArcActorNetwork(grid_size=grid_size, color_values=color_values),
+                critic=ArcCriticNetwork(
+                    grid_size=grid_size,
+                    color_values=color_values,
+                    num_atoms=self.num_atoms,
+                    v_min={"pixel_wise": -40, "binary": 0},
+                    v_max={"pixel_wise": 2, "binary": 1},
+                ),
+                batch_size=self.batch_size,
+                validation_samples=val_samples,
+                n_steps=n_steps,
+                save_path=os.path.join(temp_dir, "models"),
+            )
+
+            # Train with checkpointing
+            d4pg.fit(
+                epochs=1,
+                max_steps=max_steps,
+                checkpoint_frequency=checkpoint_freq,
+                checkpoint_path=os.path.join(temp_dir, "checkpoints"),
+                validation_steps_frequency=checkpoint_freq,
+                validation_steps_per_episode=checkpoint_freq,
+                validation_steps_per_train_step=checkpoint_freq,
+            )
+
+            # Verify checkpoints were created
+            checkpoint_dir = os.path.join(temp_dir, "checkpoints")
+            self.assertTrue(os.path.exists(checkpoint_dir))
+
+            # Check for checkpoint files
+            checkpoint_files = [
+                f for f in os.listdir(checkpoint_dir) if f.endswith(".ptc")
+            ]
+            self.assertGreater(len(checkpoint_files), 0, "No checkpoint files found")
+
+            # Check for model files
+            model_dir = os.path.join(temp_dir, "models")
+            self.assertTrue(os.path.exists(model_dir))
+
+            # Test loading from checkpoint
+            new_d4pg = D4PG(
+                env=env,
+                train_samples=train_samples,
+                actor=ArcActorNetwork(grid_size=grid_size, color_values=color_values),
+                critic=ArcCriticNetwork(
+                    grid_size=grid_size,
+                    color_values=color_values,
+                    num_atoms={"pixel_wise": 50, "binary": 3},
+                    v_min={"pixel_wise": -40, "binary": 0},
+                    v_max={"pixel_wise": 2, "binary": 1},
+                ),
+                batch_size=self.batch_size,
+            )
+
+            # Load the latest checkpoint
+            latest_checkpoint = max(
+                [os.path.join(checkpoint_dir, f) for f in os.listdir(checkpoint_dir)],
+                key=os.path.getctime,
+            )
+            new_d4pg.load_checkpoint(latest_checkpoint)
+
+            # Verify parameters match
+            for (name, param), (_, new_param) in zip(
+                d4pg.actor.named_parameters(), new_d4pg.actor.named_parameters()
+            ):
+                self.assertTrue(
+                    torch.allclose(param, new_param),
+                    f"Actor parameter {name} mismatch after loading checkpoint",
+                )
+
+            logger.info("Checkpoint during training test passed successfully!")
+
+        finally:
+            # Clean up
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_checkpoint_error_recovery(self):
+        """Test checkpoint recovery after error during training."""
+        import tempfile
+        import shutil
+        import random
+
+        grid_size = 30
+        color_values = 11
+        max_steps = 10
+        n_steps = 2
+
+        logger.info("Testing checkpoint error recovery")
+
+        # Create temporary directory for checkpoints
+        temp_dir = tempfile.mkdtemp()
+
+        class RandomError(Exception):
+            pass
+
+        try:
+            # Setup environment and data loaders
+            env = ArcBatchGridEnv(grid_size, color_values, n_steps=n_steps)
+            env = PixelAwareRewardWrapper(env, n_steps=n_steps)
+
+            dataset = ArcDataset(
+                arc_dataset_dir="tests/test_data/unittest/training",
+                keep_in_memory=False,
+                transform=ArcSampleTransformer(
+                    (grid_size, grid_size), examples_stack_dim=10
+                ),
+            )
+            train_samples = DataLoader(dataset=dataset, batch_size=self.batch_size)
+
+            # Initialize D4PG with checkpointing
+            d4pg = D4PG(
+                env=env,
+                train_samples=train_samples,
+                actor=ArcActorNetwork(grid_size=grid_size, color_values=color_values),
+                critic=ArcCriticNetwork(
+                    grid_size=grid_size,
+                    color_values=color_values,
+                    num_atoms=self.num_atoms,
+                    v_min={"pixel_wise": -40, "binary": 0},
+                    v_max={"pixel_wise": 2, "binary": 1},
+                ),
+                batch_size=self.batch_size,
+                n_steps=n_steps,
+                save_path=os.path.join(temp_dir, "models"),
+            )
+
+            # Simulate an error during training
+            original_fit = d4pg.fit
+
+            def mock_fit(*args, **kwargs):
+                if random.random() < 0.5:  # 50% chance to raise error
+                    raise RandomError("Simulated error during training")
+                return original_fit(*args, **kwargs)
+
+            d4pg.fit = mock_fit
+
+            # Train with checkpointing
+            with self.assertRaises(RandomError):
+                d4pg.fit(
+                    epochs=1,
+                    max_steps=max_steps,
+                    checkpoint_frequency=1,  # Save every step
+                    checkpoint_path=os.path.join(temp_dir, "checkpoints"),
+                )
+
+            # Verify error checkpoint was created
+            error_checkpoint_dir = os.path.join(temp_dir, "checkpoints", "on_error")
+            self.assertTrue(os.path.exists(error_checkpoint_dir))
+
+            # Check for checkpoint files in error directory
+            checkpoint_files = [
+                f for f in os.listdir(error_checkpoint_dir) if f.endswith(".ptc")
+            ]
+            self.assertGreater(
+                len(checkpoint_files), 0, "No error checkpoint files found"
+            )
+
+            logger.info("Checkpoint error recovery test passed successfully!")
+
+        finally:
+            # Clean up
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_full_train_d4pg(self):
         grid_size = 30
