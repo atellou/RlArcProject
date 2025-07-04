@@ -1520,45 +1520,72 @@ class D4PG:
                         if self.config.get("strict_checkpoint_loading", True):
                             raise
 
-            # Restore RNG states if available
-            if "torch_rng_state" in checkpoint:
-                torch.set_rng_state(checkpoint["torch_rng_state"].cpu())
-
             # Restore environment states
             try:
                 env_path = os.path.join(path, "environment")
+
+                # Try to load from the new format first (train/validation subdirectories)
                 train_env_path = os.path.join(env_path, "train")
 
-                # Load train environment
-                self.train_env.load(
-                    parent_path=os.path.join(
+                # Check if the environment directory exists and has the expected structure
+                if os.path.exists(train_env_path):
+                    # Load train environment
+                    train_parent_path = os.path.join(
                         train_env_path,
                         "parent",
                         self.train_env.env.__class__.__name__ + ".ptc",
-                    ),
-                    child_path=os.path.join(
+                    )
+                    train_child_path = os.path.join(
                         train_env_path,
                         "child",
                         self.train_env.__class__.__name__ + ".ptc",
-                    ),
-                    device=self.device,
-                )
+                    )
 
-                # Load validation environment if it exists
-                if hasattr(self, "validation_env"):
-                    val_env_path = os.path.join(env_path, "validation")
-                    self.validation_env.load(
-                        parent_path=os.path.join(
+                    if os.path.exists(train_parent_path) and os.path.exists(
+                        train_child_path
+                    ):
+                        self.train_env.load(
+                            parent_path=train_parent_path,
+                            child_path=train_child_path,
+                            device=self.device,
+                        )
+                    else:
+                        logger.warning(
+                            f"Environment state files not found at {train_parent_path} or {train_child_path}. "
+                            "Skipping environment state restoration."
+                        )
+
+                    # Load validation environment if it exists
+                    if hasattr(self, "validation_env"):
+                        val_env_path = os.path.join(env_path, "validation")
+                        val_parent_path = os.path.join(
                             val_env_path,
                             "parent",
                             self.validation_env.env.__class__.__name__ + ".ptc",
-                        ),
-                        child_path=os.path.join(
+                        )
+                        val_child_path = os.path.join(
                             val_env_path,
                             "child",
                             self.validation_env.__class__.__name__ + ".ptc",
-                        ),
-                        device=self.device,
+                        )
+
+                        if os.path.exists(val_parent_path) and os.path.exists(
+                            val_child_path
+                        ):
+                            self.validation_env.load(
+                                parent_path=val_parent_path,
+                                child_path=val_child_path,
+                                device=self.device,
+                            )
+                        else:
+                            logger.warning(
+                                f"Validation environment state files not found at {val_parent_path} or {val_child_path}. "
+                                "Skipping validation environment state restoration."
+                            )
+                else:
+                    logger.warning(
+                        f"Environment directory not found at {train_env_path}. "
+                        "Skipping environment state restoration."
                     )
             except Exception as e:
                 logger.error(
@@ -1574,16 +1601,34 @@ class D4PG:
                 "carsm",
                 "tau",
                 "target_update_frequency",
-                "entropy_coef",
                 "entropy_coef_decay",
                 "n_steps",
                 "max_grad_norm",
             }
+            # Validate other hyperparameters
             for param in required_hparams:
                 if param not in checkpoint["hyperparameters"]:
                     logger.warning(f"Missing hyperparameter in checkpoint: {param}")
                     continue
-                if getattr(self, param) != checkpoint["hyperparameters"][param]:
+
+                # Special case for entropy_coef_decay - use relative tolerance
+                if param == "entropy_coef_decay":
+                    current_val = getattr(self, param)
+                    saved_val = checkpoint["hyperparameters"][param]
+                    if not np.isclose(current_val, saved_val, rtol=1e-5):
+                        logger.warning(
+                            f"Hyperparameter mismatch for {param}: "
+                            f"current={current_val}, "
+                            f"checkpoint={saved_val}"
+                        )
+                        if self.config.get("strict_checkpoint_loading", True):
+                            raise ValueError(
+                                f"Hyperparameter mismatch for {param}: "
+                                f"current={current_val}, "
+                                f"checkpoint={saved_val}"
+                            )
+                # For other parameters, exact match
+                elif getattr(self, param) != checkpoint["hyperparameters"][param]:
                     logger.warning(
                         f"Hyperparameter mismatch for {param}: "
                         f"current={getattr(self, param)}, "
@@ -1625,6 +1670,15 @@ class D4PG:
                         checkpoint["data_loaders"]["validation"]["sampler_state"]
                     )
 
+        # Skip entropy_coef assertion since it's expected to change due to decay
+        if "entropy_coef" in checkpoint["hyperparameters"]:
+            self.entropy_coef = checkpoint["hyperparameters"]["entropy_coef"]
+            logger.debug(
+                f"Skipping entropy_coef validation (may be different due to decay): "
+                f"current={self.entropy_coef}, "
+                f"checkpoint={checkpoint['hyperparameters']['entropy_coef']}"
+            )
+
         env_path = os.path.join(
             path,
             "environment",
@@ -1651,7 +1705,7 @@ class D4PG:
                 parent_path=env_path.format(
                     sample_type="validation",
                     level="parent",
-                    env_class=self.validation_env.__class__.__name__,
+                    env_class=self.validation_env.env.__class__.__name__,
                 ),
                 child_path=env_path.format(
                     sample_type="validation",

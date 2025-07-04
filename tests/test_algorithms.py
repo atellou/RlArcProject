@@ -616,7 +616,8 @@ class TestD4PG(unittest.TestCase):
                 [os.path.join(checkpoint_dir, f) for f in os.listdir(checkpoint_dir)],
                 key=os.path.getctime,
             )
-            new_d4pg.load_checkpoint(latest_checkpoint)
+
+            new_d4pg.load_checkpoint(os.path.dirname(latest_checkpoint))
 
             # Verify parameters match
             for (name, param), (_, new_param) in zip(
