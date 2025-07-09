@@ -25,40 +25,100 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def load_args_from_yaml(file_path, key):
+def load_args_from_yaml(file_path: str, key: str) -> dict:
     with open(file_path, "r") as f:
         args_dict = yaml.safe_load(f)
     return args_dict[key]
 
 
-def check_args(args):
-    assert args["grid_size"] == 30
-    assert args["color_values"] == 11
-    if args["n_steps"] > 1:
-        assert args["num_atoms"].get("n_reward") is not None
-        assert args["v_min"].get("n_reward") is not None
-        assert args["v_max"].get("n_reward") is not None
-    else:
-        assert args["num_atoms"].get("n_reward") is None
-        assert args["v_min"].get("n_reward") is None
-        assert args["v_max"].get("n_reward") is None
-    assert args["num_atoms"].get("binary") is not None
-    assert args["v_min"].get("binary") is not None
-    assert args["v_max"].get("binary") is not None
-    assert args["num_atoms"].get("pixel_wise") is not None
-    assert args["v_min"].get("pixel_wise") is not None
-    assert args["v_max"].get("pixel_wise") is not None
+def check_args(args: dict) -> list[str]:
+    """Validate the arguments and return a list of error messages for any issues found.
+
+    Args:
+        args: Dictionary of arguments to validate
+
+    Returns:
+        List of error messages, empty if all validations pass
+    """
+
+    should_have = {
+        "grid_size",
+        "color_values",
+        "n_steps",
+        "num_atoms",
+        "v_min",
+        "v_max",
+    }
+    errors = []
+
+    args_keys = set(args.keys())
+    missing_keys = should_have - args_keys
+    if missing_keys:
+        errors.append(f"Missing required fields: {missing_keys}")
+
+    if args.get("n_steps") is not None:
+        if args["n_steps"] > 1:
+            if (
+                args["num_atoms"].get("n_reward") is None
+                or args["v_min"].get("n_reward") is None
+                or args["v_max"].get("n_reward") is None
+            ):
+                errors.append(
+                    "num_atoms.n_reward, v_min.n_reward, and v_max.n_reward are required when n_steps > 1"
+                )
+        else:
+            if (
+                args["num_atoms"].get("n_reward") is not None
+                or args["v_min"].get("n_reward") is not None
+                or args["v_max"].get("n_reward") is not None
+            ):
+                errors.append(
+                    "num_atoms.n_reward, v_min.n_reward, and v_max.n_reward should not be specified when n_steps is None"
+                )
+    if errors:
+        raise ValueError("Invalid arguments: \n" + "\n".join(errors))
+    if (
+        args["num_atoms"].get("binary") is not None
+        or args["v_min"].get("binary") is not None
+        or args["v_max"].get("binary") is not None
+    ):
+        errors.append(
+            "num_atoms.binary, v_min.binary, and v_max.binary should not be specified when n_steps is None"
+        )
+    if (
+        args["num_atoms"].get("pixel_wise") is not None
+        or args["v_min"].get("pixel_wise") is not None
+        or args["v_max"].get("pixel_wise") is not None
+    ):
+        errors.append(
+            "num_atoms.pixel_wise, v_min.pixel_wise, and v_max.pixel_wise should not be specified when n_steps is None"
+        )
+    if errors:
+        raise ValueError("Invalid arguments: \n" + "\n".join(errors))
 
 
 def train_d4pg(
-    config_key,
-    training_data_uri,
-    validation_data_uri,
-    models_dir,
-    checkpoint_dir,
-    tensorboard_log_dir,
-    args,
+    config_key: str,
+    training_data_uri: str,
+    validation_data_uri: str,
+    models_dir: str,
+    checkpoint_dir: str,
+    tensorboard_log_dir: str,
+    args: dict,
 ):
+    """
+    Train a D4PG agent on the ARC environment.
+
+    Args:
+        config_key (str): Key for the configuration in the YAML file
+        training_data_uri (str): Path to the training data directory
+        validation_data_uri (str): Path to the validation data directory
+        models_dir (str): Directory to save trained models
+        checkpoint_dir (str): Directory to save training checkpoints
+        tensorboard_log_dir (str): Directory for TensorBoard logs
+        args (dict): Training arguments
+
+    """
     logger.info(f"D4PG train configuration: \n{json.dumps(args, indent=4)}")
     device_configs = enable_cuda()
     logger.info(f"Device configurations: \n{json.dumps(device_configs, indent=4)}")
@@ -70,7 +130,9 @@ def train_d4pg(
 
     # Checkpoints
     checkpoint_dir = os.path.join(checkpoint_dir, config_key)
+    checkpoint_frequency = args["checkpoint_frequency"]
     logger.info(f"Checkpoints directory: {checkpoint_dir}")
+    logger.info(f"Checkpoint frequency: {checkpoint_frequency}")
 
     # Tensorboard
     tensorboard_log_dir = os.path.join(tensorboard_log_dir, config_key)
@@ -190,6 +252,8 @@ def train_d4pg(
         validation_steps_per_train_step=args["validation_steps_per_train_step"],
         validation_steps_per_episode=args["validation_steps_per_episode"],
         logger_frequency=args["logger_frequency"],
+        checkpoint_frequency=checkpoint_frequency,
+        checkpoint_dir=checkpoint_dir,
     )
 
 
@@ -255,15 +319,29 @@ if __name__ == "__main__":
         default=os.environ.get("AIP_TENSORBOARD_LOG_DIR"),
         help="Directory to save tensorboard logs",
     )
+    parser.add_argument(
+        "--checkpoint_frequency",
+        type=int,
+        default=-1,
+        help="Checkpoint frequency",
+    )
 
     args = parser.parse_args()
 
+    checkpoint_frequency_default = 10000
     assert args.storage_uri is not None
     assert args.training_data_uri is not None
     assert args.validation_data_uri is not None
 
     if args.models_dir is None:
         args.models_dir = os.path.join(args.storage_uri, "models")
+    if args.checkpoint_dir is not None and args.checkpoint_frequency == -1:
+        logger.warning(
+            "Checkpoint frequency set to default value of {}".format(
+                checkpoint_frequency_default
+            )
+        )
+        args.checkpoint_frequency = checkpoint_frequency_default
     if args.checkpoint_dir is None:
         args.checkpoint_dir = os.path.join(args.storage_uri, "checkpoints")
     if args.tensorboard_log_dir is None:

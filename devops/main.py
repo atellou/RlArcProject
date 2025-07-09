@@ -19,6 +19,18 @@ def init_sample(
     encryption_spec_key_name: Optional[str] = None,
     service_account: Optional[str] = None,
 ):
+    """
+    Initialize the Vertex AI environment.
+
+    Args:
+        project: GCP project ID
+        location: GCP region
+        experiment: Vertex AI experiment name
+        staging_bucket: GCS bucket for staging
+        credentials: Optional credentials
+        encryption_spec_key_name: Optional encryption key name
+        service_account: Optional service account
+    """
     if project is None:
         project = os.environ.get("PROJECT_ID")
     if location is None:
