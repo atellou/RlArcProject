@@ -6,21 +6,28 @@ This project implements a Deep Reinforcement Learning (RL) approach to solve tas
 
 - [Infrastructure](#infrastructure)
 - [Installation](#installation)
-- [Usage](#usage)
+  - [Prerequisites](#prerequisites)
+  - [Setup](#setup)
 - [Project Structure](#project-structure)
 - [Configuration](#configuration)
 - [Training](#training)
+- [Monitoring with TensorBoard](#monitoring-with-tensorboard)
+  - [Starting TensorBoard](#starting-tensorboard)
+  - [Key Metrics Tracked](#key-metrics-tracked)
+  - [Viewing Specific Runs](#viewing-specific-runs)
 - [Evaluation](#evaluation)
 - [Contributing](#contributing)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
 - [Dataset](#dataset)
 - [Cloud Integration](#cloud-integration)
-
+- [Acknowledgments](#acknowledgments)
+- [Dataset](#dataset)
+- [Cloud Integration](#cloud-integration)
 
 ## Infrastructure
 
-The project is designed to run in containerized environments with support for GPU acceleration:
+TheProject is designed to run in containerized environments with support for GPU acceleration:
 
 - **Containerization**: Docker support with GPU capabilities
 - **Cloud Integration**: Compatible with GCP Vertex AI and Cloud Storage
@@ -39,7 +46,8 @@ Key components:
 ### Prerequisites
 
 - Docker and Docker Compose
-- NVIDIA Container Toolkit (for GPU support)
+- NVIDIA GPU with appropriate drivers installed
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (for GPU support in Docker)
 - Python 3.8+
 
 ### Setup
@@ -57,10 +65,41 @@ Key components:
    docker-compose -f devops/dev.docker-compose.yml build
    ```
 
-3. Start the development container:
+3. Enable GPU support:
+
+   The project uses a GPU-enabled Docker image. To enable GPU support, you need to modify the `dev.docker-compose.yml` file to include the GPU runtime. Add the following under the `rl_train_job` service:
+
+   ```yaml
+   deploy:
+     resources:
+       reservations:
+         devices:
+           - driver: nvidia
+             count: 1
+             capabilities: [gpu]
+   ```
+
+4. Start the development container with GPU support:
 
    ```bash
+   # For Docker Compose v1.28.0+
    docker-compose -f devops/dev.docker-compose.yml up -d
+
+   # For older versions, you might need to use:
+   # docker-compose -f devops/dev.docker-compose.yml --compatibility up -d
+   ```
+
+5. Verify GPU access:
+
+   ```bash
+   # Enter the container
+   docker exec -it <container_name> bash
+   ```
+
+   Check if PyTorch can see the GPU:
+
+   ```bash
+   python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
    ```
 
 ## Project Structure
@@ -104,6 +143,51 @@ python -m rlarcworld.jobs.train \
     --checkpoint-dir /path/to/save/checkpoints \
     --tensorboard-log-dir /path/for/tensorboard/logs
 ```
+
+## Monitoring with TensorBoard
+
+This project uses TensorBoard for tracking and visualizing training progress, including metrics, model graphs, and other useful information.
+
+### Starting TensorBoard
+
+1. **Local Installation**:
+
+   If you have TensorBoard installed locally, you can start it with:
+
+   ```bash
+   tensorboard --logdir=/path/to/tensorboard/logs
+   ```
+
+   Then open your browser to `http://localhost:6006/`
+
+2. **Docker Container**:
+
+   If you're using the provided Docker setup, you can access TensorBoard by exposing the port in your `docker-compose.yml`:
+
+   ```yaml
+   ports:
+     - "6006:6006"
+   ```
+
+   Then start TensorBoard inside the container:
+
+   ```bash
+   tensorboard --logdir=/path/to/tensorboard/logs --host=0.0.0.0
+   ```
+
+   Access it at `http://localhost:6006/` from your host machine.
+
+### Key Metrics Tracked
+
+- **Training Loss**: Actor and critic losses over time
+- **Rewards**: Training and validation rewards per episode
+- **Hyperparameters**: Learning rates and other training parameters
+- **Gradients**: Histograms of model gradients
+- **Model Graphs**: Computation graphs of your models
+
+### Viewing Specific Runs
+
+If you have multiple runs, you can compare them by selecting which runs to display in the TensorBoard interface. The runs are automatically organized by their timestamp and configuration.
 
 ## Evaluation
 
