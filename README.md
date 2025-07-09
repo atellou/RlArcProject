@@ -70,13 +70,16 @@ Key components:
    The project uses a GPU-enabled Docker image. To enable GPU support, you need to modify the `dev.docker-compose.yml` file to include the GPU runtime. Add the following under the `rl_train_job` service:
 
    ```yaml
-   deploy:
-     resources:
-       reservations:
-         devices:
-           - driver: nvidia
-             count: 1
-             capabilities: [gpu]
+   services:
+   rl_train_job:
+      # ... existing configuration ...
+      deploy:
+         resources:
+         reservations:
+            devices:
+               - driver: nvidia
+               count: 1
+               capabilities: [gpu]
    ```
 
 4. Start the development container with GPU support:

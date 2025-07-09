@@ -23,3 +23,10 @@ services:
       - .env
     ports:
       - "6006:6006"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
