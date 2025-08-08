@@ -1,5 +1,6 @@
 ./**/dataset/** */
 logs/
+.venv
 .git
 .cache
 __pycache__
