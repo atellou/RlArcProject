@@ -164,6 +164,7 @@ cython_debug/
 # Custom
 rlarcworld/**/dataset/
 gcs/
+test_checkpoint/**
 **.ptc
 **.pt
 **.pth
