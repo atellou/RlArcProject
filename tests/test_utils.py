@@ -7,6 +7,8 @@ import unittest
 import torch
 
 from rlarcworld.utils import configure_logger
+import os
+import logging
 
 # Configure root logger with debug level
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
