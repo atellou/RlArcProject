@@ -5,7 +5,7 @@ env:
   ML_PROJECT_ID: "test"
   IMAGE_NAME: rlarc_train
   IMAGE_TAG: latest
-  LOG_LEVEL: "ERROR"
+  LOG_LEVEL: "INFO"
 
 defaults:
   run:
