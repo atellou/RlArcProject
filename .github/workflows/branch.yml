@@ -5,6 +5,7 @@ env:
   ML_PROJECT_ID: "test"
   IMAGE_NAME: rlarc_train
   IMAGE_TAG: latest
+  LOG_LEVEL: "ERROR"
 
 defaults:
   run:
@@ -49,6 +50,8 @@ jobs:
 
       - name: Run tests
         run: uv run python -m unittest
+        env:
+          LOG_LEVEL: ${{ env.LOG_LEVEL }}
             
       - name: Build Docker Image
         run: docker buildx build -t ${IMAGE_NAME}:${IMAGE_TAG} --file devops/Dockerfile . --platform=linux/amd64
