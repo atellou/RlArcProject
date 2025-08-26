@@ -60,11 +60,20 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
+      - name: Show workspace and files
+        run: |
+          echo "PWD=$(pwd)"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          ls -la
+          ls -la "$GITHUB_WORKSPACE"
+
       - name: Install the project
         run: uv sync --locked --all-extras --dev
+        working-directory: ${{ github.workspace }}
 
       - name: Run tests
         run: uv run python -m unittest
+        working-directory: ${{ github.workspace }}
         env:
           LOG_LEVEL: ${{ env.LOG_LEVEL }}
             
