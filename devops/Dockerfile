@@ -2,7 +2,7 @@
 FROM us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-3.py310:latest
 
 # Distroless uv
-COPY --from=ghcr.io/astral-sh/uv:0.8.6 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.8.8 /uv /uvx /bin/
 
 RUN apt-get update && apt-get install -y curl apt-utils
 # Set up working directory
