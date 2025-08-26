@@ -37,6 +37,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Show disk usage before build
+        run: |
+          df -h
+          docker system df -v || true
+
       - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
@@ -53,5 +68,17 @@ jobs:
         env:
           LOG_LEVEL: ${{ env.LOG_LEVEL }}
             
-      - name: Build Docker Image
-        run: docker buildx build -t ${IMAGE_NAME}:${IMAGE_TAG} --file devops/Dockerfile . --platform=linux/amd64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image (buildx + gha cache)
+        run: |
+          docker buildx build \
+            --cache-to=type=gha,mode=max \
+            --cache-from=type=gha \
+            --progress=plain \
+            --platform=linux/amd64 \
+            -f devops/Dockerfile \
+            --load \
+            -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            .
