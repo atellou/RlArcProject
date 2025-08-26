@@ -35,8 +35,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Maximize build space
         uses: easimon/maximize-build-space@v10
         with:
@@ -47,10 +45,24 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
+      - name: Free extra space (toolcache and apt)
+        run: |
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /opt/hostedtoolcache/Ruby || true
+          sudo rm -rf /opt/hostedtoolcache/go || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
+
       - name: Show disk usage before build
         run: |
           df -h
           docker system df -v || true
+
+      - uses: actions/checkout@v4
 
       - name: "Set up Python"
         uses: actions/setup-python@v5
