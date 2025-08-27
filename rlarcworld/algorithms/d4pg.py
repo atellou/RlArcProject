@@ -697,7 +697,7 @@ class D4PG:
             # Initialize reward with always-present keys
             reward_dict = {
                 "pixel_wise": reward.unsqueeze(-1),
-                "binary": env.get_wrapper_attr("last_reward").unsqueeze(-1),
+                "binary": env.get_source_env_reward().unsqueeze(-1),
             }
 
             # Only add n_reward if n_steps > 1

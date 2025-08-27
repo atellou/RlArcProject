@@ -229,6 +229,18 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             self.reward_storage = self.reward_storage.to(device)
             self.discount_factor = self.discount_factor.to(device)
 
+    def get_source_env_reward(self):
+        """
+        Returns the last reward from the source environment.
+        """
+        q = self.env.reward_storage  # TorchQueue
+        dim = q.queue_dim  # typically 1
+        # build a slice that selects the last element along the queue dimension
+        index = [slice(None)] * q.ndim
+        index[dim] = -1
+        res = q[tuple(index)]
+        return torch.tensor(res, device=res.device, dtype=res.dtype)
+
     def reward(
         self,
         last_diffs: torch.Tensor,
