@@ -16,9 +16,7 @@ algorithm.
 
 """
 
-import os
 from typing import Dict
-import copy
 import torch
 import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict

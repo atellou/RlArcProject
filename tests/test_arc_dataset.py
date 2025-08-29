@@ -33,13 +33,13 @@ class TestArcSampleTransformer(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.transform.pad_to_size(torch.ones((30, 30)))
 
-    def test_concat_unsqueezed(self):
+    def test_concat_unsqueeze(self):
         """
-        Test the concat_unsqueezed method of ArcSampleTransformer.
+        Test the concat_unsqueeze method of ArcSampleTransformer.
         """
         # Test with a valid task
         task = {"grid_one": torch.ones((5, 5)), "grid_two": torch.zeros((5, 5))}
-        unsqzed = self.transform.concat_unsqueezed(**task)
+        unsqzed = self.transform.concat_unsqueeze(**task)
         assert isinstance(unsqzed, torch.Tensor)
         assert unsqzed.shape == (
             2,
@@ -47,7 +47,7 @@ class TestArcSampleTransformer(unittest.TestCase):
         )
         task = {"grid_one": torch.ones((5, 5)), "grid_two": torch.zeros((6, 6))}
         with self.assertRaises(AssertionError):
-            self.transform.concat_unsqueezed(**task)
+            self.transform.concat_unsqueeze(**task)
 
     def test_extraction_transformed(self):
         dataset_t = ArcDataset(

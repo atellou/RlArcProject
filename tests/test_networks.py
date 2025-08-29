@@ -1,4 +1,3 @@
-import os
 import torch
 from tensordict import TensorDict
 
@@ -174,7 +173,7 @@ class ArcNetworksTest(unittest.TestCase):
         This method tests the forward and backward pass of the
         ArcCriticNetwork class by creating an instance of the
         network, validating the input, performing a forward pass,
-        calculating the loss, and performing backpropagation.
+        calculating the loss, and performing back propagation.
         """
         size = 30
         color_values = 11
@@ -299,7 +298,7 @@ class ArcNetworksTest(unittest.TestCase):
         This method tests the forward and backward pass of the
         ArcActorNetwork class by creating an instance of the
         network, validating the input, performing a forward pass,
-        calculating the loss, and performing backpropagation.
+        calculating the loss, and performing back propagation.
         """
         size = 30
         color_values = 11

@@ -3,7 +3,6 @@ import json
 
 import numpy as np
 
-from tensordict import TensorDict
 import torch
 from torch.utils.data import Dataset
 from google.cloud import storage
@@ -67,7 +66,7 @@ class ArcSampleTransformer(object):
             grid, (0, width, 0, height), value=self.constant_value
         )
 
-    def concat_unsqueezed(
+    def concat_unsqueeze(
         self, grid_one: torch.Tensor, grid_two: torch.Tensor
     ) -> torch.Tensor:
         """
@@ -94,7 +93,7 @@ class ArcSampleTransformer(object):
         logger.debug("Concat examples...")
         return torch.cat(
             [
-                self.concat_unsqueezed(
+                self.concat_unsqueeze(
                     self.pad_to_size(torch.as_tensor(example["input"])),
                     self.pad_to_size(torch.as_tensor(example["output"])),
                 ).unsqueeze(0)
@@ -215,9 +214,9 @@ class ArcDataset(Dataset):
         """
         Creates a dictionary of file location or samples from the dataset.
         For the samples with more than one test pair,
-        the key for the dictionary is additioned and undersocere plus test pair index.
+        the key for the dictionary is added and underscore plus test pair index.
 
-        Two behaviours:
+        Two behaviors:
         If "self.keep_in_memory" is False (default) create dictionary of file_id[key]:file_dir[value] pairs.
         If "self.keep_in_memory" is True create dictionary of file_id[key]:[value] pairs.
 

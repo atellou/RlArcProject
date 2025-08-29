@@ -14,7 +14,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
     def __init__(
         self,
         env,
-        max_penality: float = -1.0,
+        max_penalty: float = -1.0,
         n_steps: int = 1,
         gamma: float = 1.0,
         apply_clamp: bool = False,
@@ -26,7 +26,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
         Args:
             env (gym.Env): Environment to wrap.
-            max_penality (float, optional): Maximum penalty for the reward. Defaults to -1.0.
+            max_penalty (float, optional): Maximum penalty for the reward. Defaults to -1.0.
             n_steps (int, optional): Number of steps in the reward computation. Defaults to 1.
             gamma (float, optional): Discount factor in the reward computation. Defaults to 1.0.
             apply_clamp (bool, optional): Whether to apply clamping to the reward. Defaults to False.
@@ -34,10 +34,10 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             v_max (int, optional): Maximum value for clamping. Defaults to None.
 
         Raises:
-            AssertionError: If max_penality is not a float, n_steps is not a positive int, gamma is not a positive float lower or equal than 1.0, apply_clamp is not a bool, v_max is not None or an int, v_min is not None or an int or v_min >= v_max when apply_clamp is True.
+            AssertionError: If max_penalty is not a float, n_steps is not a positive int, gamma is not a positive float lower or equal than 1.0, apply_clamp is not a bool, v_max is not None or an int, v_min is not None or an int or v_min >= v_max when apply_clamp is True.
         """
         super().__init__(env)
-        assert isinstance(max_penality, float), "max_penality must be a float"
+        assert isinstance(max_penalty, float), "max_penalty must be a float"
         assert (
             isinstance(n_steps, int) and n_steps > 0
         ), "n_steps must be a positive int"
@@ -50,7 +50,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             assert v_min is None or isinstance(v_min, int)
             assert v_min < v_max
 
-        self.__max_penality = max_penality
+        self.__max_penalty = max_penalty
         self.apply_clamp = apply_clamp
         self.v_min = v_min
         self.v_max = v_max
@@ -165,11 +165,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         return len(self.env)
 
     @property
-    def max_penality(self):
+    def max_penalty(self):
         """
         Maximum penality for the current grid.
         """
-        return self.__max_penality
+        return self.__max_penalty
 
     @property
     def reward_storage(self):
@@ -190,7 +190,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 {
                     "reward_storage": self.reward_storage,
                     "last_reward": self.last_reward,
-                    "max_penality": self.max_penality,
+                    "max_penalty": self.max_penalty,
                     "batch_size": self.batch_size,
                     "n_steps": self.n_steps,
                     "gamma": self.gamma,
@@ -217,7 +217,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.last_reward = checkpoint["last_reward"]
         self.batch_size = checkpoint["batch_size"]
 
-        assert self.max_penality == checkpoint["max_penality"]
+        assert self.max_penalty == checkpoint["max_penalty"]
         assert self.n_steps == checkpoint["n_steps"]
         assert self.gamma == checkpoint["gamma"]
         assert self.apply_clamp == checkpoint["apply_clamp"]
@@ -258,7 +258,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             5. If the improvement is positive, the reward is 0.
             6. If the improvement is negative, the reward is -2.
             7. The penalization is proportional to the difference between the current and the target grid.
-            8. In a 10x10 grid with all grids different and a max_penality of -1, the penalization would be -100.
+            8. In a 10x10 grid with all grids different and a max_penalty of -1, the penalization would be -100.
             9. If the agent has submitted and there exists a difference between the current and the target grid, the reward is the improvement plus the maximum penalty.
             10. If the agent has submitted and there is no difference between the current and the target grid, the reward is 1.
 
@@ -270,7 +270,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             torch.Tensor: The reward for the current grid of the environment.
         """
-        penalization = submission * self.max_penality
+        penalization = submission * self.max_penalty
         last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
         grid_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2))
         if not isinstance(penalization, torch.Tensor):

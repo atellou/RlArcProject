@@ -36,7 +36,7 @@ class ArcActionSpace:
         self.plain_space = torch.arange(
             self.grid_size * self.grid_size * self.color_values * 2
         )
-        self.multi_squence_space = self.plain_space.reshape(
+        self.multi_sequence_space = self.plain_space.reshape(
             self.grid_size, self.grid_size, self.color_values, 2
         )
         self.possible_combinations = np.stack(
@@ -183,14 +183,14 @@ class ArcBatchGridEnv(gym.Env):
             and batch_in.shape[1] == self.grid_size
             and batch_in.shape[2] == self.grid_size
         ), "The batch input shape is not correct. A shape of (batch_size, {size}, {size}) is expected".format(
-            self.grid_size
+            size=self.grid_size
         )
         assert (
             len(batch_out.shape) == 3
             and batch_out.shape[1] == self.grid_size
             and batch_out.shape[2] == self.grid_size
         ), "The batch output (target) shape is not correct. A shape of (batch_size, {size}, {size}) is expected".format(
-            self.grid_size
+            size=self.grid_size
         )
         self.batch_size = batch_in.shape[0]
 
@@ -205,7 +205,7 @@ class ArcBatchGridEnv(gym.Env):
             queue_dim=1,
         )
         self.last_reward = torch.zeros(self.batch_size, dtype=int)
-        self.timestep = 0
+        self.time_step = 0
 
         # Validate examples
         self.validate_examples(options["examples"])
@@ -238,7 +238,7 @@ class ArcBatchGridEnv(gym.Env):
                     "information": self.information,
                     "last_grid": self.last_grid,
                     "last_reward": self.last_reward,
-                    "timestep": self.timestep,
+                    "time_step": self.time_step,
                     "reward_storage": self.reward_storage,
                     "is_train_episode": self.is_train_episode,
                     "n_steps": self.n_steps,
@@ -267,7 +267,7 @@ class ArcBatchGridEnv(gym.Env):
         self.information = checkpoint["information"]
         self.last_grid = checkpoint["last_grid"]
         self.last_reward = checkpoint["last_reward"]
-        self.timestep = checkpoint["timestep"]
+        self.time_step = checkpoint["time_step"]
         self.reward_storage = checkpoint["reward_storage"]
         self.is_train_episode = checkpoint["is_train_episode"]
         self.batch_size = checkpoint["batch_size"]
@@ -371,7 +371,7 @@ class ArcBatchGridEnv(gym.Env):
             self.last_grid = self.observations["grid"].clone()
             logger.debug("Actions are valid")
             # Update the grid with the action.
-            self.timestep += 1
+            self.time_step += 1
             logger.debug(
                 "Action performed shapes: Y={}, X={}, Color={}, Submission={}".format(
                     actions["y_location"].shape,
@@ -389,7 +389,7 @@ class ArcBatchGridEnv(gym.Env):
                 list(range(self.batch_size)),
                 actions["y_location"],
                 actions["x_location"],
-            ] = self.timestep
+            ] = self.time_step
         else:
             logger.error(
                 "No action performed due to invalid action, sequence of values"
@@ -433,6 +433,6 @@ logger.info("Registering gymnasium environment")
 
 gym.envs.registration.register(
     id="ArcBatchGrid-v0",
-    entry_point="rlarcworld.enviroments.arc_batch_grid_env:ArcBatchGridEnv",
+    entry_point="rlarcworld.environments.arc_batch_grid_env:ArcBatchGridEnv",
     nondeterministic=True,
 )

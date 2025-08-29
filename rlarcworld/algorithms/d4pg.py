@@ -1,10 +1,8 @@
-from multiprocessing import ProcessError
 import os
 import copy
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
 import torch.optim as optim
 
 from torch.utils.tensorboard import SummaryWriter
@@ -12,8 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tensordict import TensorDict
 from torchrl.data import ReplayBuffer
 
-from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.arc_dataset import ArcDataset
+from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.utils import (
     categorical_projection,
     get_nested_ref,
@@ -116,7 +113,7 @@ class D4PG:
         ), "Environment must be an instance of PixelAwareRewardWrapper"
         assert (
             env.n_steps == n_steps
-        ), "n-steps in enviroment ({}) is different from n-steps in algorithm ({})".format(
+        ), "n-steps in environment ({}) is different from n-steps in algorithm ({})".format(
             env.n_steps, n_steps
         )
         assert (
@@ -172,7 +169,7 @@ class D4PG:
         if self.replay_buffer is not None:
             logger.debug("Replay buffer initialized")
 
-        # Store enviroment and samples
+        # Store environment and samples
         self.train_env = env
         self.train_samples = train_samples
 
@@ -422,7 +419,7 @@ class D4PG:
         """
         assert (
             not self.carsm or target_q is not None
-        ), "target_q must be provided when usin CARSM loss."
+        ), "target_q must be provided when using CARSM loss."
         # Get action probabilities from the actor
         if action_probs is None:
             if self.amp_scaler is not None:
@@ -763,7 +760,7 @@ class D4PG:
         """
         assert (
             env.n_steps == self.n_steps
-        ), "n-steps in enviroment ({}) is different from n-steps in algorithm ({})".format(
+        ), "n-steps in environment ({}) is different from n-steps in algorithm ({})".format(
             env.n_steps, self.n_steps
         )
         assert (
@@ -857,24 +854,24 @@ class D4PG:
                                 step_number,
                             )
 
-                    compleatition_percentage = (
+                    completion_percentage = (
                         torch.count_nonzero(step_state["state"]["terminated"])
                         / mask.shape[0]
                     ).item()
-                    path = os.path.join(tag, f"Metric/Completition[%]")
+                    path = os.path.join(tag, "Metric/Completion[%]")
                     self.history_add(path, value)
                     if merge_graphs:
-                        path = f"Metric/Completition[%]"
-                        compleatition_percentage = {tag: compleatition_percentage}
+                        path = "Metric/Completion[%]"
+                        completion_percentage = {tag: completion_percentage}
                         self.tb_writer.add_scalars(
                             path,
-                            compleatition_percentage,
+                            completion_percentage,
                             step_number,
                         )
                     else:
                         self.tb_writer.add_scalar(
                             path,
-                            compleatition_percentage,
+                            completion_percentage,
                             step_number,
                         )
 
@@ -1013,10 +1010,11 @@ class D4PG:
         loss_critic = None
         val_loss_actor = None
         val_loss_critic = None
+        initial_episode_number = 0
         save_path = self.save_path
         try:
             for epoch_n in range(epochs):
-                logger.info(f"Epoch: {epoch_n}, Step runned: {iteration}")
+                logger.info(f"Epoch: {epoch_n}, Step: {iteration}")
                 for step_number, (episode_number, step_state) in enumerate(
                     self.env_simulation(
                         self.train_env,
@@ -1114,7 +1112,6 @@ class D4PG:
                                 logger.warning(
                                     "VALIDATION process could take a long time,"
                                     " it will run indeterminately until the end of the environment."
-                                    " Meaning, that all grids should be completed to end the process."
                                 )
                             initial_episode_number = 0
                             self.running_validation_process = self.validation_process(

@@ -13,10 +13,10 @@ from torchrl.data.replay_buffers import (
 from torch.utils.data import DataLoader
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.algorithms.d4pg import D4PG
-from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
-from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.utils import BetaScheduler, enable_cuda, configure_logger
 import torch
 import numpy as np
@@ -188,7 +188,7 @@ def train_d4pg(
     )
     env = PixelAwareRewardWrapper(
         env,
-        max_penality=args["max_penality"],
+        max_penalty=args["max_penalty"],
         n_steps=args["n_steps"],
         gamma=args["gamma"],
         apply_clamp=True,

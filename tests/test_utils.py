@@ -3,7 +3,6 @@ import unittest
 from tensordict import TensorDict
 from rlarcworld.utils import TorchQueue
 
-import unittest
 import torch
 
 from rlarcworld.utils import configure_logger

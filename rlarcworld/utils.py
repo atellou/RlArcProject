@@ -1,4 +1,3 @@
-import os
 import torch
 import logging
 from pythonjsonlogger import jsonlogger
@@ -85,15 +84,19 @@ def categorical_projection(
     tz = tz.clamp(v_min, v_max)
 
     # Map values to categorical bins
-    b = (tz - v_min) / delta_z
-    l, u = b.floor().long(), b.ceil().long()
-    l = l.clamp(0, num_atoms - 1)
-    u = u.clamp(0, num_atoms - 1)
+    bins = (tz - v_min) / delta_z
+    lower, upper = bins.floor().long(), bins.ceil().long()
+    lower = lower.clamp(0, num_atoms - 1)
+    upper = upper.clamp(0, num_atoms - 1)
 
     # Distribute probability mass
     projected_dist = torch.zeros_like(next_q_dist).to(next_q_dist.device)
-    projected_dist.scatter_add_(dim=-1, index=l, src=next_q_dist * (u.float() - b))
-    projected_dist.scatter_add_(dim=-1, index=u, src=next_q_dist * (b - l.float()))
+    projected_dist.scatter_add_(
+        dim=-1, index=lower, src=next_q_dist * (upper.float() - bins)
+    )
+    projected_dist.scatter_add_(
+        dim=-1, index=upper, src=next_q_dist * (bins - lower.float())
+    )
 
     return torch.softmax(projected_dist, dim=-1) if apply_softmax else projected_dist
 

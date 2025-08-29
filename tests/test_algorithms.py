@@ -8,10 +8,9 @@ from torchrl.data.replay_buffers import (
     LazyTensorStorage,
     PrioritizedSampler,
 )
-import json
 
-from rlarcworld.enviroments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.enviroments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
@@ -20,7 +19,6 @@ from rlarcworld.utils import get_nested_ref, BetaScheduler
 import logging
 
 import unittest
-import os
 from torch.utils.tensorboard import SummaryWriter
 from rlarcworld.utils import configure_logger
 
@@ -93,7 +91,7 @@ class TestD4PG(unittest.TestCase):
             gamma=self.env.gamma,
         )
 
-    def simmulated_data(self):
+    def simulated_data(self):
         reward = TensorDict(
             {
                 "pixel_wise": torch.randint(-40, 2, size=(self.batch_size, 1)),
@@ -137,7 +135,7 @@ class TestD4PG(unittest.TestCase):
 
     def test_target_distribution(self):
         logger.info("Testing target distribution computation")
-        reward, done, gamma, next_state = self.simmulated_data()
+        reward, done, gamma, next_state = self.simulated_data()
         target_distribution = self.d4pg.compute_target_distribution(
             reward,
             next_state.clone(),
@@ -170,17 +168,17 @@ class TestD4PG(unittest.TestCase):
 
     def test_critic_loss(self):
         logger.info("Testing critic loss computation")
-        reward, done, gamma, next_state = self.simmulated_data()
+        reward, done, gamma, next_state = self.simulated_data()
         target_distribution = self.d4pg.compute_target_distribution(
             reward,
             next_state.clone(),
             done,
         )
 
-        reward, done, __, state = self.simmulated_data()
+        reward, done, __, state = self.simulated_data()
         action_probs = self.actor(state)
 
-        # Backpropagation
+        # Back propagation
         # Define a loss function and an optimizer
         optimizer = torch.optim.AdamW(self.critic.parameters(), lr=0.001)
         loss, td_error, q_dist = self.d4pg.compute_critic_loss(
@@ -220,9 +218,9 @@ class TestD4PG(unittest.TestCase):
 
     def test_actor_loss(self):
         logger.info("Testing actor loss computation")
-        __, __, __, state = self.simmulated_data()
+        __, __, __, state = self.simulated_data()
 
-        # Backpropagation
+        # Back propagation
         # Define a loss function and an optimizer
         optimizer = torch.optim.AdamW(self.actor.parameters(), lr=0.001)
         loss = self.d4pg.compute_actor_loss(state)
@@ -242,7 +240,7 @@ class TestD4PG(unittest.TestCase):
 
     def test_actor_loss_carsm(self):
         logger.info("Testing actor loss computation CARSM")
-        reward, done, gamma, state = self.simmulated_data()
+        reward, done, gamma, state = self.simulated_data()
         target_distribution = self.d4pg.compute_target_distribution(
             reward,
             state.clone(),
@@ -277,8 +275,8 @@ class TestD4PG(unittest.TestCase):
 
     def test_train_step(self):
         logger.info("Testing train step")
-        reward, done, __, state = self.simmulated_data()
-        __, __, __, next_state = self.simmulated_data()
+        reward, done, __, state = self.simulated_data()
+        __, __, __, next_state = self.simulated_data()
         action = self.d4pg.actor(state)
         batch = TensorDict(
             {
@@ -313,8 +311,8 @@ class TestD4PG(unittest.TestCase):
 
     def test_validation_step(self):
         logger.info("Testing validation step")
-        reward, done, __, state = self.simmulated_data()
-        __, __, __, next_state = self.simmulated_data()
+        reward, done, __, state = self.simulated_data()
+        __, __, __, next_state = self.simulated_data()
         action_probs = self.d4pg.actor(state)
         batch = TensorDict(
             {

@@ -1,7 +1,7 @@
 [project]
 name = "rlarcworld"
 version = "0.1.0"
-description = "An enviroment to train on arc dataset a model-based reinforcement learning agent"
+description = "An environment to train on arc dataset a model-based reinforcement learning agent"
 authors = ["atellou <andresfe.t.u@gmail.com>"]
 license = "http://www.apache.org/licenses/"
 readme = "README.md"

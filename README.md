@@ -124,12 +124,12 @@ RlArcProject/
 
 ## Configuration
 
-The project uses YAML configuration files to manage hyperparameters and experiment settings. Key configurations include:
+The project uses YAML configuration files to manage hyperparameter and experiment settings. Key configurations include:
 
-- Environment parameters (grid size, color values)
-- D4PG hyperparameters (learning rates, gamma, etc.)
-- Training settings (batch sizes, buffer sizes)
-- Logging and validation frequencies
+- Environment parameter (grid size, color values)
+- D4PG hyperparameter (learning rates, gamma, etc.)
+- Training setting (batch sizes, buffer sizes)
+- Logging and validation frequency
 
 Example configuration can be found in `rlarcworld/jobs/config.yaml`.
 
@@ -183,10 +183,10 @@ This project uses TensorBoard for tracking and visualizing training progress, in
 ### Key Metrics Tracked
 
 - **Training Loss**: Actor and critic losses over time
-- **Rewards**: Training and validation rewards per episode
-- **Hyperparameters**: Learning rates and other training parameters
-- **Gradients**: Histograms of model gradients
-- **Model Graphs**: Computation graphs of your models
+- **Reward**: Training and validation rewards per episode
+- **Hyperparameter**: Learning rates and other training parameters
+- **Gradient**: Histograms of model gradients
+- **Model Graph**: Computation graphs of your models
 
 ### Viewing Specific Runs
 
