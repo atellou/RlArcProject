@@ -93,7 +93,7 @@ class ArcActorNetwork(nn.Module):
         # )
 
     @torch.jit.export
-    def scale_arc_grids(self, x: torch.Tensor):
+    def scale_arc_grids(self, x: torch.Tensor) -> torch.Tensor:
         """
         Scales the input tensor by the number of color values.
 
@@ -157,7 +157,7 @@ class ArcActorNetwork(nn.Module):
             "Action keys must be {}. Keys found {}".format(in_keys, set(action.keys()))
         )
 
-    def forward(self, state: TensorDict):
+    def forward(self, state: TensorDict) -> TensorDict:
         """
         Forward pass of the actor network.
 
@@ -178,7 +178,7 @@ class ArcActorNetwork(nn.Module):
         # Validate input
         self.input_val(state)
 
-        # Brodcast the state
+        # Broadcast the state
         for key, value in state.items():
             value = value.to(self.device)
             if key == "index":

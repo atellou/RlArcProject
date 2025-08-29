@@ -42,7 +42,6 @@ default: &default
   validation_steps_per_train_step: 100
   validation_steps_per_episode: 1000
   logger_frequency: 1000
-  grads_logger_frequency: 100000
   tb_writer_tag: "Train"
   validation_tb_writer_tag: "Validation"
   merge_graphs: true
@@ -60,7 +59,6 @@ test:
   validation_steps_per_train_step: 10
   validation_steps_per_episode: 15
   logger_frequency: 5
-  grads_logger_frequency: 100000
   tb_writer_tag: "TestTrain"
   validation_tb_writer_tag: "TestValidation"
 

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from tensordict import TensorDict
 
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +14,11 @@ logger = logging.getLogger(__name__)
 class CnnPreTrainedModule(nn.Module):
     def __init__(
         self,
-        model="efficientnet_b0",
-        model_weights="EfficientNet_B0_Weights.DEFAULT",
+        model: str = "efficientnet_b0",
+        model_weights: str = "EfficientNet_B0_Weights.DEFAULT",
         freeze: str = "ALL",
-        do_not_freeze: str = None,
-        embedding_size=128,
+        do_not_freeze: Optional[str] = None,
+        embedding_size: int = 128,
     ):
         super(CnnPreTrainedModule, self).__init__()
 
@@ -63,7 +64,7 @@ class CnnPreTrainedModule(nn.Module):
         self.add_module("base_model", self.base_model)
         self.add_module("embedding_layer", self.embedding_layer)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Compute the output embedding for a given input image.
 
@@ -102,9 +103,9 @@ class MultiHeadAttention(nn.Module):
         E_total: int,
         nheads: int,
         dropout: float = 0.0,
-        bias=True,
-        device=None,
-        dtype=None,
+        bias: bool = True,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -128,8 +129,8 @@ class MultiHeadAttention(nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        attn_mask=None,
-        is_causal=False,
+        attn_mask: Optional[torch.Tensor] = None,
+        is_causal: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass; runs the following process:
@@ -199,7 +200,13 @@ class MultiHeadAttention(nn.Module):
 
 
 class CnnAttention(nn.Module):
-    def __init__(self, embedding_size=128, nheads=4, dropout=0.0, bias=True):
+    def __init__(
+        self,
+        embedding_size: int = 128,
+        nheads: int = 4,
+        dropout: float = 0.0,
+        bias: bool = True,
+    ):
         """
         Initializes the CnnAttention module.
 
@@ -226,7 +233,7 @@ class CnnAttention(nn.Module):
             bias=bias,
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass; runs the following process:
             1. Flatten the input
@@ -252,10 +259,10 @@ class CrossAttentionClassifier(nn.Module):
     def __init__(
         self,
         output_classes: dict,
-        embedding_size=128,
-        nheads=4,
-        dropout=0.0,
-        bias=True,
+        embedding_size: int = 128,
+        nheads: int = 4,
+        dropout: float = 0.0,
+        bias: bool = True,
     ):
         """
         Initialize a CrossAttentionClassifier.
@@ -294,7 +301,7 @@ class CrossAttentionClassifier(nn.Module):
             }
         )
 
-    def forward(self, embeddings):
+    def forward(self, embeddings: torch.Tensor) -> TensorDict:
         """
         Computes the forward pass of the CrossAttentionClassifier.
 

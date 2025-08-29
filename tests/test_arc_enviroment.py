@@ -459,7 +459,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
             is_last_step (bool): A boolean indicating if the current step is the last step.
             grid_diff (torch.Tensor): The grid difference between the current grid and the target grid.
             change (int): The total change in the grid.
-            max_penalty (int): The maximum penality for the current env.
+            max_penalty (int): The maximum penalty for the current env.
         """
         if is_last_step:
             torch.testing.assert_close(

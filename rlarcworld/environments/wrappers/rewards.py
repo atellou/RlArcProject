@@ -1,10 +1,11 @@
 import os
-from typing import List
+from typing import List, Optional, Tuple
 import torch
 import gymnasium as gym
 import logging
 
 from rlarcworld.utils import TorchQueue
+from tensordict import TensorDict
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         n_steps: int = 1,
         gamma: float = 1.0,
         apply_clamp: bool = False,
-        v_min: int = None,
-        v_max: int = None,
+        v_min: Optional[int] = None,
+        v_max: Optional[int] = None,
     ):
         """
         Initialize the PixelAwareRewardWrapper.
@@ -58,12 +59,14 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
 
-    def get_discount_factor(self):
+    def get_discount_factor(self) -> torch.Tensor:
         return torch.ones((self.batch_size, self.n_steps)) * (
             self.gamma ** torch.arange(1, self.n_steps + 1)
         )
 
-    def reset(self, *, seed=None, options=None):
+    def reset(
+        self, *, seed: Optional[int] = None, options: Optional[dict] = None
+    ) -> Tuple:
         """
         Resets the environment and initializes reward-related attributes.
 
@@ -90,7 +93,9 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.last_reward = self.last_reward.to(self.device)
         return reset
 
-    def n_step_reward(self, v_min: int = None, v_max: int = None):
+    def n_step_reward(
+        self, v_min: Optional[int] = None, v_max: Optional[int] = None
+    ) -> torch.Tensor:
         """
         Computes the reward for the current grid of the environment.
 
@@ -130,7 +135,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 .numpy()
             ).to(self.device)
 
-    def get_state(self, **kwargs):
+    def get_state(self, **kwargs) -> dict:
         """
         Returns the state of the environment.
 
@@ -142,7 +147,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         """
         return self.env.get_state(**kwargs)
 
-    def get_difference(self, binary: bool = True):
+    def get_difference(self, binary: bool = True) -> torch.Tensor:
         """
         Computes the difference between the current grid and the target grid.
 
@@ -161,75 +166,34 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             return grid_grids - target_grids
         return diff.long()
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.env)
 
     @property
     def max_penalty(self):
         """
-        Maximum penality for the current grid.
+        Maximum penalty for the current grid.
         """
         return self.__max_penalty
 
     @property
     def reward_storage(self):
+        """
+        TorchQueue containing the reward storage.
+        """
         return self._reward_storage
 
     @reward_storage.setter
-    def reward_storage(self, value):
+    def reward_storage(self, value: torch.Tensor) -> TorchQueue:
+        """
+        Sets the reward storage.
+
+        Args:
+            value (torch.Tensor): The reward storage.
+        """
         self._reward_storage = TorchQueue(value, queue_size=self.n_steps, queue_dim=1)
 
-    def save(self, path):
-        logger.debug("Saving environment to {}".format(path))
-        parent_path = os.path.join(path, "parent")
-        child_path = os.path.join(path, "child")
-        self.env.save(parent_path)
-        try:
-            os.makedirs(child_path, exist_ok=True)
-            torch.save(
-                {
-                    "reward_storage": self.reward_storage,
-                    "last_reward": self.last_reward,
-                    "max_penalty": self.max_penalty,
-                    "batch_size": self.batch_size,
-                    "n_steps": self.n_steps,
-                    "gamma": self.gamma,
-                    "apply_clamp": self.apply_clamp,
-                    "v_min": self.v_min,
-                    "v_max": self.v_max,
-                },
-                os.path.join(child_path, self.__class__.__name__ + ".ptc"),
-            )
-        except AttributeError as e:
-            logger.error(
-                "Error saving environment, reset should have been called by now: {}".format(
-                    e
-                )
-            )
-            raise
-
-    def load(self, parent_path, child_path, weights_only=False, device=None):
-        self.env.load(parent_path, weights_only=weights_only, device=device)
-        checkpoint = torch.load(
-            child_path, weights_only=weights_only, map_location=device
-        )
-        self.reward_storage = checkpoint["reward_storage"]
-        self.last_reward = checkpoint["last_reward"]
-        self.batch_size = checkpoint["batch_size"]
-
-        assert self.max_penalty == checkpoint["max_penalty"]
-        assert self.n_steps == checkpoint["n_steps"]
-        assert self.gamma == checkpoint["gamma"]
-        assert self.apply_clamp == checkpoint["apply_clamp"]
-        assert self.v_min == checkpoint["v_min"]
-        assert self.v_max == checkpoint["v_max"]
-
-        self.discount_factor = self.get_discount_factor()
-        if device is not None:
-            self.reward_storage = self.reward_storage.to(device)
-            self.discount_factor = self.discount_factor.to(device)
-
-    def get_source_env_reward(self):
+    def get_source_env_reward(self) -> torch.Tensor:
         """
         Returns the last reward from the source environment.
         """
@@ -246,7 +210,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         last_diffs: torch.Tensor,
         grid_diffs: torch.Tensor,
         submission: List[int],
-    ):
+    ) -> torch.Tensor:
         """
         Return reward based on actions and grids
 
@@ -291,13 +255,18 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         else:
             return reward
 
-    def step(self, actions: list):
+    def step(
+        self, actions: List[int]
+    ) -> Tuple[TensorDict, torch.Tensor, bool, bool, dict]:
         """
         Step through the environment and return the observation, reward, terminated, truncated, and info.
 
         Args:
-            actions (list): The actions to take in the environment.
-
+            actions (list): The actions to take in the environment. This is a list of length batch_size where each element is a dictionary containing the following keys:
+                - y_location (int): The y location of the action.
+                - x_location (int): The x location of the action.
+                - color_values (int): The color values of the action.
+                - submit (int): Whether the agent is submitting the current grid for grading.
         Returns:
             obs: The observation of the environment.
             reward: The reward of the environment.
@@ -312,3 +281,74 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(-1))
         self.last_reward = reward
         return obs, reward, terminated, truncated, info
+
+    def save(self, path: str):
+        """
+        Saves the environment to a checkpoint.
+
+        Args:
+            path (str): The path to save the environment to.
+        """
+        logger.debug("Saving environment to {}".format(path))
+        parent_path = os.path.join(path, "parent")
+        child_path = os.path.join(path, "child")
+        self.env.save(parent_path)
+        try:
+            os.makedirs(child_path, exist_ok=True)
+            torch.save(
+                {
+                    "reward_storage": self.reward_storage,
+                    "last_reward": self.last_reward,
+                    "max_penalty": self.max_penalty,
+                    "batch_size": self.batch_size,
+                    "n_steps": self.n_steps,
+                    "gamma": self.gamma,
+                    "apply_clamp": self.apply_clamp,
+                    "v_min": self.v_min,
+                    "v_max": self.v_max,
+                },
+                os.path.join(child_path, self.__class__.__name__ + ".ptc"),
+            )
+        except AttributeError as e:
+            logger.error(
+                "Error saving environment, reset should have been called by now: {}".format(
+                    e
+                )
+            )
+            raise
+
+    def load(
+        self,
+        parent_path: str,
+        child_path: str,
+        weights_only: bool = False,
+        device: Optional[str] = None,
+    ):
+        """
+        Loads the environment from a checkpoint.
+
+        Args:
+            parent_path (str): The path to the parent environment checkpoint.
+            child_path (str): The path to the child environment checkpoint.
+            weights_only (bool, optional): Whether to load only the weights. Defaults to False.
+            device (str, optional): The device to load the environment on. Defaults to None.
+        """
+        self.env.load(parent_path, weights_only=weights_only, device=device)
+        checkpoint = torch.load(
+            child_path, weights_only=weights_only, map_location=device
+        )
+        self.reward_storage = checkpoint["reward_storage"]
+        self.last_reward = checkpoint["last_reward"]
+        self.batch_size = checkpoint["batch_size"]
+
+        assert self.max_penalty == checkpoint["max_penalty"]
+        assert self.n_steps == checkpoint["n_steps"]
+        assert self.gamma == checkpoint["gamma"]
+        assert self.apply_clamp == checkpoint["apply_clamp"]
+        assert self.v_min == checkpoint["v_min"]
+        assert self.v_max == checkpoint["v_max"]
+
+        self.discount_factor = self.get_discount_factor()
+        if device is not None:
+            self.reward_storage = self.reward_storage.to(device)
+            self.discount_factor = self.discount_factor.to(device)

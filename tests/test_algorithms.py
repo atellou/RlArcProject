@@ -698,7 +698,6 @@ class TestD4PG(unittest.TestCase):
             validation_steps_per_train_step=5,
             validation_steps_per_episode=max_steps,
             logger_frequency=2,
-            grads_logger_frequency=3,
         )
 
         assert os.path.isdir(

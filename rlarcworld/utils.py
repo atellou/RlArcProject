@@ -1,9 +1,10 @@
 import torch
 import logging
+from typing import Tuple, Any
 from pythonjsonlogger import jsonlogger
 
 
-def enable_cuda(use_amp=True, use_checkpointing=False):
+def enable_cuda(use_amp: bool = True, use_checkpointing: bool = False):
     """
     Configures CUDA settings for AMP and gradient checkpointing.
 
@@ -36,7 +37,19 @@ def enable_cuda(use_amp=True, use_checkpointing=False):
     return config
 
 
-def get_nested_ref(dictionary: dict, key: str, sep: str = "/", default=None):
+def get_nested_ref(dictionary: dict, key: str, sep: str = "/", default: Any = None):
+    """
+    Retrieves a nested value from a dictionary using a key with a specified separator.
+
+    Args:
+        dictionary (dict): The dictionary to retrieve the value from.
+        key (str): The key to retrieve the value from.
+        sep (str, optional): The separator to use when splitting the key. Defaults to "/".
+        default (any, optional): The default value to return if the key is not found. Defaults to None.
+
+    Returns:
+        any: The value retrieved from the dictionary.
+    """
     if sep in key:
         first_key, other_keys = key.split(sep, 1)
         sub_dict = dictionary.setdefault(first_key, {})
@@ -48,17 +61,17 @@ def get_nested_ref(dictionary: dict, key: str, sep: str = "/", default=None):
 
 
 def categorical_projection(
-    next_q_dist,
-    rewards,
-    terminated,
-    gamma,
-    z_atoms,
-    v_min,
-    v_max,
-    num_atoms,
-    apply_softmax=True,
-    n_steps=1,
-):
+    next_q_dist: torch.Tensor,
+    rewards: torch.Tensor,
+    terminated: torch.Tensor,
+    gamma: float,
+    z_atoms: torch.Tensor,
+    v_min: float,
+    v_max: float,
+    num_atoms: int,
+    apply_softmax: bool = True,
+    n_steps: int = 1,
+) -> torch.Tensor:
     """
     Projects the target distribution using the Bellman update.
 
@@ -102,15 +115,48 @@ def categorical_projection(
 
 
 class TorchQueue(torch.Tensor):
-    _queue_size: tuple
+    _queue_size: int
     _queue_dim: int
 
-    def __new__(cls, data, queue_size: int, queue_dim: int = 0, *args, **kwargs):
+    def __new__(
+        cls,
+        data: torch.Tensor,
+        queue_size: int,
+        queue_dim: int = 0,
+        *args,
+        **kwargs,
+    ):
+        """
+        Creates a new TorchQueue instance.
+
+        Args:
+            data (torch.Tensor): The data to be stored in the queue.
+            queue_size (int): The maximum size of the queue.
+            queue_dim (int, optional): The dimension along which the queue is stored. Defaults to 0.
+            *args: Additional arguments to pass to the parent class.
+            **kwargs: Additional keyword arguments to pass to the parent class.
+
+        Returns:
+            TorchQueue: A new TorchQueue instance.
+        """
         obj = super().__new__(cls, data, *args, **kwargs)
         obj._attrs = {"queue_size": queue_size, "queue_dim": queue_dim}
         return obj
 
-    def __init__(self, data, queue_size: int, queue_dim: int = 0):
+    def __init__(self, data: torch.Tensor, queue_size: int, queue_dim: int = 0):
+        """
+        Initializes a new TorchQueue instance.
+
+        Args:
+            data (torch.Tensor): The data to be stored in the queue.
+            queue_size (int): The maximum size of the queue.
+            queue_dim (int, optional): The dimension along which the queue is stored. Defaults to 0.
+
+        Raises:
+            AssertionError: If queue_size is not a positive integer.
+            AssertionError: If queue_dim is not an integer.
+            AssertionError: If the size of the queue dimension is greater than the queue size.
+        """
         assert (
             isinstance(queue_size, int) and queue_size > 0
         ), "queue_size must be a positive integer."
@@ -124,32 +170,38 @@ class TorchQueue(torch.Tensor):
         self._queue_dim = queue_dim
         self.__reversed_indices = torch.arange(-1 - queue_size, 0).to(self.device)
 
-    def clone(self, *args, **kwargs):
+    def clone(self, *args, **kwargs) -> "TorchQueue":
+        """
+        Clones the TorchQueue instance.
+        """
         return TorchQueue(
             super().clone(*args, **kwargs),
             queue_size=self._queue_size,
             queue_dim=self._queue_dim,
         )
 
-    def to(self, *args, **kwargs):
+    def to(self, *args, **kwargs) -> "TorchQueue":
         new_obj = super().to(*args, **kwargs)
         if new_obj is self:
             return self
         return TorchQueue(new_obj, queue_size=self.queue_size, queue_dim=self.queue_dim)
 
     @property
-    def queue_size(self):
+    def queue_size(self) -> int:
+        """Returns the maximum size of the queue."""
         return self._queue_size
 
     @property
-    def queue_dim(self):
+    def queue_dim(self) -> int:
+        """Returns the dimension along which the queue is stored."""
         return self._queue_dim
 
     @property
-    def is_full(self):
+    def is_full(self) -> bool:
+        """Returns True if the queue is full, False otherwise."""
         return self.shape[self._queue_dim] == self._queue_size
 
-    def push(self, item):
+    def push(self, item: torch.Tensor) -> "TorchQueue":
         """
         Adds an item to the queue. If the queue is full, the oldest item is removed first.
 
@@ -170,7 +222,7 @@ class TorchQueue(torch.Tensor):
         )
         return TorchQueue(item, queue_size=self._queue_size, queue_dim=self._queue_dim)
 
-    def __correct_queue_size(self, item=None):
+    def __correct_queue_size(self, item: torch.Tensor = None) -> "TorchQueue":
         """
         Correct the size of the queue along the specified dimension when full.
         """
@@ -186,7 +238,7 @@ class TorchQueue(torch.Tensor):
             queue_dim=self._queue_dim,
         )
 
-    def pop(self):
+    def pop(self) -> Tuple[torch.Tensor, "TorchQueue"]:
         """
         Pops the oldest elements along the specified dimension.
 
@@ -203,16 +255,29 @@ torch.serialization.safe_globals([TorchQueue])
 
 
 class BetaScheduler:
-    def __init__(self, start, end, steps, internal_step=0):
+    def __init__(self, start: float, end: float, steps: int, internal_step: int = 0):
+        """
+        Initializes a new BetaScheduler instance.
+
+        Args:
+            start (float): The initial value of beta.
+            end (float): The final value of beta.
+            steps (int): The number of steps to reach the final value of beta.
+            internal_step (int, optional): The internal step counter. Defaults to 0.
+        """
         self.start = start
         self.end = end
         self.steps = steps
         self.internal_step = internal_step
         self.beta = self.start
 
-    def step(
-        self,
-    ):
+    def step(self) -> float:
+        """
+        Steps the scheduler forward by one step.
+
+        Returns:
+            float: The updated value of beta.
+        """
         self.internal_step += 1
         self.beta = min(
             self.end,
@@ -220,7 +285,13 @@ class BetaScheduler:
         )
         return self.beta
 
-    def state_dict(self):
+    def state_dict(self) -> dict:
+        """
+        Returns the state dictionary of the scheduler.
+
+        Returns:
+            dict: The state dictionary of the scheduler.
+        """
         return {
             "start": self.start,
             "end": self.end,
@@ -229,7 +300,13 @@ class BetaScheduler:
             "beta": self.beta,
         }
 
-    def load(self, state_dict):
+    def load(self, state_dict: dict):
+        """
+        Loads the state dictionary of the scheduler.
+
+        Args:
+            state_dict (dict): The state dictionary of the scheduler.
+        """
         self.start = state_dict["start"]
         self.end = state_dict["end"]
         self.steps = state_dict["steps"]
@@ -240,7 +317,7 @@ class BetaScheduler:
 class CustomJsonFormatter(jsonlogger.JsonFormatter):
     """Formats log lines in JSON."""
 
-    def process_log_record(self, log_record):
+    def process_log_record(self, log_record: dict) -> dict:
         """Modifies fields in the log_record to match Cloud Logging's expectations."""
         log_record["severity"] = log_record["levelname"]
         log_record["timestampSeconds"] = int(log_record["created"])
@@ -251,7 +328,7 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
         return log_record
 
 
-def configure_logger(level="WARNING", json_format=True):
+def configure_logger(level: str = "WARNING", json_format: bool = True):
     """Configures python logger to format logs as JSON."""
     if json_format:
         formatter = CustomJsonFormatter(

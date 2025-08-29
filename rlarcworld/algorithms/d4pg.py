@@ -10,6 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tensordict import TensorDict
 from torchrl.data import ReplayBuffer
 
+from gymnasium import Env
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.utils import (
     categorical_projection,
@@ -18,6 +19,7 @@ from rlarcworld.utils import (
     BetaScheduler,
 )
 import logging
+from typing import Optional, Dict, Any, Tuple, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +35,11 @@ class D4PG:
         batch_size: int,
         policy_lr: float = 3e-4,
         critic_lr: float = 3e-3,
-        lr_scheduler_kwargs: dict = None,
-        validation_samples: DataLoader = None,
-        replay_buffer: ReplayBuffer = None,
+        lr_scheduler_kwargs: Optional[Dict] = None,
+        validation_samples: Optional[DataLoader] = None,
+        replay_buffer: Optional[ReplayBuffer] = None,
         warmup_buffer_ratio: float = 0.2,
-        beta_scheduler: BetaScheduler = None,
+        beta_scheduler: Optional[BetaScheduler] = None,
         n_steps: int = 1,
         gamma: float = 0.99,
         carsm=False,
@@ -45,11 +47,11 @@ class D4PG:
         entropy_coef_decay: float = 0.995,
         tau: float = 0.001,
         target_update_frequency: int = 10,
-        tb_writer: SummaryWriter = None,
-        history_file: str = None,
-        extras_hparams: dict = None,
-        save_path: str = None,
-        config=None,
+        tb_writer: Optional[SummaryWriter] = None,
+        history_file: Optional[str] = None,
+        extras_hparams: Optional[Dict] = None,
+        save_path: Optional[str] = None,
+        config: Optional[Dict] = None,
         max_grad_norm: float = 0.0,
     ):
         """
@@ -236,7 +238,7 @@ class D4PG:
         if self.replay_buffer is not None and self.beta_scheduler is not None:
             self.replay_buffer.sampler.beta = self.beta_scheduler.step()
 
-    def log_parameters(self, step):
+    def log_parameters(self, step: int):
         """
         Logs the current entropy coefficient to TensorBoard.
 
@@ -278,7 +280,7 @@ class D4PG:
                 global_step=step,
             )
 
-    def history_add(self, key, value):
+    def history_add(self, key: str, value: Any):
         """
         Adds a value to the training history.
 
@@ -289,7 +291,9 @@ class D4PG:
         ref, last_key = get_nested_ref(self.history, key, default=np.array([]))
         ref[last_key] = np.append(ref[last_key], value)
 
-    def categorize_actions(self, actions, as_dict=False):
+    def categorize_actions(
+        self, actions: TensorDict, as_dict: bool = False
+    ) -> TensorDict:
         """
         Convert a probability distribution action to discrete action.
 
@@ -316,7 +320,7 @@ class D4PG:
         reward: torch.Tensor,
         next_state: TensorDict,
         terminated: torch.Tensor,
-    ):
+    ) -> torch.Tensor:
         """
         Computes the target distribution for the critic network.
 
@@ -369,7 +373,13 @@ class D4PG:
 
         return target_dist
 
-    def compute_critic_loss(self, state, action, target_dist, compute_td_error=False):
+    def compute_critic_loss(
+        self,
+        state: TensorDict,
+        action: TensorDict,
+        target_dist: TensorDict,
+        compute_td_error: bool = False,
+    ) -> Tuple[TensorDict, TensorDict]:
         """
         Computes the loss for the critic network.
 
@@ -403,8 +413,12 @@ class D4PG:
         return loss, td_error, q_dist
 
     def compute_actor_loss(
-        self, state, target_q=None, action_probs=None, critic_probs=None
-    ):
+        self,
+        state: TensorDict,
+        target_q: Optional[TensorDict] = None,
+        action_probs: Optional[TensorDict] = None,
+        critic_probs: Optional[TensorDict] = None,
+    ) -> torch.Tensor:
         """
         Compute the loss for the actor network.
 
@@ -478,7 +492,7 @@ class D4PG:
 
         return loss
 
-    def update_target_networks(self, tau=0.005):
+    def update_target_networks(self, tau: float = 0.005):
         """
         Updates the target networks using the Polyak averaging method.
 
@@ -497,11 +511,11 @@ class D4PG:
 
     def replay_buffer_step(
         self,
-        state,
-        actions,
-        reward,
-        next_state,
-    ):
+        state: TensorDict,
+        actions: TensorDict,
+        reward: TensorDict,
+        next_state: TensorDict,
+    ) -> TensorDict:
         """
         Stores a batch of transitions in the replay buffer and samples a new batch of size `batch_size`.
 
@@ -549,8 +563,8 @@ class D4PG:
 
     def filter_completed_state(
         self,
-        batch,
-    ):
+        batch: TensorDict,
+    ) -> TensorDict:
         """
         Filters out the completed states from a batch of transitions.
 
@@ -565,7 +579,11 @@ class D4PG:
         batch = batch[selected_indices]
         return batch
 
-    def compute_loss(self, batch, training=True, tb_writer_tag=None, global_step=None):
+    def compute_loss(
+        self,
+        batch: TensorDict,
+        training: bool = True,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Computes actor and critic losses for a batch of transitions.
 
@@ -577,8 +595,6 @@ class D4PG:
                 - next_state (TensorDict): Next states
                 - terminated (torch.Tensor): Terminal flags
             training (bool, optional): Whether to compute gradients and update networks. Defaults to True.
-            tb_writer_tag (str, optional): Tag for TensorBoard logging. Defaults to None.
-            global_step (int, optional): Global step for TensorBoard logging. Required if tb_writer_tag is provided.
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Actor loss and critic loss
@@ -665,12 +681,14 @@ class D4PG:
 
         return loss_actor, loss_critic
 
-    def step(self, env):
+    def step(
+        self, env: Env
+    ) -> Tuple[TensorDict, TensorDict, torch.Tensor, TensorDict, bool, bool]:
         """
         Performs a single step in the environment using the current policy.
 
         Args:
-            env: The environment to interact with.
+            env (gymnasium.Env): The environment to interact with.
 
         Returns:
             Tuple containing:
@@ -736,14 +754,19 @@ class D4PG:
         )
 
     def episodes_simulation(
-        self, env, samples, max_steps: int = -1, seed: int = None, **kwargs
-    ):
+        self,
+        env: Env,
+        samples: DataLoader,
+        max_steps: int = -1,
+        seed: Optional[int] = None,
+        **kwargs,
+    ) -> Generator[Tuple[int, TensorDict], None, None]:
         """
         Simulates episodes in the environment using the current policy.
 
         Args:
-            env: The environment to interact with.
-            samples: Samples containing task and examples data for the environment.
+            env (gymnasium.Env): The environment to interact with.
+            samples (DataLoader): Samples containing task and examples data for the environment.
             max_steps (int, optional): Maximum number of steps per episode. -1 means no limit. Defaults to -1.
             seed (int, optional): Random seed for reproducibility. Defaults to None.
 
@@ -785,13 +808,12 @@ class D4PG:
 
     def env_simulation(
         self,
-        env,
-        samples,
-        max_steps=-1,
-        tb_writer_tag=None,
-        merge_graphs=True,
-        **kwargs,
-    ):
+        env: PixelAwareRewardWrapper,
+        samples: DataLoader,
+        max_steps: int = -1,
+        tb_writer_tag: Optional[str] = None,
+        merge_graphs: bool = True,
+    ) -> Generator[Tuple[int, TensorDict], None, None]:
         """
         Simulates episodes in the environment and handles logging.
 
@@ -877,11 +899,11 @@ class D4PG:
 
     def validation_process(
         self,
-        max_steps=-1,
-        tb_writer_tag="Validation",
-        logger_frequency=1000,
-        merge_graphs=True,
-    ):
+        max_steps: int = -1,
+        tb_writer_tag: Optional[str] = "Validation",
+        logger_frequency: int = 1000,
+        merge_graphs: bool = True,
+    ) -> Generator[Tuple[int, TensorDict], None, None]:
         """
         Performs validation on the validation environment.
 
@@ -913,7 +935,6 @@ class D4PG:
                     max_steps=max_steps,
                     tb_writer_tag=tb_writer_tag,
                     merge_graphs=merge_graphs,
-                    is_train=False,
                 )
             ):
                 step_state["terminated"] = step_state["next_state"]["terminated"]
@@ -964,18 +985,17 @@ class D4PG:
 
     def fit(
         self,
-        epochs=1,
-        max_steps=-1,
-        validation_steps_frequency=-1,
-        validation_steps_per_train_step=-1,
-        validation_steps_per_episode=-1,
-        logger_frequency=1000,
-        grads_logger_frequency=1000000,
-        tb_writer_tag="Train",
-        validation_tb_writer_tag="Validation",
-        merge_graphs=True,
-        checkpoint_frequency=-1,
-        checkpoint_path=None,
+        epochs: int = 1,
+        max_steps: int = -1,
+        validation_steps_frequency: int = -1,
+        validation_steps_per_train_step: int = -1,
+        validation_steps_per_episode: int = -1,
+        logger_frequency: int = 1000,
+        tb_writer_tag: Optional[str] = "Train",
+        validation_tb_writer_tag: Optional[str] = "Validation",
+        merge_graphs: bool = True,
+        checkpoint_frequency: int = -1,
+        checkpoint_path: Optional[str] = None,
     ):
         """
         Train the model using the provided samples.
@@ -987,7 +1007,6 @@ class D4PG:
             validation_steps_per_train_step (int, optional): Number of validation steps per train step. -1 means all steps. Defaults to -1
             validation_steps_per_episode (int, optional): Number of validation steps per episode. -1 means all steps. Defaults to -1
             logger_frequency (int, optional): Logging frequency. Defaults to 1000
-            grads_logger_frequency (int, optional): Gradient logging frequency. Defaults to 1000000
             tb_writer_tag (str, optional): Tag for TensorBoard logging. Defaults to "Train"
             validation_tb_writer_tag (str, optional): Tag for TensorBoard validation logging. Defaults to "Validation"
             merge_graphs (bool, optional): Whether to merge graphs in TensorBoard. Defaults to True
@@ -1057,23 +1076,10 @@ class D4PG:
                     batch = self.filter_completed_state(batch)
 
                     ## Compute training loss
-                    if (
-                        self.tb_writer is not None
-                        and iteration % grads_logger_frequency == 0
-                    ):
-                        loss_actor, loss_critic = self.compute_loss(
-                            batch,
-                            training=True,
-                            tb_writer_tag=tb_writer_tag,
-                            global_step=iteration,
-                        )
-                        logger.info(
-                            f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Loss actor: {loss_actor}, Loss critic: {loss_critic}"
-                        )
-                    else:
-                        loss_actor, loss_critic = self.compute_loss(
-                            batch, training=True
-                        )
+                    loss_actor, loss_critic = self.compute_loss(batch, training=True)
+                    logger.info(
+                        f"Epoch: {epoch_n}, Step: {step_number}, Episode: {episode_number}, Loss actor: {loss_actor}, Loss critic: {loss_critic}"
+                    )
 
                     ## Log training loss
                     if self.tb_writer is not None and iteration % logger_frequency == 0:
@@ -1278,15 +1284,15 @@ class D4PG:
 
     def checkpoint(
         self,
-        iteration,
-        epoch_number=None,
-        episode_number=None,
-        step_number=None,
-        loss_actor=None,
-        loss_critic=None,
-        replay_buffer=False,
-        data_loaders=False,
-    ):
+        iteration: int,
+        epoch_number: Optional[int] = None,
+        episode_number: Optional[int] = None,
+        step_number: Optional[int] = None,
+        loss_actor: Optional[float] = None,
+        loss_critic: Optional[float] = None,
+        replay_buffer: bool = False,
+        data_loaders: bool = False,
+    ) -> dict:
         """
         Create a checkpoint of the current state of the D4PG object.
 
@@ -1377,7 +1383,7 @@ class D4PG:
         checkpoint["hyperparameters"].update(self.extras_hparams)
         return checkpoint
 
-    def save_checkpoint(self, path, **kwargs):
+    def save_checkpoint(self, path: str, **kwargs) -> None:
         """
         Save the checkpoint to a file.
 
@@ -1412,7 +1418,7 @@ class D4PG:
 
         logger.info("Checkpoint saved in {}".format(path))
 
-    def load_checkpoint(self, path):
+    def load_checkpoint(self, path: str) -> None:
         """Load model checkpoint with comprehensive error handling and validation.
 
         Args:
@@ -1729,7 +1735,7 @@ class D4PG:
         assert self.n_steps == checkpoint["hyperparameters"]["n_steps"]
         assert self.max_grad_norm == checkpoint["hyperparameters"]["max_grad_norm"]
 
-    def save_model(self, path):
+    def save_model(self, path: str) -> None:
         """
         Save the model to a file.
 
@@ -1760,7 +1766,7 @@ class D4PG:
             torch.save(self.actor.state_dict(), os.path.join(path, "actor.ptc"))
             torch.save(self.critic.state_dict(), os.path.join(path, "critic.ptc"))
 
-    def load_model(self, path):
+    def load_model(self, path: str) -> None:
         self.actor.load_state_dict(
             torch.load(os.path.join(path, "actor.ptc"), map_location=self.device)
         )

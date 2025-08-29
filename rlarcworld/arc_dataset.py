@@ -152,10 +152,12 @@ class ArcDataset(Dataset):
     ):
         """
         Creates a Torch Dataset from the ARC dataset.
+
         Args:
             arc_dataset_dir (string): Directory with all the dataset samples.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
+            keep_in_memory (bool, optional): Whether to keep the dataset in memory.
+            transform (callable, optional): Optional transform to be applied on a sample.
+            gcs_bucket_name (string, optional): GCS bucket name.
         """
         if arc_dataset_dir.startswith("gs://"):
             arc_dataset_dir = arc_dataset_dir.split("gs://")[-1]
@@ -178,6 +180,12 @@ class ArcDataset(Dataset):
     def open_file(self, file_key: str, test_index: int = None) -> dict:
         """
         Open file and return train and test samples.
+
+        Args:
+            file_key (str): The key of the file to open.
+            test_index (int, optional): The index of the test sample to return.
+        Returns:
+            dict: The train and test samples.
         """
         logger.debug("Open file: {}".format(file_key))
 
@@ -246,7 +254,7 @@ class ArcDataset(Dataset):
                     self.samples[key] = file
         self.file_ids = list(self.samples.keys())
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.file_ids)
 
     def __getitem__(self, idx: int) -> dict:

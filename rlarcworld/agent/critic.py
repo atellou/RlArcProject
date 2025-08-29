@@ -119,7 +119,7 @@ class ArcCriticNetwork(torch.nn.Module):
         self.to(self.device)
 
     @torch.jit.export
-    def scale_arc_grids(self, x: torch.Tensor):
+    def scale_arc_grids(self, x: torch.Tensor) -> torch.Tensor:
         r"""
         Scales the input tensor by the number of color values.
 
@@ -186,7 +186,7 @@ class ArcCriticNetwork(torch.nn.Module):
             )
         )
 
-    def forward(self, state: TensorDict, action: TensorDict):
+    def forward(self, state: TensorDict, action: TensorDict) -> TensorDict:
         r"""
         Forward pass of the critic network.
 
@@ -208,7 +208,7 @@ class ArcCriticNetwork(torch.nn.Module):
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
         state.update(action)
 
-        # Brodcast the state
+        # Broadcast the state
         action_keys = torch.cat(
             tuple(state.pop(k) for k in self.no_scale_keys),
             dim=1,

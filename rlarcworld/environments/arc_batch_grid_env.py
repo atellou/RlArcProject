@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import torch
 from tensordict import TensorDict
 import numpy as np
@@ -58,7 +58,7 @@ class ArcBatchGridEnv(gym.Env):
         color_values: int,
         n_steps: int = 1,
         gamma: float = 1.0,
-        device=None,
+        device: Optional[str] = None,
     ):
         """
         Args:
@@ -118,10 +118,10 @@ class ArcBatchGridEnv(gym.Env):
         self.arc_action_space = ArcActionSpace(grid_size, color_values)
         self.action_space = self.arc_action_space.gym_space
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.observations["grid"])
 
-    def random_location_generator(self):
+    def random_location_generator(self) -> np.ndarray:
         """
         Generate a random location in the grid
 
@@ -131,14 +131,30 @@ class ArcBatchGridEnv(gym.Env):
         return np.array([self.location_space.sample() for __ in range(self.batch_size)])
 
     @property
-    def reward_storage(self):
+    def reward_storage(self) -> TorchQueue:
+        """
+        Returns:
+            TorchQueue: The reward storage.
+        """
         return self._reward_storage
 
     @reward_storage.setter
-    def reward_storage(self, value):
+    def reward_storage(self, value: TorchQueue):
+        """
+        Sets the reward storage.
+
+        Args:
+            value (TorchQueue): The reward storage.
+        """
         self._reward_storage = TorchQueue(value, queue_size=self.n_steps, queue_dim=1)
 
     def validate_examples(self, examples: torch.Tensor):
+        """
+        Validate the examples.
+
+        Args:
+            examples (torch.Tensor): The examples to validate.
+        """
         assert len(examples.shape) == 5, "Examples grids should be 5D"
         assert (
             examples.shape[0] == self.batch_size
@@ -156,7 +172,11 @@ class ArcBatchGridEnv(gym.Env):
             self.grid_size, self.grid_size, examples.shape[3], examples.shape[3]
         )
 
-    def get_discount_factor(self):
+    def get_discount_factor(self) -> torch.Tensor:
+        """
+        Returns:
+            torch.Tensor: The discount factor.
+        """
         return torch.ones((self.batch_size, self.n_steps)) * (
             self.gamma ** torch.arange(1, self.n_steps + 1)
         )
@@ -228,64 +248,7 @@ class ArcBatchGridEnv(gym.Env):
         self.observations = self.observations.to(self.device)
         return self.observations, self.information
 
-    def save(self, path):
-        logger.debug("Saving environment to {}".format(path))
-        try:
-            os.makedirs(path, exist_ok=True)
-            torch.save(
-                {
-                    "observations": self.observations,
-                    "information": self.information,
-                    "last_grid": self.last_grid,
-                    "last_reward": self.last_reward,
-                    "time_step": self.time_step,
-                    "reward_storage": self.reward_storage,
-                    "is_train_episode": self.is_train_episode,
-                    "n_steps": self.n_steps,
-                    "gamma": self.gamma,
-                    "grid_size": self.grid_size,
-                    "color_values": self.color_values,
-                    "batch_size": self.batch_size,
-                },
-                os.path.join(path, self.__class__.__name__ + ".ptc"),
-            )
-        except AttributeError as e:
-            logger.error(
-                "Error saving environment, reset should have been called by now: {}".format(
-                    e
-                )
-            )
-            raise AttributeError(
-                "Error saving environment, reset should have been called by now: {}".format(
-                    e
-                )
-            )
-
-    def load(self, path, weights_only=True, device=None):
-        checkpoint = torch.load(path, weights_only=weights_only, map_location=device)
-        self.observations = checkpoint["observations"]
-        self.information = checkpoint["information"]
-        self.last_grid = checkpoint["last_grid"]
-        self.last_reward = checkpoint["last_reward"]
-        self.time_step = checkpoint["time_step"]
-        self.reward_storage = checkpoint["reward_storage"]
-        self.is_train_episode = checkpoint["is_train_episode"]
-        self.batch_size = checkpoint["batch_size"]
-
-        assert self.n_steps == checkpoint["n_steps"]
-        assert self.gamma == checkpoint["gamma"]
-        assert self.grid_size == checkpoint["grid_size"]
-        assert self.color_values == checkpoint["color_values"]
-
-        self.discount_factor = self.get_discount_factor()
-        if device is not None:
-            self.observations = self.observations.to(device)
-            self.information = self.information.to(device)
-            self.last_grid = self.last_grid.to(device)
-            self.reward_storage = self.reward_storage.to(device)
-            self.discount_factor = self.discount_factor.to(device)
-
-    def get_difference(self):
+    def get_difference(self) -> torch.Tensor:
         """
         Compute the difference between the current grid and the target grid.
 
@@ -294,7 +257,16 @@ class ArcBatchGridEnv(gym.Env):
         """
         return (self.observations["grid"] - self.observations["target"]).to(self.device)
 
-    def episode_terminated(self, submission):
+    def episode_terminated(self, submission: List[int]) -> torch.Tensor:
+        """
+        Checks if the episode has terminated.
+
+        Args:
+            submission List(int): Indicates whether the agent indicated a submission to grade.
+
+        Returns:
+            torch.Tensor: The termination status of the episode.
+        """
         diff = self.get_difference()
         return (torch.sum(torch.abs(diff), dim=(1, 2)) == 0) * torch.as_tensor(
             submission,
@@ -306,7 +278,7 @@ class ArcBatchGridEnv(gym.Env):
         self,
         grid_diffs: torch.Tensor,
         submission: List[int],
-    ):
+    ) -> torch.Tensor:
         """
         Computes the reward for the current grid of the environment.
 
@@ -324,7 +296,7 @@ class ArcBatchGridEnv(gym.Env):
             dtype=grid_diffs.dtype,
         )
 
-    def n_step_reward(self):
+    def n_step_reward(self) -> torch.Tensor:
         """
         Computes the reward for the current grid of the environment.
         """
@@ -333,7 +305,7 @@ class ArcBatchGridEnv(gym.Env):
         ).to(self.device)
 
     @property
-    def state(self):
+    def state(self) -> TensorDict:
         """
         Returns:
             TensorDict: The state of the environment should contain the following keys:
@@ -350,7 +322,17 @@ class ArcBatchGridEnv(gym.Env):
         state.update({"last_grid": self.last_grid})
         return state.clone()
 
-    def get_state(self, unsqueeze: int = None):
+    def get_state(self, unsqueeze: int = None) -> TensorDict:
+        """
+        Returns:
+            TensorDict: The state of the environment should contain the following keys:
+                - ``grid``: The current state of the grid.
+                - ``last_grid``: The state of the grid in the previous step.
+                - ``initial``: The initial state of the grid.
+                - ``index``: The current index of the batch.
+                - ``terminated``: The termination status of the episode.
+                - ``examples``: The batch of examples.
+        """
         if unsqueeze is not None:
             assert isinstance(unsqueeze, int)
             state = self.state
@@ -366,7 +348,14 @@ class ArcBatchGridEnv(gym.Env):
             return state
         return self.state.to(self.device)
 
-    def step(self, actions: list):
+    def step(self, actions: list) -> Tuple[TensorDict, torch.Tensor, bool, bool, dict]:
+        """
+        Args:
+            actions list: The actions to perform.
+
+        Returns:
+            tuple: A tuple containing the new observation, reward, terminated, truncated, and info.
+        """
         if self.action_space.contains(actions.cpu().numpy()):
             self.last_grid = self.observations["grid"].clone()
             logger.debug("Actions are valid")
@@ -427,6 +416,77 @@ class ArcBatchGridEnv(gym.Env):
             truncated,
             self.information,
         )
+
+    def save(self, path: str):
+        """
+        Saves the environment to a checkpoint.
+
+        Args:
+            path (str): The path to save the checkpoint to.
+        """
+        logger.debug("Saving environment to {}".format(path))
+        try:
+            os.makedirs(path, exist_ok=True)
+            torch.save(
+                {
+                    "observations": self.observations,
+                    "information": self.information,
+                    "last_grid": self.last_grid,
+                    "last_reward": self.last_reward,
+                    "time_step": self.time_step,
+                    "reward_storage": self.reward_storage,
+                    "is_train_episode": self.is_train_episode,
+                    "n_steps": self.n_steps,
+                    "gamma": self.gamma,
+                    "grid_size": self.grid_size,
+                    "color_values": self.color_values,
+                    "batch_size": self.batch_size,
+                },
+                os.path.join(path, self.__class__.__name__ + ".ptc"),
+            )
+        except AttributeError as e:
+            logger.error(
+                "Error saving environment, reset should have been called by now: {}".format(
+                    e
+                )
+            )
+            raise AttributeError(
+                "Error saving environment, reset should have been called by now: {}".format(
+                    e
+                )
+            )
+
+    def load(self, path: str, weights_only: bool = True, device: Optional[str] = None):
+        """
+        Loads the environment from a checkpoint.
+
+        Args:
+            path (str): The path to the checkpoint.
+            weights_only (bool, optional): Whether to load only the weights. Defaults to True.
+            device (str, optional): The device to load the environment on. Defaults to None.
+        """
+        checkpoint = torch.load(path, weights_only=weights_only, map_location=device)
+        self.observations = checkpoint["observations"]
+        self.information = checkpoint["information"]
+        self.last_grid = checkpoint["last_grid"]
+        self.last_reward = checkpoint["last_reward"]
+        self.time_step = checkpoint["time_step"]
+        self.reward_storage = checkpoint["reward_storage"]
+        self.is_train_episode = checkpoint["is_train_episode"]
+        self.batch_size = checkpoint["batch_size"]
+
+        assert self.n_steps == checkpoint["n_steps"]
+        assert self.gamma == checkpoint["gamma"]
+        assert self.grid_size == checkpoint["grid_size"]
+        assert self.color_values == checkpoint["color_values"]
+
+        self.discount_factor = self.get_discount_factor()
+        if device is not None:
+            self.observations = self.observations.to(device)
+            self.information = self.information.to(device)
+            self.last_grid = self.last_grid.to(device)
+            self.reward_storage = self.reward_storage.to(device)
+            self.discount_factor = self.discount_factor.to(device)
 
 
 logger.info("Registering gymnasium environment")
