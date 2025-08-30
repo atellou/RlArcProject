@@ -4,7 +4,7 @@ from typing import Tuple, Any
 from pythonjsonlogger import jsonlogger
 
 
-def enable_cuda(use_amp: bool = True, use_checkpointing: bool = False):
+def enable_cuda(amp_enabled: bool = True, use_checkpointing: bool = False):
     """
     Configures CUDA settings for AMP and gradient checkpointing.
 
@@ -15,11 +15,11 @@ def enable_cuda(use_amp: bool = True, use_checkpointing: bool = False):
     hardware capabilities.
 
     Args:
-        use_amp (bool, optional): Flag to indicate whether to use AMP. Defaults to True.
+        amp_enabled (bool, optional): Flag to indicate whether to use AMP. Defaults to True.
         use_checkpointing (bool, optional): Flag to indicate whether to use gradient checkpointing. Defaults to True.
 
     Returns:
-        dict: Configuration dictionary with keys 'use_amp' and 'use_checkpointing'
+        dict: Configuration dictionary with keys 'amp_enabled' and 'use_checkpointing'
         indicating the enabled settings.
     """
 
@@ -29,9 +29,9 @@ def enable_cuda(use_amp: bool = True, use_checkpointing: bool = False):
     gradient_checkpointing_enabled = amp_available  # Use only if CUDA is available
 
     config = {
-        "use_amp": use_amp and amp_available,
+        "amp_enabled": amp_enabled and amp_available,
         "use_checkpointing": use_checkpointing and gradient_checkpointing_enabled,
-        "device": "cuda" if torch.cuda.is_available() and use_amp else "cpu",
+        "device": "cuda" if torch.cuda.is_available() and amp_enabled else "cpu",
     }
 
     return config

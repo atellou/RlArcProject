@@ -42,6 +42,7 @@ class ArcActorNetwork(nn.Module):
         super(ArcActorNetwork, self).__init__()
         self.grid_size = grid_size
         self.color_values = color_values
+        self.action_head_keys = {"x_location", "y_location", "color_values", "submit"}
         self.inputs_layers = torch.nn.ModuleDict(
             {
                 "last_grid": CnnPreTrainedModule(
@@ -152,9 +153,10 @@ class ArcActorNetwork(nn.Module):
             ValueError: If the action keys do not match the required keys.
         """
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
-        in_keys = {"color_values", "submit", "x_location", "y_location"}
-        assert set(action.keys()) == in_keys, ValueError(
-            "Action keys must be {}. Keys found {}".format(in_keys, set(action.keys()))
+        assert set(action.keys()) == self.action_head_keys, ValueError(
+            "Action keys must be {}. Keys found {}".format(
+                self.action_head_keys, set(action.keys())
+            )
         )
 
     def forward(self, state: TensorDict) -> TensorDict:
@@ -218,5 +220,5 @@ class ArcActorNetwork(nn.Module):
                 for action_type, logits in state.items()
             },
         )
-
+        self.output_val(state)
         return state.auto_batch_size_()

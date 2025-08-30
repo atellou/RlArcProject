@@ -254,5 +254,6 @@ class ArcCriticNetwork(torch.nn.Module):
                 for action_type, logits in state.items()
             },
         )
+        self.output_val(state)
 
         return state.auto_batch_size_()
