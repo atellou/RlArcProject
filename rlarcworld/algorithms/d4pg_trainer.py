@@ -43,7 +43,7 @@ class D4PGTrainer:
         self,
         *,
         core: D4PGCore,
-        step_stream_factory: Callable[[int], Iterator[TensorDict]],
+        step_stream_factory: Optional[Callable[[int], Iterator[TensorDict]]] = None,
         replay_buffer: Optional[ReplayBufferProto] = None,
         batch_size: Optional[int] = None,
         warmup_buffer_ratio: float = 0.2,
@@ -58,7 +58,7 @@ class D4PGTrainer:
 
         Args:
             core (D4PGCore): The core D4PG agent to train.
-            step_stream_factory (Callable[[int], Iterator[TensorDict]]): A factory function that returns an iterator/generator that yields per-step TensorDicts with the keys expected by the core ('state', 'actions', 'reward', 'next_state', 'terminated').
+            step_stream_factory (Optional[Callable[[int], Iterator[TensorDict]]]): A factory function that returns an iterator/generator that yields per-step TensorDicts with the keys expected by the core ('state', 'actions', 'reward', 'next_state', 'terminated'). Defaults to None.
             replay_buffer (Optional[ReplayBufferProto]): A replay buffer to store transitions for experience replay. Defaults to None.
             batch_size (Optional[int]): The batch size for training. Defaults to None.
             warmup_buffer_ratio (float): The ratio of buffer to fill before training. Defaults to 0.2.
@@ -77,68 +77,54 @@ class D4PGTrainer:
         self.on_step = on_step
         self.on_validate = on_validate
         self.on_checkpoint = on_checkpoint
-        self.device = device or core.device
+        self.device = device or next(core.parameters()).device
 
         if self.replay_buffer is None and self.batch_size is None:
             raise ValueError("batch_size must be provided when replay_buffer is None")
 
     # ---------------- Orchestration helpers ----------------
     def _maybe_store_and_sample(self, step_state: TensorDict) -> Optional[TensorDict]:
-        """Store transition and sample a batch (if buffer warmup satisfied).
+        """Store the transition in the replay buffer and return a batch if ready.
 
-        If no replay_buffer is provided, return the single-step batch directly.
+        Args:
+            step_state: Dictionary containing the current step's data
+
+        Returns:
+            Optional batch of transitions if buffer is warmed up, else None
         """
         # Single-step batch mode (no replay)
         if self.replay_buffer is None:
-            batch = TensorDict(
-                {
-                    "state": step_state["state"],
-                    "actions": step_state["actions"],
-                    "reward": step_state["reward"],
-                    "next_state": step_state["next_state"],
-                    "terminated": step_state["next_state"]["terminated"],
-                }
-            ).to(self.device)
-            return batch
+            return step_state.unsqueeze(0).to(self.device)
 
         # Replay buffer mode (append transition and sample)
-        sampled_batch_size = step_state["next_state"]["terminated"].shape[0]
+        batch_size = step_state.batch_size[0]
+
         # Use max priority from buffer if available, else 1.0
         priority = torch.full(
-            (sampled_batch_size,),
-            getattr(getattr(self.replay_buffer, "sampler", {}), "_max_priority", 1.0),
+            (batch_size,),
+            getattr(getattr(self.replay_buffer, "sampler", None), "_max_priority", 1.0),
             device=self.device,
         )
-        # Pack per-item TensorDicts as done in the original code
-        items = []
-        for i in range(sampled_batch_size):
-            items.append(
-                TensorDict(
-                    {
-                        "state": step_state["state"][i],
-                        "actions": step_state["actions"][i],
-                        "reward": step_state["reward"][i],
-                        "next_state": step_state["next_state"][i],
-                        "terminated": step_state["next_state"]["terminated"][i],
-                    }
-                ).auto_batch_size_()
-            )
-        stacked = torch.stack(items)
-        indices = self.replay_buffer.extend(stacked)
+
+        # Add to replay buffer
+        indices = self.replay_buffer.extend(step_state.unsqueeze(0))
+
+        # Update priorities if using prioritized replay
         try:
             self.replay_buffer.update_priority(indices, priority)
         except Exception:
             # allow non-PER buffers
             pass
 
-        # Warmup logic
-        try:
+        # Check if we've collected enough samples to start training
+        if hasattr(self.replay_buffer, "storage") and hasattr(
+            self.replay_buffer.storage, "max_size"
+        ):
             storage_len = len(self.replay_buffer.storage)
             storage_cap = self.replay_buffer.storage.max_size
-        except Exception:
-            storage_len, storage_cap = 0, 0
-        if storage_cap and storage_len > storage_cap * self.warmup_buffer_ratio:
-            return self.replay_buffer.sample(self.batch_size).to(self.device)
+            if storage_len > storage_cap * self.warmup_buffer_ratio:
+                return self.replay_buffer.sample(self.batch_size).to(self.device)
+
         return None
 
     @staticmethod
@@ -153,7 +139,6 @@ class D4PGTrainer:
         *,
         epochs: int = 1,
         max_steps_per_epoch: int = -1,
-        logger_frequency: int = 1000,
         validate_every_steps: int = -1,
         validate_fn: Optional[
             Callable[[int, int], Tuple[torch.Tensor, torch.Tensor, TensorDict]]
@@ -165,42 +150,56 @@ class D4PGTrainer:
     ) -> None:
         """Run a training loop using the provided step stream and hooks.
 
-        - step_stream_factory(epoch) should yield per-step TensorDicts with required keys.
-        - validate_fn, if provided, is called as validate_fn(epoch, step) and must
-          return (val_actor_loss, val_critic_loss, context_tensor_dict).
-        - checkpoint_payload_fn, if provided, should build a dict with any payload to be saved.
+        Args:
+            epochs (int): Number of epochs to train for
+            max_steps_per_epoch (int): Maximum number of steps per epoch (-1 for no limit)
+            validate_every_steps (int): Run validation every N steps (-1 to disable)
+            validate_fn (Optional[Callable[[int, int], Tuple[torch.Tensor, torch.Tensor, TensorDict]]]): Validation function. Defaults to None.
+            checkpoint_every_steps (int): Save checkpoint every N steps (-1 to disable)
+            checkpoint_payload_fn (Optional[Callable[[int, int, torch.Tensor, torch.Tensor], Dict[str, Any]]]): Checkpoint payload function. Defaults to None.
         """
-        iteration = 0
-        decay_flag = False
 
         for epoch in range(epochs):
             step_stream = self.step_stream_factory(epoch)
+
+            loss_actor, loss_critic = torch.tensor(0.0), torch.tensor(0.0)
+
             for step_idx, step_state in enumerate(step_stream):
-                if 0 <= max_steps_per_epoch < step_idx:
-                    break
+                iteration = epoch * max_steps_per_epoch + step_idx
+                decay_flag = False
 
-                # Orchestrate experience and sampling
+                # Store transition and maybe sample batch
                 batch = self._maybe_store_and_sample(step_state)
-                if batch is None:
-                    continue
 
-                # Remove completed states
-                batch = self._filter_completed_state(batch)
-
-                # Compute and apply losses
-                loss_actor, loss_critic = self.core.compute_loss(batch, training=True)
-
-                # Post-step hook
-                if self.on_step is not None and iteration % logger_frequency == 0:
-                    self.on_step(epoch, step_idx, step_state, loss_actor, loss_critic)
-
-                # Target updates and decay
-                iteration += 1
-                if decay_flag:
-                    self.core.step_schedulers_and_decay()
-                if step_idx % self.target_update_frequency == 0:
-                    self.core.update_target_networks()
+                # Update networks if we have a batch
+                if batch is not None:
+                    loss_actor, loss_critic = self.core.compute_loss(
+                        batch,
+                        training=True,
+                        update_actor=True,
+                        update_critic=True,
+                        compute_td_error=True,  # Enable TD error computation for PER
+                    )
                     decay_flag = True
+
+                # Call step callback
+                if self.on_step is not None:
+                    self.on_step(
+                        epoch=epoch,
+                        step=step_idx,
+                        loss_actor=(
+                            loss_actor.item() if loss_actor is not None else None
+                        ),
+                        loss_critic=(
+                            loss_critic.item() if loss_critic is not None else None
+                        ),
+                        batch=batch,
+                        decay_flag=decay_flag,
+                    )
+
+                # Update target networks periodically
+                if decay_flag and iteration % self.target_update_frequency == 0:
+                    self.core.update_target_networks()
 
                 # Validation
                 if (
@@ -226,9 +225,16 @@ class D4PGTrainer:
                         payload = {
                             "epoch": epoch,
                             "step": step_idx,
-                            "iteration": iteration,
-                            "loss_actor": float(loss_actor.detach().cpu().item()),
-                            "loss_critic": float(loss_critic.detach().cpu().item()),
+                            "loss_actor": (
+                                loss_actor.item() if loss_actor is not None else None
+                            ),
+                            "loss_critic": (
+                                loss_critic.item() if loss_critic is not None else None
+                            ),
                         }
                     if self.on_checkpoint is not None:
                         self.on_checkpoint(payload)
+
+                # Early termination
+                if max_steps_per_epoch > 0 and step_idx >= max_steps_per_epoch - 1:
+                    break
