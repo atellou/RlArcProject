@@ -17,7 +17,9 @@ from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.utils import BetaScheduler, enable_cuda, configure_logger
+from rlarcworld.utils.beta_scheduler import BetaScheduler
+from rlarcworld.utils.device import enable_cuda
+from rlarcworld.utils.configure_logger import configure_logger
 import torch
 import numpy as np
 import logging

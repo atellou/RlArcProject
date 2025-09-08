@@ -84,7 +84,10 @@ class EnvStepper:
                 state = env.get_state(unsqueeze=1).to(self.device)
 
             # Get action from actor
-            with torch.amp.autocast(device_type="cuda" if self.amp_enabled else None):
+            if self.amp_enabled and torch.cuda.is_available():
+                with torch.amp.autocast(device_type="cuda"):
+                    action_probs = self.actor(state)
+            else:
                 action_probs = self.actor(state)
 
             # Convert to discrete actions for environment

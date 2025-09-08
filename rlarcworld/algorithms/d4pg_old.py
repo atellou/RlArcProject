@@ -12,12 +12,7 @@ from torchrl.data import ReplayBuffer
 
 from gymnasium import Env
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.utils import (
-    categorical_projection,
-    get_nested_ref,
-    enable_cuda,
-    BetaScheduler,
-)
+from rlarcworld import utils
 import logging
 from typing import Optional, Dict, Any, Tuple, Generator
 
@@ -39,7 +34,7 @@ class D4PG:
         validation_samples: Optional[DataLoader] = None,
         replay_buffer: Optional[ReplayBuffer] = None,
         warmup_buffer_ratio: float = 0.2,
-        beta_scheduler: Optional[BetaScheduler] = None,
+        beta_scheduler: Optional[utils.beta_scheduler.BetaScheduler] = None,
         n_steps: int = 1,
         gamma: float = 0.99,
         carsm=False,
@@ -136,7 +131,7 @@ class D4PG:
         self.warmup_buffer_ratio = warmup_buffer_ratio
         self.beta_scheduler = beta_scheduler
         self.tb_writer = tb_writer
-        self.config = enable_cuda() if config is None else config
+        self.config = utils.device.enable_cuda() if config is None else config
         self.device = self.config["device"]
         self.amp_scaler = (
             torch.amp.GradScaler(device=self.device)
@@ -288,7 +283,9 @@ class D4PG:
             key (str): The key for the value to be added.
             value (any): The value to be added.
         """
-        ref, last_key = get_nested_ref(self.history, key, default=np.array([]))
+        ref, last_key = utils.dict_utils.get_nested_ref(
+            self.history, key, default=np.array([])
+        )
         ref[last_key] = np.append(ref[last_key], value)
 
     def categorize_actions(
@@ -355,7 +352,7 @@ class D4PG:
         )
         target_dist = TensorDict(
             {
-                key: categorical_projection(
+                key: utils.distribution.categorical_projection(
                     best_next_q_dist[key],  # next_q_dist
                     reward[key],  # rewards
                     terminated,  # terminated

@@ -5,7 +5,9 @@ import torch
 from tensordict import TensorDict
 import numpy as np
 import gymnasium as gym
-from rlarcworld.utils import TorchQueue, enable_cuda
+from rlarcworld.utils.device import enable_cuda
+from rlarcworld.utils.torch_queue import TorchQueue
+
 
 logger = logging.getLogger(__name__)
 

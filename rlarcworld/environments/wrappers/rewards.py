@@ -4,7 +4,7 @@ import torch
 import gymnasium as gym
 import logging
 
-from rlarcworld.utils import TorchQueue
+from rlarcworld.utils.torch_queue import TorchQueue
 from tensordict import TensorDict
 
 logger = logging.getLogger(__name__)

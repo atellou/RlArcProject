@@ -22,7 +22,7 @@ from rlarcworld.agent.nn_modules import (
     CnnAttention,
     CrossAttentionClassifier,
 )
-from rlarcworld.utils import enable_cuda
+from rlarcworld.utils.device import enable_cuda
 import logging
 
 logger = logging.getLogger(__name__)

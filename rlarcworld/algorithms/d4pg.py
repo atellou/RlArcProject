@@ -5,7 +5,8 @@ import torch.optim as optim
 from typing import Optional, Dict, Tuple
 from tensordict import TensorDict
 
-from rlarcworld.utils import categorical_projection, enable_cuda
+from rlarcworld.utils.distributions import categorical_projection
+from rlarcworld.utils.device import enable_cuda
 
 
 class AmpScaler:
