@@ -134,9 +134,15 @@ class TorchQueue(torch.Tensor):
             torch.Tensor: The oldest item in the queue.
             TorchQueue: The updated queue without the oldest item.
         """
-        return self[0], TorchQueue(
-            self[1:], queue_size=self._queue_size, queue_dim=self._queue_dim
-        )
+        # Build indices to slice along queue_dim
+        indices_oldest = [slice(None)] * self.ndim
+        indices_oldest[self._queue_dim] = 0
+        oldest = self[tuple(indices_oldest)]
+
+        indices_rest = [slice(None)] * self.ndim
+        indices_rest[self._queue_dim] = slice(1, None)
+        rest = self[tuple(indices_rest)]
+        return oldest, TorchQueue(rest, queue_size=self._queue_size, queue_dim=self._queue_dim)
 
 
 # Register for torch serialization safe globals
