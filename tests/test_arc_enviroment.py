@@ -1,4 +1,3 @@
-import os
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 import numpy as np
@@ -256,7 +255,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
                         last_diff,
                         initial_diff_grid[:, y_loc, x_loc],
                     )
-                    logger.debug(f"Assertions of grids")
+                    logger.debug("Assertions of grids")
                     self.assertions_grids(
                         batch_size,
                         step,
@@ -268,7 +267,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
                         sum_init_diff_values,
                         dummy_batch,
                     )
-                    logger.debug(f"Assertions of termination")
+                    logger.debug("Assertions of termination")
                     grid_diff = torch.sum(torch.abs(grid_diff))
                     if is_last_step:
                         assert terminated, "The last step should terminate the episode"
@@ -280,7 +279,7 @@ class ArcBatchGridsEnv(unittest.TestCase):
                             terminated and grid_diff == 0
                         ), "The episode should not terminate"
 
-                    logger.debug(f"Assertions of rewards")
+                    logger.debug("Assertions of rewards")
                     if isinstance(env, PixelAwareRewardWrapper):
                         self.assert_state_property(env.get_wrapper_attr("state"))
                         self.assert_reward_pixel(
@@ -499,7 +498,6 @@ class ArcBatchGridsEnv(unittest.TestCase):
             }
 
     def test_action_space(self):
-        batch_size = np.random.randint(5, 100)
         grid_size = np.random.randint(5, 20)
         values = np.random.randint(2, 20)
         logger.debug(

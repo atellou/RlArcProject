@@ -1,5 +1,4 @@
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
-import json
 import torch
 import unittest
 

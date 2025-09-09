@@ -31,6 +31,7 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
   - [x] Do not pass `None` to `torch.amp.autocast`; use conditional or `nullcontext`
   - [ ] Consider consolidating with a shared AMP utility/context if needed
+  - [ ] Provide a small testing utility to generate device-aware synthetic steps to reduce duplication in AMP tests
 
 - [ ] EnvStepper episode/reset behavior (`rlarcworld/utils/env_stepper.py`)
 
@@ -60,22 +61,25 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 - [ ] Restructure tests into focused pytest modules (no monolithic test_algorithms)
 
-  - [ ] `tests/test_d4pg_core_compute.py` – math-only tests for `D4PGCore`
-  - [ ] `tests/test_d4pg_training.py` – trainer loop with `D4PGTrainer` + `EnvStepper`
+  - [x] `tests/test_d4pg_core_compute.py` – math-only tests for `D4PGCore`
+  - [x] `tests/test_d4pg_trainer.py` – trainer loop with `D4PGTrainer` (+ PER warmup, AMP, grad clipping, target updates)
   - [ ] `tests/test_checkpointing.py` – re-scoped checkpoint/state dict validation
   - [x] `tests/test_env_stepper.py` – step dict keys/shapes; AMP vs non-AMP
-  - [ ] `tests/test_reward_utils.py` – process_rewards incl. n-steps and device
-  - [ ] `tests/test_schedulers.py` – `BetaScheduler` behavior
+  - [x] `tests/test_schedulers.py` – `BetaScheduler` behavior
   - [x] `tests/test_logging_utils.py` – logger handler dedupe
-  - [ ] `tests/test_torch_queue.py` – keep/convert existing tests to pytest
+  - [x] `tests/test_torch_queue.py` – keep/convert existing tests to pytest
+  - [x] `tests/test_distributions.py` – `categorical_projection` (shapes, normalization, n-steps)
 
 - [ ] Introduce pytest fixtures in `tests/conftest.py`
 
-  - [ ] `device`, `grid_size`, `color_values`, `batch_size`
+  - [x] `device`, `grid_size`, `color_values`, `batch_size`
   - [ ] `env` and wrapped env, parametrized over `n_steps`
   - [ ] `dataset`, `train_loader`, `val_loader`
-  - [ ] `actor`, `critic` with consistent `v_min`/`v_max`/`num_atoms`
-  - [ ] `d4pg_core` (parametrize `amp_enabled`), `trainer`
+  - [x] `actor`, `critic` with consistent `v_min`/`v_max`/`num_atoms`
+  - [x] `d4pg_core` (parametrize `amp_enabled`)
+  - [x] `trainer`
+
+  - [x] Add `make_synthetic_step_on_device(device)` helper to avoid CPU/CUDA mismatches in specialized tests (e.g., AMP)
 
 - [ ] Parametrized tests
 
