@@ -15,7 +15,9 @@ from gymnasium import Env
 
 from rlarcworld.agent.actor import ArcActorNetwork
 
-StepArgs = [
+# Step callback type: receives (env, state, action_probs, reward, observation, terminated, truncated, info)
+# and returns the same tuple possibly modified
+StepArgs = Tuple[
     Env,
     TensorDict,
     Dict[str, torch.Tensor],
@@ -26,7 +28,16 @@ StepArgs = [
     Dict,
 ]
 OnStepFn = Callable[
-    StepArgs,
+    [
+        Env,
+        TensorDict,
+        Dict[str, torch.Tensor],
+        torch.Tensor,
+        TensorDict,
+        bool,
+        bool,
+        Dict,
+    ],
     StepArgs,
 ]
 
@@ -62,7 +73,7 @@ class EnvStepper:
         self.loaded_checkpoint = False
 
     def step(
-        self, env, state: Optional[TensorDict] = None
+        self, env: Env, state: Optional[TensorDict] = None
     ) -> Tuple[TensorDict, TensorDict, bool, bool, Dict]:
         """Take a single step in the environment.
 
@@ -90,8 +101,13 @@ class EnvStepper:
             else:
                 action_probs = self.actor(state)
 
-            # Convert to discrete actions for environment
-            actions = {k: torch.argmax(p, dim=-1) for k, p in action_probs.items()}
+            # Convert to discrete actions for environment (ensure 1D per batch)
+            actions = TensorDict(
+                {
+                    key: torch.argmax(x, dim=-1).to(self.device)
+                    for key, x in action_probs.items()
+                }
+            ).to(self.device)
 
             # Step environment
             observation, reward, terminated, truncated, info = env.step(actions)
@@ -120,17 +136,26 @@ class EnvStepper:
             # Get next state
             next_state = env.get_state(unsqueeze=1)
 
-            # Format output
-            step_data = {
-                "state": state.auto_batch_size_(),
-                "reward": TensorDict(reward, batch_size=[]).auto_batch_size_(),
-                "actions": action_probs.auto_batch_size_(),
-                "next_state": next_state.auto_batch_size_(),
-                "terminated": torch.tensor([terminated], device=self.device),
-                "truncated": torch.tensor([truncated], device=self.device),
-            }
+            # Ensure reward is a TensorDict
+            if isinstance(reward, TensorDict):
+                reward_td = reward.auto_batch_size_()
+            elif isinstance(reward, dict):
+                reward_td = TensorDict(reward, batch_size=[]).auto_batch_size_()
+            else:
+                reward_td = TensorDict({"value": reward}, batch_size=[]).auto_batch_size_()
 
-            return TensorDict(step_data, batch_size=[]).to(self.device)
+            # Format output
+            return TensorDict(
+                {
+                    "state": state.auto_batch_size_(),
+                    "reward": reward_td,
+                    "actions": action_probs.auto_batch_size_(),
+                    "next_state": next_state.auto_batch_size_(),
+                    "terminated": torch.tensor([terminated], device=self.device),
+                    "truncated": torch.tensor([truncated], device=self.device),
+                },
+                batch_size=[],
+            ).to(self.device)
 
     def create_step_stream(
         self,

@@ -107,33 +107,13 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             torch.Tensor: The computed reward
         """
+        total = torch.sum(self._reward_storage * self.discount_factor, dim=1)
         if isinstance(v_min, int) and isinstance(v_max, int):
-            return torch.tensor(
-                torch.clamp(
-                    torch.sum(self._reward_storage * self.discount_factor, dim=1),
-                    min=v_min,
-                    max=v_max,
-                )
-                .cpu()
-                .numpy()
-            ).to(self.device)
+            total = torch.clamp(total, min=v_min, max=v_max)
         elif self.apply_clamp:
-            return torch.tensor(
-                torch.clamp(
-                    torch.sum(self._reward_storage * self.discount_factor, dim=1),
-                    min=self.v_min,
-                    max=self.v_max,
-                )
-                .cpu()
-                .numpy()
-            ).to(self.device)
+            total = torch.clamp(total, min=self.v_min, max=self.v_max)
 
-        else:
-            return torch.tensor(
-                torch.sum(self._reward_storage * self.discount_factor, dim=1)
-                .cpu()
-                .numpy()
-            ).to(self.device)
+        return total.to(self.device)
 
     def get_state(self, **kwargs) -> dict:
         """
@@ -203,7 +183,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         index = [slice(None)] * q.ndim
         index[dim] = -1
         res = q[tuple(index)]
-        return torch.tensor(res, device=res.device, dtype=res.dtype)
+        # res is already a tensor; avoid reconstructing via torch.tensor()
+        return res.to(self.device)
 
     def reward(
         self,

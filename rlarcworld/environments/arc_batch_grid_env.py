@@ -8,9 +8,7 @@ import gymnasium as gym
 from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.torch_queue import TorchQueue
 
-
 logger = logging.getLogger(__name__)
-
 
 class ArcActionSpace:
     def __init__(self, grid_size: int, color_values: int):
@@ -358,7 +356,17 @@ class ArcBatchGridEnv(gym.Env):
         Returns:
             tuple: A tuple containing the new observation, reward, terminated, truncated, and info.
         """
-        if self.action_space.contains(actions.cpu().numpy()):
+        # Validate action using gym's space, allowing TensorDict inputs
+        try:
+            actions_cpu = (
+                {k: v.detach().cpu().numpy() for k, v in actions.items()}
+                if isinstance(actions, TensorDict)
+                else actions
+            )
+        except Exception:
+            actions_cpu = actions
+
+        if self.action_space.contains(actions_cpu):
             self.last_grid = self.observations["grid"].clone()
             logger.debug("Actions are valid")
             # Update the grid with the action.
