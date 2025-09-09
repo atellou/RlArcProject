@@ -208,16 +208,19 @@ class ArcCriticNetwork(torch.nn.Module):
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
         state.update(action)
 
+        # Resolve current device from parameters (in case module was moved after init)
+        current_device = next(self.parameters()).device
+
         # Broadcast the state
         action_keys = torch.cat(
             tuple(state.pop(k) for k in self.no_scale_keys),
             dim=1,
-        ).to(self.device)
+        ).to(current_device)
         action_keys = self.actions_mlp(action_keys).unsqueeze(1)
 
         # Grid inputs
         for key, value in state.items():
-            value = value.to(self.device)
+            value = value.to(current_device)
             if key == "index":
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value

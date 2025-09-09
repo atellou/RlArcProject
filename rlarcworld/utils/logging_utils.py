@@ -1,8 +1,8 @@
 import logging
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger.json import JsonFormatter
 
 
-class CustomJsonFormatter(jsonlogger.JsonFormatter):
+class CustomJsonFormatter(JsonFormatter):
     """Formats log lines in JSON."""
 
     def process_log_record(self, log_record: dict) -> dict:

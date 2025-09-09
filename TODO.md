@@ -66,7 +66,7 @@ We will not maintain backward compatibility. Update code and tests to the new la
   - [x] `tests/test_env_stepper.py` – step dict keys/shapes; AMP vs non-AMP
   - [ ] `tests/test_reward_utils.py` – process_rewards incl. n-steps and device
   - [ ] `tests/test_schedulers.py` – `BetaScheduler` behavior
-  - [ ] `tests/test_logging_utils.py` – logger handler dedupe
+  - [x] `tests/test_logging_utils.py` – logger handler dedupe
   - [ ] `tests/test_torch_queue.py` – keep/convert existing tests to pytest
 
 - [ ] Introduce pytest fixtures in `tests/conftest.py`

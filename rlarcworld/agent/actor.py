@@ -25,7 +25,7 @@ from rlarcworld.agent.nn_modules import (
 from rlarcworld.utils.device import enable_cuda
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 
 class ArcActorNetwork(nn.Module):
@@ -180,9 +180,11 @@ class ArcActorNetwork(nn.Module):
         # Validate input
         self.input_val(state)
 
+        # Determine current device from module parameters (in case module was moved after init)
+        current_device = next(self.parameters()).device
         # Broadcast the state
         for key, value in state.items():
-            value = value.to(self.device)
+            value = value.to(current_device)
             if key == "index":
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
