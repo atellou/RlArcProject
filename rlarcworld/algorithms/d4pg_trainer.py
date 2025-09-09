@@ -92,22 +92,28 @@ class D4PGTrainer:
         Returns:
             Optional batch of transitions if buffer is warmed up, else None
         """
-        # Single-step batch mode (no replay)
+        # Single-step batch mode (no replay): keep (B, ...) shape without extra time dim
         if self.replay_buffer is None:
-            return step_state.unsqueeze(0).to(self.device)
+            return step_state.to(self.device)
 
         # Replay buffer mode (append transition and sample)
         batch_size = step_state.batch_size[0]
 
         # Use max priority from buffer if available, else 1.0
-        priority = torch.full(
-            (batch_size,),
-            getattr(getattr(self.replay_buffer, "sampler", None), "_max_priority", 1.0),
-            device=self.device,
-        )
+        maxp = getattr(getattr(self.replay_buffer, "sampler", None), "_max_priority", 1.0)
+        # Normalize to python float for torch.full fill_value
+        try:
+            if isinstance(maxp, torch.Tensor):
+                # some samplers keep a tensor buffer, take max scalar
+                maxp = maxp.max().item()
+            else:
+                maxp = float(maxp)
+        except Exception:
+            maxp = 1.0
+        priority = torch.full((batch_size,), maxp, device=self.device)
 
-        # Add to replay buffer
-        indices = self.replay_buffer.extend(step_state.unsqueeze(0))
+        # Add to replay buffer without introducing an extra leading time dimension
+        indices = self.replay_buffer.extend(step_state)
 
         # Update priorities if using prioritized replay
         try:

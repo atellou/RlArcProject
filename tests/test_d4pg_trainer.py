@@ -145,6 +145,66 @@ def test_d4pg_trainer_training_updates_and_loss_ranges(device, batch_size):
     assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
 
 
+def test_d4pg_trainer_per_update_priority_called(device):
+    grid_size, color_values, batch_size = 12, 5, 2
+    core = _build_simple_core(grid_size, color_values, device, amp=False)
+    step_stream_factory = _make_stream_factory(6, batch_size, grid_size, color_values, device, core.actor)
+
+    capacity = 20
+    base_rb = TensorDictReplayBuffer(
+        storage=LazyTensorStorage(capacity),
+        sampler=PrioritizedSampler(max_capacity=capacity, alpha=0.6, beta=0.4),
+    )
+
+    class _RecordRB:
+        def __init__(self, rb):
+            self._rb = rb
+            self.calls = []
+        @property
+        def storage(self):
+            return self._rb.storage
+        @property
+        def sampler(self):
+            return self._rb.sampler
+        def extend(self, *args, **kwargs):
+            return self._rb.extend(*args, **kwargs)
+        def sample(self, *args, **kwargs):
+            return self._rb.sample(*args, **kwargs)
+        def update_priority(self, indices, priorities):
+            # Record and forward
+            self.calls.append((indices, priorities.detach().cpu()))
+            return self._rb.update_priority(indices, priorities)
+
+    rb = _RecordRB(base_rb)
+
+    trainer = D4PGTrainer(
+        core=core,
+        step_stream_factory=step_stream_factory,
+        replay_buffer=rb,
+        batch_size=batch_size,
+        warmup_buffer_ratio=0.0,
+        target_update_frequency=1,
+        device=str(device),
+    )
+
+    trainer.train(epochs=1, max_steps_per_epoch=6)
+
+    # Assert update_priority was called at least once with positive finite priorities
+    assert len(rb.calls) > 0, "update_priority was not called"
+    any_positive = False
+    for indices, priorities in rb.calls:
+        assert torch.isfinite(priorities).all()
+        # length match: indices and priorities
+        try:
+            n_idx = len(indices)
+        except Exception:
+            n_idx = int(torch.numel(indices))
+        assert priorities.numel() == n_idx
+        if (priorities > 0).any():
+            any_positive = True
+    assert any_positive, "No positive priorities were passed to update_priority"
+
+
 def _snapshot_params(module: torch.nn.Module, limit: int = 5):
     return [p.detach().clone().cpu() for i, p in enumerate(module.parameters()) if p.requires_grad and i < limit]
 
@@ -154,6 +214,59 @@ def _params_changed(before, module: torch.nn.Module) -> bool:
     return any(not torch.allclose(b, a) for b, a in zip(before, after))
 
 
+def test_d4pg_trainer_warmup_with_prioritized_sampler(device):
+    grid_size, color_values = 10, 5
+    batch_size = 2
+    core = _build_simple_core(grid_size, color_values, device, amp=False)
+
+    # Real PER buffer
+    capacity = 10
+    warmup_ratio = 0.5
+    rb = TensorDictReplayBuffer(
+        storage=LazyTensorStorage(capacity),
+        sampler=PrioritizedSampler(max_capacity=capacity, alpha=0.6, beta=0.4),
+    )
+
+    max_steps = 10
+    step_stream_factory = _make_stream_factory(max_steps, batch_size, grid_size, color_values, device, core.actor)
+
+    first_training_step = None
+    losses_actor, losses_critic = [], []
+
+    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+        nonlocal first_training_step
+        if decay_flag and first_training_step is None:
+            first_training_step = step
+        if loss_actor is not None:
+            losses_actor.append(loss_actor)
+        if loss_critic is not None:
+            losses_critic.append(loss_critic)
+
+    trainer = D4PGTrainer(
+        core=core,
+        step_stream_factory=step_stream_factory,
+        replay_buffer=rb,
+        batch_size=batch_size,
+        warmup_buffer_ratio=warmup_ratio,
+        target_update_frequency=2,
+        on_step=on_step,
+        device=str(device),
+    )
+
+    # Compute expected minimal steps before training starts: find smallest n such that n*batch_size > capacity*warmup_ratio
+    import math
+    threshold = capacity * warmup_ratio
+    expected_min_steps = math.floor(threshold / batch_size) + 1
+
+    trainer.train(epochs=1, max_steps_per_epoch=max_steps)
+
+    assert first_training_step is not None, "Training did not start after warmup threshold"
+    assert first_training_step >= expected_min_steps - 1  # step is zero-based index
+    # After warmup, we should have at least one finite loss recorded
+    assert any(torch.isfinite(torch.tensor(v)) for v in losses_actor)
+    assert any(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+
+
 def test_d4pg_trainer_real_replay_buffer_and_target_updates(device):
     grid_size, color_values, batch_size = 10, 5, 2
     core = _build_simple_core(grid_size, color_values, device, amp=False)
@@ -161,7 +274,7 @@ def test_d4pg_trainer_real_replay_buffer_and_target_updates(device):
     # Real replay buffer from torchrl
     capacity = 50
     rb = TensorDictReplayBuffer(
-        storage=LazyTensorStorage(capacity=capacity),
+        storage=LazyTensorStorage(capacity),
         sampler=PrioritizedSampler(max_capacity=capacity, alpha=0.6, beta=0.4),
     )
 
@@ -170,7 +283,7 @@ def test_d4pg_trainer_real_replay_buffer_and_target_updates(device):
 
     target_update_frequency = 2
     updates_detected = {"actor": 0, "critic": 0}
-    last_checked_step = {"actor": -1, "critic": -1}
+    # track updates by parameter change at expected steps only
     # Snapshots to compare across expected update boundaries
     actor_tgt_prev = _snapshot_params(core.actor_target)
     critic_tgt_prev = _snapshot_params(core.critic_target)
@@ -192,11 +305,9 @@ def test_d4pg_trainer_real_replay_buffer_and_target_updates(device):
             nonlocal actor_tgt_prev, critic_tgt_prev
             if _params_changed(actor_tgt_prev, core.actor_target):
                 updates_detected["actor"] += 1
-                last_checked_step["actor"] = step
                 actor_tgt_prev = _snapshot_params(core.actor_target)
             if _params_changed(critic_tgt_prev, core.critic_target):
                 updates_detected["critic"] += 1
-                last_checked_step["critic"] = step
                 critic_tgt_prev = _snapshot_params(core.critic_target)
 
     trainer = D4PGTrainer(
@@ -207,7 +318,7 @@ def test_d4pg_trainer_real_replay_buffer_and_target_updates(device):
         warmup_buffer_ratio=0.0,
         target_update_frequency=target_update_frequency,
         on_step=on_step,
-        device=str(device),
+        device=device,
     )
 
     trainer.train(epochs=1, max_steps_per_epoch=max_steps)
