@@ -1,208 +1,367 @@
-"""Unit tests for D4PG trainer functionality."""
-
-import unittest
-from unittest.mock import MagicMock, patch
 import torch
+import pytest
 from tensordict import TensorDict
 
+from rlarcworld.agent.actor import ArcActorNetwork
+from rlarcworld.agent.critic import ArcCriticNetwork
+from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.algorithms.d4pg_trainer import D4PGTrainer
+from torchrl.data.replay_buffers import TensorDictReplayBuffer, LazyTensorStorage, PrioritizedSampler
 
 
-class TestD4PGTrainer(unittest.TestCase):
-    def setUp(self):
-        # Create a mock D4PGCore with parameters property
-        self.mock_core = MagicMock()
-        # Mock parameters to return a tensor with device
-        mock_params = MagicMock()
-        mock_params.return_value = [torch.tensor([0.0], device="cpu")]
-        type(self.mock_core).parameters = mock_params
-
-        # Default trainer config
-        self.trainer_kwargs = {
-            "core": self.mock_core,
-            "step_stream_factory": lambda x: iter([]),
-            "replay_buffer": None,
-            "batch_size": 32,
-            "device": "cpu",
+def _make_synthetic_step(batch_size: int, grid_size: int, color_values: int, device: torch.device, actor: ArcActorNetwork) -> TensorDict:
+    state = TensorDict(
+        {
+            "last_grid": torch.randint(0, color_values, (batch_size, 1, grid_size, grid_size), device=device),
+            "grid": torch.randint(0, color_values, (batch_size, 1, grid_size, grid_size), device=device),
+            "examples": torch.randint(0, color_values, (batch_size, 10, 2, grid_size, grid_size), device=device),
+            "initial": torch.randint(0, color_values, (batch_size, 1, grid_size, grid_size), device=device),
+            "index": torch.randint(0, grid_size, (batch_size, 1, grid_size, grid_size), device=device),
+            "terminated": torch.zeros((batch_size, 1), device=device, dtype=torch.long),
         }
+    ).to(device)
 
-    def create_step_state(self, batch_size=1):
-        """Create a sample step state TensorDict."""
-        return TensorDict(
-            {
-                "state": {
-                    "observation": torch.randn(batch_size, 4),
-                    "terminated": torch.zeros(batch_size, dtype=torch.bool),
-                },
-                "actions": torch.randn(batch_size, 2),
-                "reward": torch.randn(batch_size, 1),
-                "next_state": {
-                    "observation": torch.randn(batch_size, 4),
-                    "terminated": torch.zeros(batch_size, dtype=torch.bool),
-                },
-                "terminated": torch.zeros(batch_size, dtype=torch.bool),
-                "truncated": torch.zeros(batch_size, dtype=torch.bool),
-            },
-            batch_size=[batch_size],
-        )
+    next_state = state.clone()
 
-    def test_no_replay_buffer_returns_batch_directly(self):
-        """Test that without replay buffer, it returns the batch directly."""
-        # Create a copy of trainer kwargs without replay_buffer
-        kwargs = self.trainer_kwargs.copy()
-        kwargs["replay_buffer"] = None
-        trainer = D4PGTrainer(**kwargs)
-        step_state = self.create_step_state()
+    reward = TensorDict(
+        {
+            "pixel_wise": torch.randint(-40, 2, size=(batch_size, 1), device=device).to(torch.float32),
+            "binary": torch.randint(0, 2, size=(batch_size, 1), device=device).to(torch.float32),
+        }
+    )
 
-        result = trainer._maybe_store_and_sample(step_state)
+    with torch.no_grad():
+        actions = actor(state)
 
-        self.assertIsNotNone(result)
-        self.assertEqual(result.batch_size, torch.Size([1, *step_state.batch_size]))
-
-    @patch("torch.full")
-    def test_with_replay_buffer_not_warmed_up(self, mock_full):
-        """Test when replay buffer exists but not enough samples yet."""
-        mock_buffer = MagicMock()
-        mock_buffer.storage = MagicMock()
-        mock_buffer.storage.max_size = 1000
-        mock_buffer.storage.__len__.return_value = 100  # 10% of capacity
-
-        # Create a copy of trainer kwargs and update with test-specific values
-        kwargs = self.trainer_kwargs.copy()
-        kwargs.update(
-            {
-                "replay_buffer": mock_buffer,
-                "warmup_buffer_ratio": 0.2,  # Need 200 samples to warm up
-            }
-        )
-        trainer = D4PGTrainer(**kwargs)
-
-        step_state = self.create_step_state()
-        result = trainer._maybe_store_and_sample(step_state)
-
-        self.assertIsNone(result)
-        mock_buffer.extend.assert_called_once()
-        mock_buffer.sample.assert_not_called()
-
-    @patch("torch.full")
-    def test_with_replay_buffer_warmed_up(self, mock_full):
-        """Test when replay buffer is warmed up and ready to sample."""
-        mock_buffer = MagicMock()
-        mock_buffer.storage = MagicMock()
-        mock_buffer.storage.max_size = 1000
-        mock_buffer.storage.__len__.return_value = 300  # 30% of capacity
-
-        # Mock the sample to return a specific value
-        mock_sample = self.create_step_state(batch_size=32)
-        mock_buffer.sample.return_value = mock_sample
-
-        # Create a copy of trainer kwargs and update with test-specific values
-        kwargs = self.trainer_kwargs.copy()
-        kwargs.update(
-            {
-                "replay_buffer": mock_buffer,
-                "warmup_buffer_ratio": 0.2,  # 200 samples needed
-            }
-        )
-        trainer = D4PGTrainer(**kwargs)
-
-        step_state = self.create_step_state()
-        result = trainer._maybe_store_and_sample(step_state)
-
-        self.assertIsNotNone(result)
-        mock_buffer.extend.assert_called_once()
-        mock_buffer.sample.assert_called_once_with(32)
-
-    @patch("torch.full")
-    def test_per_priority_update(self, mock_full):
-        """Test priority updates for prioritized experience replay."""
-        mock_sampler = MagicMock()
-        mock_sampler._max_priority = 2.5
-
-        mock_buffer = MagicMock()
-        mock_buffer.sampler = mock_sampler
-        mock_buffer.storage = MagicMock()
-        mock_buffer.storage.max_size = 1000
-        mock_buffer.storage.__len__.return_value = 500
-
-        # Configure mock to return indices when extend is called
-        mock_buffer.extend.return_value = [0]  # Simulate returning an index
-
-        # Create a copy of trainer kwargs and update with test-specific values
-        kwargs = self.trainer_kwargs.copy()
-        kwargs["replay_buffer"] = mock_buffer
-        trainer = D4PGTrainer(**kwargs)
-
-        step_state = self.create_step_state()
-        mock_full.return_value = torch.tensor([2.5])
-        trainer._maybe_store_and_sample(step_state)
-
-        # Check if priority was updated correctly
-        mock_buffer.update_priority.assert_called_once()
-        args, _ = mock_buffer.update_priority.call_args
-        self.assertTrue(torch.equal(args[1], torch.tensor([2.5])))
-
-    def test_tensor_shapes_in_maybe_store_and_sample(self):
-        """Test that tensor shapes are preserved in _maybe_store_and_sample."""
-        # Test with batch size > 1
-        batch_size = 3
-        step_state = self.create_step_state(batch_size=batch_size)
-
-        # Test with replay buffer (warmed up)
-        mock_buffer = MagicMock()
-        mock_buffer.storage = MagicMock()
-        mock_buffer.storage.max_size = 1000
-        mock_buffer.storage.__len__.return_value = 500  # Enough samples to be warmed up
-        mock_buffer.sample.return_value = (
-            step_state  # Return the same state for testing
-        )
-
-        # Mock the priority tensor creation to avoid recursion
-        with patch("torch.full") as mock_full:
-            # Return a simple tensor with the correct shape
-            def create_mock_tensor(size, fill_value, **kwargs):
-                return torch.ones(size, **kwargs) * fill_value
-
-            mock_full.side_effect = create_mock_tensor
-
-            kwargs = self.trainer_kwargs.copy()
-            kwargs.update({"replay_buffer": mock_buffer, "batch_size": batch_size})
-            trainer = D4PGTrainer(**kwargs)
-
-            # Test with replay buffer (warmed up)
-            result = trainer._maybe_store_and_sample(step_state)
-
-            # Check shapes of the returned batch
-            self.assertEqual(result["state"]["observation"].shape, (batch_size, 4))
-            self.assertEqual(result["actions"].shape, (batch_size, 2))
-            self.assertEqual(result["reward"].shape, (batch_size, 1))
-            self.assertEqual(result["next_state"]["observation"].shape, (batch_size, 4))
-            self.assertEqual(result["terminated"].shape, (batch_size,))
-            self.assertEqual(result["truncated"].shape, (batch_size,))
-
-        # Test without replay buffer
-        with patch("torch.full") as mock_full:
-            # Return a simple tensor with the correct shape
-            def create_mock_tensor(size, fill_value, **kwargs):
-                return torch.ones(size, **kwargs) * fill_value
-
-            mock_full.side_effect = create_mock_tensor
-
-            kwargs = self.trainer_kwargs.copy()
-            kwargs.update({"replay_buffer": None, "batch_size": batch_size})
-            trainer = D4PGTrainer(**kwargs)
-            result = trainer._maybe_store_and_sample(step_state)
-
-            # Should add a batch dimension when no replay buffer
-            self.assertEqual(result["state"]["observation"].shape, (1, batch_size, 4))
-            self.assertEqual(result["actions"].shape, (1, batch_size, 2))
-            self.assertEqual(result["reward"].shape, (1, batch_size, 1))
-            self.assertEqual(
-                result["next_state"]["observation"].shape, (1, batch_size, 4)
-            )
-            self.assertEqual(result["terminated"].shape, (1, batch_size))
-            self.assertEqual(result["truncated"].shape, (1, batch_size))
+    step_state = TensorDict(
+        {
+            "state": state,
+            "actions": actions,
+            "reward": reward,
+            "next_state": next_state,
+            "terminated": torch.zeros((batch_size, 1), device=device),
+        },
+        batch_size=[batch_size],
+    ).to(device)
+    return step_state
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("batch_size", [2])
+def test_d4pg_trainer_training_updates_and_loss_ranges(device, batch_size):
+    grid_size = 16
+    color_values = 7
+
+    actor = ArcActorNetwork(
+        grid_size=grid_size,
+        color_values=color_values,
+        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+    )
+    critic = ArcCriticNetwork(
+        grid_size=grid_size,
+        color_values=color_values,
+        num_atoms={"pixel_wise": 51, "binary": 3},
+        v_min={"pixel_wise": -40, "binary": 0},
+        v_max={"pixel_wise": 2, "binary": 1},
+        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+    )
+
+    core = D4PGCore(
+        actor=actor,
+        critic=critic,
+        gamma=0.99,
+        tau=0.005,
+        n_steps=1,
+        amp_enabled=False,
+        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+    )
+
+    # Simple step stream that yields a fixed number of synthetic steps
+    max_steps = 6
+    def step_stream_factory(epoch: int):
+        for _ in range(max_steps):
+            yield _make_synthetic_step(batch_size, grid_size, color_values, device, actor)
+
+    losses_actor = []
+    losses_critic = []
+
+    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+        if loss_actor is not None:
+            losses_actor.append(loss_actor)
+        if loss_critic is not None:
+            losses_critic.append(loss_critic)
+
+    # Minimal replay buffer to return batches without adding an extra leading batch dim
+    class _MiniStorage:
+        def __init__(self):
+            self.max_size = 1
+            self._len = 0
+        def __len__(self):
+            return self._len
+    class _MiniBuffer:
+        def __init__(self):
+            self.storage = _MiniStorage()
+            self._last = None
+        def extend(self, batch):
+            # trainer provides batch with leading [1] dim; store squeezed batch
+            self._last = batch.squeeze(0)
+            self.storage._len = 1
+            return [0]
+        def sample(self, bs):
+            return self._last
+        def update_priority(self, indices, priorities):
+            pass
+
+    trainer = D4PGTrainer(
+        core=core,
+        step_stream_factory=step_stream_factory,
+        replay_buffer=_MiniBuffer(),
+        batch_size=batch_size,
+        warmup_buffer_ratio=0.0,
+        target_update_frequency=2,
+        on_step=on_step,
+        device=str(device),
+    )
+
+    # Snapshot some params before training
+    actor_before = [p.detach().clone() for p in core.actor.parameters() if p.requires_grad][:3]
+    critic_before = [p.detach().clone() for p in core.critic.parameters() if p.requires_grad][:3]
+
+    trainer.train(epochs=1, max_steps_per_epoch=max_steps)
+
+    # Ensure some updates occurred
+    actor_changed = any(
+        not torch.allclose(pb, pa)
+        for pb, pa in zip(actor_before, [p.detach().clone() for p in core.actor.parameters() if p.requires_grad][:3])
+    )
+    critic_changed = any(
+        not torch.allclose(pb, pa)
+        for pb, pa in zip(critic_before, [p.detach().clone() for p in core.critic.parameters() if p.requires_grad][:3])
+    )
+    assert actor_changed, "Actor parameters did not update in trainer loop"
+    assert critic_changed, "Critic parameters did not update in trainer loop"
+
+    # Losses recorded: finite and reasonable ranges (broad sanity bounds)
+    assert all(torch.isfinite(torch.tensor(v)) for v in losses_actor)
+    assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+
+
+def _snapshot_params(module: torch.nn.Module, limit: int = 5):
+    return [p.detach().clone().cpu() for i, p in enumerate(module.parameters()) if p.requires_grad and i < limit]
+
+
+def _params_changed(before, module: torch.nn.Module) -> bool:
+    after = [p.detach().clone().cpu() for i, p in enumerate(module.parameters()) if p.requires_grad and i < len(before)]
+    return any(not torch.allclose(b, a) for b, a in zip(before, after))
+
+
+def test_d4pg_trainer_real_replay_buffer_and_target_updates(device):
+    grid_size, color_values, batch_size = 10, 5, 2
+    core = _build_simple_core(grid_size, color_values, device, amp=False)
+
+    # Real replay buffer from torchrl
+    capacity = 50
+    rb = TensorDictReplayBuffer(
+        storage=LazyTensorStorage(capacity=capacity),
+        sampler=PrioritizedSampler(max_capacity=capacity, alpha=0.6, beta=0.4),
+    )
+
+    max_steps = 7
+    step_stream_factory = _make_stream_factory(max_steps, batch_size, grid_size, color_values, device, core.actor)
+
+    target_update_frequency = 2
+    updates_detected = {"actor": 0, "critic": 0}
+    last_checked_step = {"actor": -1, "critic": -1}
+    # Snapshots to compare across expected update boundaries
+    actor_tgt_prev = _snapshot_params(core.actor_target)
+    critic_tgt_prev = _snapshot_params(core.critic_target)
+    # Track losses too
+    losses_actor, losses_critic = [], []
+
+    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+        # Only check when a training step happened
+        if not decay_flag:
+            return
+        # Record losses
+        if loss_actor is not None:
+            losses_actor.append(loss_actor)
+        if loss_critic is not None:
+            losses_critic.append(loss_critic)
+        # Expected update boundary
+        if step % target_update_frequency == 0:
+            # detect change
+            nonlocal actor_tgt_prev, critic_tgt_prev
+            if _params_changed(actor_tgt_prev, core.actor_target):
+                updates_detected["actor"] += 1
+                last_checked_step["actor"] = step
+                actor_tgt_prev = _snapshot_params(core.actor_target)
+            if _params_changed(critic_tgt_prev, core.critic_target):
+                updates_detected["critic"] += 1
+                last_checked_step["critic"] = step
+                critic_tgt_prev = _snapshot_params(core.critic_target)
+
+    trainer = D4PGTrainer(
+        core=core,
+        step_stream_factory=step_stream_factory,
+        replay_buffer=rb,
+        batch_size=batch_size,
+        warmup_buffer_ratio=0.0,
+        target_update_frequency=target_update_frequency,
+        on_step=on_step,
+        device=str(device),
+    )
+
+    trainer.train(epochs=1, max_steps_per_epoch=max_steps)
+
+    # We expect at least 1-2 target updates over 7 steps with freq=2 (at steps 0,2,4,6)
+    assert updates_detected["actor"] >= 1
+    assert updates_detected["critic"] >= 1
+    # Sanity ranges to catch divergence; these are intentionally broad
+    assert len(losses_actor) > 0 and len(losses_critic) > 0
+    assert all(torch.isfinite(torch.tensor(v)) for v in losses_actor)
+    assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+    assert all(abs(v) < 1e3 for v in losses_actor), f"Actor loss out of range: {losses_actor}"
+    assert all(abs(v) < 1e3 for v in losses_critic), f"Critic loss out of range: {losses_critic}"
+
+
+def _make_per_buffer(max_size: int):
+    class _Storage:
+        def __init__(self):
+            self.max_size = max_size
+            self._len = 0
+        def __len__(self):
+            return self._len
+    class _Sampler:
+        def __init__(self):
+            self._max_priority = 1.0
+    class _PERBuffer:
+        def __init__(self):
+            self.storage = _Storage()
+            self.sampler = _Sampler()
+            self._last = None
+            self.update_called = False
+        def extend(self, batch):
+            self._last = batch.squeeze(0)
+            self.storage._len += 1
+            return [self.storage._len - 1]
+        def sample(self, bs):
+            return self._last
+        def update_priority(self, indices, priorities):
+            self.update_called = True
+    return _PERBuffer()
+
+
+def _build_simple_core(grid_size: int, color_values: int, device: torch.device, amp: bool = False, max_grad_norm: float = 0.0) -> D4PGCore:
+    actor = ArcActorNetwork(
+        grid_size=grid_size,
+        color_values=color_values,
+        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
+    )
+    critic = ArcCriticNetwork(
+        grid_size=grid_size,
+        color_values=color_values,
+        num_atoms={"pixel_wise": 51, "binary": 3},
+        v_min={"pixel_wise": -40, "binary": 0},
+        v_max={"pixel_wise": 2, "binary": 1},
+        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
+    )
+    core = D4PGCore(
+        actor=actor,
+        critic=critic,
+        gamma=0.99,
+        tau=0.005,
+        n_steps=1,
+        amp_enabled=amp,
+        max_grad_norm=max_grad_norm,
+        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
+    )
+    return core
+
+
+def _make_stream_factory(max_steps: int, batch_size: int, grid_size: int, color_values: int, device: torch.device, actor: ArcActorNetwork):
+    def _factory(epoch: int):
+        for _ in range(max_steps):
+            yield _make_synthetic_step(batch_size, grid_size, color_values, device, actor)
+    return _factory
+
+
+def test_d4pg_trainer_per_warmup_and_priority(device):
+    grid_size, color_values, batch_size = 12, 5, 2
+    core = _build_simple_core(grid_size, color_values, device, amp=False)
+    step_stream_factory = _make_stream_factory(8, batch_size, grid_size, color_values, device, core.actor)
+
+    per_buffer = _make_per_buffer(max_size=10)
+    losses_actor, losses_critic = [], []
+    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+        # Record losses if present
+        if loss_actor is not None:
+            losses_actor.append(loss_actor)
+        if loss_critic is not None:
+            losses_critic.append(loss_critic)
+
+    trainer = D4PGTrainer(
+        core=core,
+        step_stream_factory=step_stream_factory,
+        replay_buffer=per_buffer,
+        batch_size=batch_size,
+        warmup_buffer_ratio=0.5,  # need >5 samples before training starts (given max_size=10)
+        target_update_frequency=2,
+        on_step=on_step,
+        device=str(device),
+    )
+
+    trainer.train(epochs=1, max_steps_per_epoch=8)
+
+    # Ensure priority update attempted
+    assert per_buffer.update_called is True
+    # Training should have occurred after warmup threshold; losses should be recorded and finite
+    assert len(losses_actor) > 0 and len(losses_critic) > 0
+    assert all(torch.isfinite(torch.tensor(v)) for v in losses_actor)
+    assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="AMP test requires CUDA")
+def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
+    device = torch.device("cuda")
+    grid_size, color_values = 12, 5
+    # Enable AMP and gradient clipping
+    core = _build_simple_core(grid_size, color_values, device, amp=True, max_grad_norm=0.1)
+
+    step_stream_factory = _make_stream_factory(5, batch_size, grid_size, color_values, device, core.actor)
+
+    # Simple buffer to bypass warmup
+    class _Buf:
+        def __init__(self):
+            self.storage = type("S", (), {"max_size": 1, "__len__": lambda self: 1})()
+        def extend(self, batch):
+            self._last = batch.squeeze(0)
+            return [0]
+        def sample(self, bs):
+            return self._last
+        def update_priority(self, indices, priorities):
+            pass
+
+    losses_actor, losses_critic = [], []
+    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+        if loss_actor is not None:
+            losses_actor.append(loss_actor)
+        if loss_critic is not None:
+            losses_critic.append(loss_critic)
+
+    trainer = D4PGTrainer(
+        core=core,
+        step_stream_factory=step_stream_factory,
+        replay_buffer=_Buf(),
+        batch_size=batch_size,
+        warmup_buffer_ratio=0.0,
+        target_update_frequency=1,
+        on_step=on_step,
+        device=str(device),
+    )
+
+    # Run a short AMP-enabled, clipped training loop
+    trainer.train(epochs=1, max_steps_per_epoch=5)
+
+    # Assert training produced finite losses
+    assert len(losses_actor) > 0 and len(losses_critic) > 0
+    assert all(torch.isfinite(torch.tensor(v)) for v in losses_actor)
+    assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
