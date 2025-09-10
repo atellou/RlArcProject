@@ -59,7 +59,7 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 ## Pytest Migration Plan
 
-- [ ] Restructure tests into focused pytest modules (no monolithic test_algorithms)
+- [x] Restructure tests into focused pytest modules (no monolithic test_algorithms)
 
   - [x] `tests/test_d4pg_core_compute.py` – math-only tests for `D4PGCore`
   - [x] `tests/test_d4pg_trainer.py` – trainer loop with `D4PGTrainer` (+ PER warmup, AMP, grad clipping, target updates)
@@ -69,12 +69,15 @@ We will not maintain backward compatibility. Update code and tests to the new la
   - [x] `tests/test_logging_utils.py` – logger handler dedupe
   - [x] `tests/test_torch_queue.py` – keep/convert existing tests to pytest
   - [x] `tests/test_distributions.py` – `categorical_projection` (shapes, normalization, n-steps)
+  - [x] `tests/test_arc_dataset.py` – Evaluates the dataset loading and transformations
+  - [x] `tests/test_arc_environment.py` – Evaluates the env progress
+  - [x] `tests/test_networks.py` – Evaluates the networks
 
-- [ ] Introduce pytest fixtures in `tests/conftest.py`
+- [x] Introduce pytest fixtures in `tests/conftest.py`
 
   - [x] `device`, `grid_size`, `color_values`, `batch_size`
-  - [ ] `env` and wrapped env, parametrized over `n_steps`
-  - [ ] `dataset`, `train_loader`, `val_loader`
+  - [x] `env` and wrapped env, parametrized over `n_steps`
+  - [x] `dataset`, `train_loader`, `val_loader`
   - [x] `actor`, `critic` with consistent `v_min`/`v_max`/`num_atoms`
   - [x] `d4pg_core` (parametrize `amp_enabled`)
   - [x] `trainer`
@@ -86,7 +89,8 @@ We will not maintain backward compatibility. Update code and tests to the new la
   - [ ] `categorical_projection` (shapes, normalization)
   - [ ] `BetaScheduler` (increasing, clamping)
   - [ ] AMP/no-AMP code paths where relevant
-- [ ] Pre-commit hooks or linters for import validity and formatting
+- [ ] Pre-commit hooks
+- [x] Linters for import validity and formatting
 
 ---
 

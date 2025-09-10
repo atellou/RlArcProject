@@ -8,6 +8,10 @@ from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.algorithms.d4pg_trainer import D4PGTrainer
 from torchrl.data.replay_buffers import TensorDictReplayBuffer, LazyTensorStorage, PrioritizedSampler
 from tests.utils.synthetic import make_synthetic_step_on_device
+from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
+from torch.utils.data import DataLoader
 
 
 @pytest.fixture(scope="session")
@@ -137,3 +141,65 @@ def trainer_factory():
         )
 
     return _make
+
+
+# ---------- Environment fixtures (parametrized over n_steps) ----------
+
+@pytest.fixture(params=[1, 3])
+def n_steps_param(request) -> int:
+    return int(request.param)
+
+
+@pytest.fixture()
+def env(grid_size, color_values, n_steps_param, device) -> ArcBatchGridEnv:
+    return ArcBatchGridEnv(
+        grid_size=grid_size,
+        color_values=color_values,
+        n_steps=n_steps_param,
+        gamma=0.99,
+        device=str(device),
+    )
+
+
+@pytest.fixture()
+def wrapped_env(env: ArcBatchGridEnv, n_steps_param: int) -> PixelAwareRewardWrapper:
+    return PixelAwareRewardWrapper(
+        env,
+        n_steps=n_steps_param,
+        gamma=0.99,
+        apply_clamp=False,
+        v_min=0,
+        v_max=1,
+    )
+
+
+# ---------- Dataset and DataLoader fixtures ----------
+
+@pytest.fixture()
+def dataset() -> ArcDataset:
+    # Raw dataset without transform
+    return ArcDataset(arc_dataset_dir="tests/test_data", keep_in_memory=False)
+
+
+@pytest.fixture()
+def transformed_dataset(grid_size) -> ArcDataset:
+    # Build a simple transform with square output using grid_size
+    out_size = (grid_size, grid_size)
+    n_examples = 5
+    transform = ArcSampleTransformer(out_size, n_examples, zero_based_correction=0)
+    return ArcDataset(
+        arc_dataset_dir="tests/test_data",
+        keep_in_memory=False,
+        transform=transform,
+    )
+
+
+@pytest.fixture()
+def train_loader(transformed_dataset, batch_size) -> DataLoader:
+    return DataLoader(transformed_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+
+
+@pytest.fixture()
+def val_loader(transformed_dataset) -> DataLoader:
+    # Deterministic evaluation loader
+    return DataLoader(transformed_dataset, batch_size=1, shuffle=False, num_workers=0)

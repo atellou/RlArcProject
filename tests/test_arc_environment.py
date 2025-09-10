@@ -156,7 +156,12 @@ def episodes_simulation(batch_size, size, color_values, env):
         step = 0
         for y_loc in range(size):
             for x_loc in range(size):
-                target_grids = env.get_wrapper_attr("observations")["target"]
+                # Support both wrapper and base env when accessing observations
+                try:
+                    obs_dict = env.get_wrapper_attr("observations")
+                except AttributeError:
+                    obs_dict = env.observations
+                target_grids = obs_dict["target"]
                 is_last_step = int(y_loc == size - 1 and x_loc == size - 1)
                 value = target_grids[:, y_loc, x_loc]
                 action = torch.zeros((batch_size, 4))
@@ -231,19 +236,11 @@ def episodes_simulation(batch_size, size, color_values, env):
 
 # ------------------------- Tests -------------------------
 
-def test_environment():
-    logger.info("Testing ArcBatchGridEnv")
+def test_environment(env: ArcBatchGridEnv):
+    logger.info("Testing ArcBatchGridEnv (fixture)")
     batch_size = np.random.randint(2, 4)
-    size = np.random.randint(2, 4)
-    color_values = np.random.randint(2, 4)
-
-    env = ArcBatchGridEnv(
-        size,
-        color_values,
-        n_steps=np.random.randint(1, 10),
-        gamma=1.0,
-        device="cpu",
-    )
+    size = env.grid_size
+    color_values = env.color_values
     episodes_simulation(batch_size, size, color_values, env)
 
 
@@ -399,15 +396,12 @@ def test_arc_wrapper_save_and_load(tmp_path):
     torch.testing.assert_close(env1.v_max, loaded_env1.v_max)
 
 
-def test_wrapper():
-    logger.info("\nTesting ArcBatchGridEnv with wrapper PixelAwareRewardWrapper")
+def test_wrapper(wrapped_env: PixelAwareRewardWrapper):
+    logger.info("\nTesting ArcBatchGridEnv with wrapper PixelAwareRewardWrapper (fixture)")
     batch_size = np.random.randint(2, 4)
-    size = np.random.randint(2, 4)
-    color_values = np.random.randint(2, 4)
-
-    env = ArcBatchGridEnv(size, color_values, device="cpu")
-    env = PixelAwareRewardWrapper(env, n_steps=np.random.randint(1, 10), gamma=1.0)
-    episodes_simulation(batch_size, size, color_values, env)
+    size = wrapped_env.get_wrapper_attr("grid_size")
+    color_values = wrapped_env.get_wrapper_attr("color_values")
+    episodes_simulation(batch_size, size, color_values, wrapped_env)
 
 
 def test_action_space():
