@@ -1,16 +1,16 @@
-import torch
 import pytest
-from tests.utils.synthetic import make_synthetic_step_on_device
+import torch
+from torchrl.data.replay_buffers import (
+    LazyTensorStorage,
+    PrioritizedSampler,
+    TensorDictReplayBuffer,
+)
+
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.algorithms.d4pg_trainer import D4PGTrainer
-from torchrl.data.replay_buffers import (
-    TensorDictReplayBuffer,
-    LazyTensorStorage,
-    PrioritizedSampler,
-)
-
+from tests.utils.synthetic import make_synthetic_step_on_device
 
 """
 Most tests rely on fixtures defined in tests/conftest.py:

@@ -5,38 +5,37 @@ This module provides a class to handle environment interactions in a clean way,
 separating environment stepping logic from the training loop.
 """
 
-from typing import Callable, Dict, Generator, Optional, Tuple, Union
+from collections.abc import Callable, Generator
 
 import torch
+from gymnasium import Env
 from tensordict import TensorDict
 from torch.utils.data import DataLoader
-
-from gymnasium import Env
 
 from rlarcworld.agent.actor import ArcActorNetwork
 
 # Step callback type: receives (env, state, action_probs, reward, observation, terminated, truncated, info)
 # and returns the same tuple possibly modified
-StepArgs = Tuple[
+StepArgs = tuple[
     Env,
     TensorDict,
-    Dict[str, torch.Tensor],
+    dict[str, torch.Tensor],
     torch.Tensor,
     TensorDict,
     bool,
     bool,
-    Dict,
+    dict,
 ]
 OnStepFn = Callable[
     [
         Env,
         TensorDict,
-        Dict[str, torch.Tensor],
+        dict[str, torch.Tensor],
         torch.Tensor,
         TensorDict,
         bool,
         bool,
-        Dict,
+        dict,
     ],
     StepArgs,
 ]
@@ -54,9 +53,9 @@ class EnvStepper:
     def __init__(
         self,
         actor: ArcActorNetwork,
-        device: Union[str, torch.device],
+        device: str | torch.device,
         amp_enabled: bool = True,
-        on_step: Optional[OnStepFn] = None,
+        on_step: OnStepFn | None = None,
     ):
         """Initialize the environment stepper.
 
@@ -73,8 +72,8 @@ class EnvStepper:
         self.loaded_checkpoint = False
 
     def step(
-        self, env: Env, state: Optional[TensorDict] = None
-    ) -> Tuple[TensorDict, TensorDict, bool, bool, Dict]:
+        self, env: Env, state: TensorDict | None = None
+    ) -> tuple[TensorDict, TensorDict, bool, bool, dict]:
         """Take a single step in the environment.
 
         Args:
@@ -142,7 +141,9 @@ class EnvStepper:
             elif isinstance(reward, dict):
                 reward_td = TensorDict(reward, batch_size=[]).auto_batch_size_()
             else:
-                reward_td = TensorDict({"value": reward}, batch_size=[]).auto_batch_size_()
+                reward_td = TensorDict(
+                    {"value": reward}, batch_size=[]
+                ).auto_batch_size_()
 
             # Format output
             return TensorDict(
@@ -162,9 +163,9 @@ class EnvStepper:
         env,
         samples: DataLoader,
         max_steps: int = -1,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         **kwargs,
-    ) -> Generator[Tuple[int, TensorDict], None, None]:
+    ) -> Generator[tuple[int, TensorDict], None, None]:
         """Create a generator that yields (step_num, step_data) tuples.
 
         Args:

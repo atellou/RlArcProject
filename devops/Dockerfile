@@ -9,9 +9,9 @@ RUN apt-get update && apt-get install -y curl apt-utils
 WORKDIR /app
 
 # Copy project files
-COPY --exclude=*.ipynb --exclude=**/dataset \ 
-./pyproject.toml \ 
-./uv.lock \ 
+COPY --exclude=*.ipynb --exclude=**/dataset \
+./pyproject.toml \
+./uv.lock \
 ./rlarcworld /app/
 
 # Install dependencies
@@ -23,4 +23,3 @@ EXPOSE 6006
 
 # Set entrypoint
 ENTRYPOINT ["uv", "run", "python", "rlarcworld/jobs/train.py"]
-

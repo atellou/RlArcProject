@@ -1,7 +1,9 @@
-from typing import Any, Tuple
+from typing import Any
 
 
-def get_nested_ref(dictionary: dict, key: str, sep: str = "/", default: Any = None) -> Tuple[dict, str]:
+def get_nested_ref(
+    dictionary: dict, key: str, sep: str = "/", default: Any = None
+) -> tuple[dict, str]:
     """
     Retrieves a nested value from a dictionary using a key with a specified separator.
 

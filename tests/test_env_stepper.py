@@ -1,15 +1,15 @@
 import os
+
 import torch
 from tensordict import TensorDict
+from torch.utils.data import DataLoader
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.utils.configure_logger import configure_logger
 from rlarcworld.utils.env_stepper import EnvStepper
 from rlarcworld.utils.reward_utils import RewardProcessor
-from rlarcworld.utils.configure_logger import configure_logger
-from torch.utils.data import DataLoader
-
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
 
@@ -167,7 +167,12 @@ def test_env_stepper_step_stream_unbounded(device):
     actor.eval()
 
     on_step = RewardProcessor(n_steps=2, device=device, v_min_n_step=0, v_max_n_step=1)
-    stepper = EnvStepper(actor=actor, device=device, amp_enabled=False, on_step=on_step.get_on_step_rewards())
+    stepper = EnvStepper(
+        actor=actor,
+        device=device,
+        amp_enabled=False,
+        on_step=on_step.get_on_step_rewards(),
+    )
 
     # Dataset
     batch_in = torch.randint(0, color_values, (grid_size, grid_size))
@@ -179,7 +184,9 @@ def test_env_stepper_step_stream_unbounded(device):
     # Unbounded stream, manually limit to N iterations
     N = 5
     results = []
-    for i, (step_num, step_data) in enumerate(stepper.create_step_stream(env=env, samples=samples, max_steps=-1, seed=0)):
+    for i, (step_num, step_data) in enumerate(
+        stepper.create_step_stream(env=env, samples=samples, max_steps=-1, seed=0)
+    ):
         results.append((step_num, step_data))
         if i + 1 >= N:
             break
@@ -188,9 +195,17 @@ def test_env_stepper_step_stream_unbounded(device):
     for i, (step_num, step) in enumerate(results):
         assert step_num == i
         assert isinstance(step, TensorDict)
-        for key in ["state", "actions", "reward", "next_state", "terminated", "truncated"]:
+        for key in [
+            "state",
+            "actions",
+            "reward",
+            "next_state",
+            "terminated",
+            "truncated",
+        ]:
             assert key in step
         assert isinstance(step["reward"], TensorDict)
+
 
 def test_env_stepper_step_stream(device):
     grid_size, color_values = 8, 5
@@ -208,7 +223,12 @@ def test_env_stepper_step_stream(device):
     actor.eval()
 
     on_step = RewardProcessor(n_steps=2, device=device, v_min_n_step=0, v_max_n_step=1)
-    stepper = EnvStepper(actor=actor, device=device, amp_enabled=False, on_step=on_step.get_on_step_rewards())
+    stepper = EnvStepper(
+        actor=actor,
+        device=device,
+        amp_enabled=False,
+        on_step=on_step.get_on_step_rewards(),
+    )
 
     # Build a tiny dataset and DataLoader yielding the expected structure
     # Provide unbatched tensors per sample; DataLoader will add the batch dimension
@@ -220,7 +240,9 @@ def test_env_stepper_step_stream(device):
 
     # Iterate the step stream for a few steps
     max_steps = 3
-    stream = stepper.create_step_stream(env=env, samples=samples, max_steps=max_steps, seed=0)
+    stream = stepper.create_step_stream(
+        env=env, samples=samples, max_steps=max_steps, seed=0
+    )
     results = []
     for step_num, step_data in stream:
         results.append((step_num, step_data))
@@ -230,7 +252,14 @@ def test_env_stepper_step_stream(device):
     for i, (step_num, step) in enumerate(results):
         assert step_num == i
         assert isinstance(step, TensorDict)
-        for key in ["state", "actions", "reward", "next_state", "terminated", "truncated"]:
+        for key in [
+            "state",
+            "actions",
+            "reward",
+            "next_state",
+            "terminated",
+            "truncated",
+        ]:
             assert key in step
         assert isinstance(step["state"], TensorDict)
         assert isinstance(step["next_state"], TensorDict)

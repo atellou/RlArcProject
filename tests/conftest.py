@@ -1,17 +1,22 @@
 import os
+
 import pytest
 import torch
+from torch.utils.data import DataLoader
+from torchrl.data.replay_buffers import (
+    LazyTensorStorage,
+    PrioritizedSampler,
+    TensorDictReplayBuffer,
+)
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.algorithms.d4pg_trainer import D4PGTrainer
-from torchrl.data.replay_buffers import TensorDictReplayBuffer, LazyTensorStorage, PrioritizedSampler
-from tests.utils.synthetic import make_synthetic_step_on_device
+from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
-from torch.utils.data import DataLoader
+from tests.utils.synthetic import make_synthetic_step_on_device
 
 
 @pytest.fixture(scope="session")
@@ -28,6 +33,7 @@ def _set_log_level_env(monkeypatch):
 
 
 # ---------- Basic dimension fixtures ----------
+
 
 @pytest.fixture(scope="session")
 def grid_size() -> int:
@@ -46,12 +52,17 @@ def batch_size() -> int:
 
 # ---------- Model fixtures ----------
 
+
 @pytest.fixture()
 def actor(device, grid_size, color_values) -> ArcActorNetwork:
     return ArcActorNetwork(
         grid_size=grid_size,
         color_values=color_values,
-        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+        config={
+            "device": str(device),
+            "amp_enabled": False,
+            "use_checkpointing": False,
+        },
     )
 
 
@@ -66,7 +77,11 @@ def critic(device, grid_size, color_values) -> ArcCriticNetwork:
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
-        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+        config={
+            "device": str(device),
+            "amp_enabled": False,
+            "use_checkpointing": False,
+        },
     )
 
 
@@ -79,11 +94,16 @@ def d4pg_core(actor: ArcActorNetwork, critic: ArcCriticNetwork, device) -> D4PGC
         tau=0.005,
         n_steps=1,
         amp_enabled=False,
-        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+        config={
+            "device": str(device),
+            "amp_enabled": False,
+            "use_checkpointing": False,
+        },
     )
 
 
 # ---------- Replay buffer fixtures ----------
+
 
 @pytest.fixture()
 def per_replay_buffer() -> TensorDictReplayBuffer:
@@ -95,6 +115,7 @@ def per_replay_buffer() -> TensorDictReplayBuffer:
 
 
 # ---------- Utility: synthetic step -----------
+
 
 @pytest.fixture()
 def make_synthetic_step(device, grid_size, color_values):
@@ -118,6 +139,7 @@ def trainer_factory():
             device="cpu",
         )
     """
+
     def _make(
         *,
         core: D4PGCore,
@@ -144,6 +166,7 @@ def trainer_factory():
 
 
 # ---------- Environment fixtures (parametrized over n_steps) ----------
+
 
 @pytest.fixture(params=[1, 3])
 def n_steps_param(request) -> int:
@@ -175,6 +198,7 @@ def wrapped_env(env: ArcBatchGridEnv, n_steps_param: int) -> PixelAwareRewardWra
 
 # ---------- Dataset and DataLoader fixtures ----------
 
+
 @pytest.fixture()
 def dataset() -> ArcDataset:
     # Raw dataset without transform
@@ -196,7 +220,9 @@ def transformed_dataset(grid_size) -> ArcDataset:
 
 @pytest.fixture()
 def train_loader(transformed_dataset, batch_size) -> DataLoader:
-    return DataLoader(transformed_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    return DataLoader(
+        transformed_dataset, batch_size=batch_size, shuffle=True, num_workers=0
+    )
 
 
 @pytest.fixture()

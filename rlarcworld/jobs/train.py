@@ -1,34 +1,34 @@
-import os
 import argparse
-import yaml
 import json
+import logging
+import os
 
+import numpy as np
+import torch
+import yaml
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
 from torchrl.data.replay_buffers import (
-    TensorDictReplayBuffer,
     LazyMemmapStorage,
     PrioritizedSampler,
+    TensorDictReplayBuffer,
 )
-from torch.utils.data import DataLoader
-from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
-from rlarcworld.algorithms.d4pg import D4PG
-from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
+
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
+from rlarcworld.algorithms.d4pg import D4PG
+from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
+from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.utils.beta_scheduler import BetaScheduler
-from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.configure_logger import configure_logger
-import torch
-import numpy as np
-import logging
+from rlarcworld.utils.device import enable_cuda
 
 logger = logging.getLogger(__name__)
 
 
 def load_args_from_yaml(file_path: str, key: str) -> dict:
-    with open(file_path, "r") as f:
+    with open(file_path) as f:
         args_dict = yaml.safe_load(f)
     return args_dict[key]
 
@@ -152,7 +152,7 @@ def train_d4pg(
     logger.info(f"Seed for experiment {config_key}: {seed}")
 
     # Load Datasets
-    logger.info("Load Datasets from {}".format(training_data_uri))
+    logger.info(f"Load Datasets from {training_data_uri}")
     dataset = ArcDataset(
         arc_dataset_dir=training_data_uri,
         keep_in_memory=False,
@@ -166,7 +166,7 @@ def train_d4pg(
         worker_init_fn=lambda worker_id: torch.manual_seed(seed + worker_id),
     )
 
-    logger.info("Load Datasets from {}".format(validation_data_uri))
+    logger.info(f"Load Datasets from {validation_data_uri}")
     dataset = ArcDataset(
         arc_dataset_dir=validation_data_uri,
         keep_in_memory=False,

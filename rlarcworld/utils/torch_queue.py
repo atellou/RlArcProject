@@ -1,4 +1,3 @@
-from typing import Tuple
 import torch
 
 
@@ -126,7 +125,7 @@ class TorchQueue(torch.Tensor):
             queue_dim=self._queue_dim,
         )
 
-    def pop(self) -> Tuple[torch.Tensor, "TorchQueue"]:
+    def pop(self) -> tuple[torch.Tensor, "TorchQueue"]:
         """
         Pops the oldest elements along the specified dimension.
 
@@ -142,7 +141,9 @@ class TorchQueue(torch.Tensor):
         indices_rest = [slice(None)] * self.ndim
         indices_rest[self._queue_dim] = slice(1, None)
         rest = self[tuple(indices_rest)]
-        return oldest, TorchQueue(rest, queue_size=self._queue_size, queue_dim=self._queue_dim)
+        return oldest, TorchQueue(
+            rest, queue_size=self._queue_size, queue_dim=self._queue_dim
+        )
 
 
 # Register for torch serialization safe globals

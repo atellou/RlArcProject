@@ -1,14 +1,16 @@
-import os
 import logging
-from typing import Optional, List, Tuple
+import os
+
+import gymnasium as gym
+import numpy as np
 import torch
 from tensordict import TensorDict
-import numpy as np
-import gymnasium as gym
+
 from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
+
 
 class ArcActionSpace:
     def __init__(self, grid_size: int, color_values: int):
@@ -51,14 +53,13 @@ class ArcActionSpace:
 
 
 class ArcBatchGridEnv(gym.Env):
-
     def __init__(
         self,
         grid_size: int,
         color_values: int,
         n_steps: int = 1,
         gamma: float = 1.0,
-        device: Optional[str] = None,
+        device: str | None = None,
     ):
         """
         Args:
@@ -181,7 +182,7 @@ class ArcBatchGridEnv(gym.Env):
             self.gamma ** torch.arange(1, self.n_steps + 1)
         )
 
-    def reset(self, *, options: dict, seed: Optional[int] = None) -> tuple:
+    def reset(self, *, options: dict, seed: int | None = None) -> tuple:
         """
         Resets the environment to an initial internal grid, returning an initial observation and info.
         Args:
@@ -257,7 +258,7 @@ class ArcBatchGridEnv(gym.Env):
         """
         return (self.observations["grid"] - self.observations["target"]).to(self.device)
 
-    def episode_terminated(self, submission: List[int]) -> torch.Tensor:
+    def episode_terminated(self, submission: list[int]) -> torch.Tensor:
         """
         Checks if the episode has terminated.
 
@@ -277,7 +278,7 @@ class ArcBatchGridEnv(gym.Env):
     def reward(
         self,
         grid_diffs: torch.Tensor,
-        submission: List[int],
+        submission: list[int],
     ) -> torch.Tensor:
         """
         Computes the reward for the current grid of the environment.
@@ -348,7 +349,7 @@ class ArcBatchGridEnv(gym.Env):
             return state
         return self.state.to(self.device)
 
-    def step(self, actions: list) -> Tuple[TensorDict, torch.Tensor, bool, bool, dict]:
+    def step(self, actions: list) -> tuple[TensorDict, torch.Tensor, bool, bool, dict]:
         """
         Args:
             actions list: The actions to perform.
@@ -434,7 +435,7 @@ class ArcBatchGridEnv(gym.Env):
         Args:
             path (str): The path to save the checkpoint to.
         """
-        logger.debug("Saving environment to {}".format(path))
+        logger.debug(f"Saving environment to {path}")
         try:
             os.makedirs(path, exist_ok=True)
             torch.save(
@@ -466,7 +467,7 @@ class ArcBatchGridEnv(gym.Env):
                 )
             )
 
-    def load(self, path: str, weights_only: bool = True, device: Optional[str] = None):
+    def load(self, path: str, weights_only: bool = True, device: str | None = None):
         """
         Loads the environment from a checkpoint.
 

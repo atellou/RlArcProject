@@ -1,7 +1,7 @@
 import pytest
-from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 import torch
 
+from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 
 # ---------- Fixtures ----------
 
@@ -228,6 +228,7 @@ def test_open_file_with_test_index(arc_dataset_dir, dataset_one):
 
 
 # ---------- Negative tests for ArcSampleTransformer ----------
+
 
 def test_transform_init_invalid_output_size_type():
     # output_size must be a tuple per implementation

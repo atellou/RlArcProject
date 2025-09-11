@@ -2,11 +2,10 @@ import copy
 
 import torch
 import torch.optim as optim
-from typing import Optional, Dict, Tuple
 from tensordict import TensorDict
 
-from rlarcworld.utils.distributions import categorical_projection
 from rlarcworld.utils.device import enable_cuda
+from rlarcworld.utils.distributions import categorical_projection
 
 
 class AmpScaler:
@@ -71,14 +70,14 @@ class D4PGCore:
         *,
         policy_lr: float = 3e-4,
         critic_lr: float = 3e-3,
-        lr_scheduler_kwargs: Optional[Dict] = None,
+        lr_scheduler_kwargs: dict | None = None,
         gamma: float = 0.99,
         tau: float = 0.005,
         n_steps: int = 1,
         carsm: bool = False,
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
-        config: Optional[Dict] = None,
+        config: dict | None = None,
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
     ) -> None:
@@ -199,7 +198,7 @@ class D4PGCore:
         action: TensorDict,
         target_dist: TensorDict,
         compute_td_error: bool = False,
-    ) -> Tuple[TensorDict, TensorDict, TensorDict]:
+    ) -> tuple[TensorDict, TensorDict, TensorDict]:
         """
         Computes the loss for the critic network.
 
@@ -252,9 +251,9 @@ class D4PGCore:
         self,
         state: TensorDict,
         *,
-        target_q: Optional[TensorDict] = None,
-        action_probs: Optional[TensorDict] = None,
-        critic_probs: Optional[TensorDict] = None,
+        target_q: TensorDict | None = None,
+        action_probs: TensorDict | None = None,
+        critic_probs: TensorDict | None = None,
     ) -> TensorDict:
         """
         Compute the loss for the actor network.
@@ -346,7 +345,7 @@ class D4PGCore:
         training: bool = True,
         update_actor: bool = True,
         update_critic: bool = True,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Computes actor and critic losses for a batch of transitions.
 

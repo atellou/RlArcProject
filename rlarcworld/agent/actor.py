@@ -13,17 +13,19 @@ and the linear layer is used to output a distribution over the possible actions.
 The actor network is trained using the policy gradient algorithm.
 """
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
+
 from rlarcworld.agent.nn_modules import (
-    CnnPreTrainedModule,
     CnnAttention,
+    CnnPreTrainedModule,
     CrossAttentionClassifier,
 )
 from rlarcworld.utils.device import enable_cuda
-import logging
 
 logger = logging.getLogger()
 
@@ -39,7 +41,7 @@ class ArcActorNetwork(nn.Module):
             grid_size (int): The size of the grid.
             color_values (int): The number of colors.
         """
-        super(ArcActorNetwork, self).__init__()
+        super().__init__()
         self.grid_size = grid_size
         self.color_values = color_values
         self.action_head_keys = {"x_location", "y_location", "color_values", "submit"}
@@ -134,7 +136,7 @@ class ArcActorNetwork(nn.Module):
             "index",
         }
         assert set(state.keys()) == in_keys, ValueError(
-            "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
+            f"State keys must be {in_keys}. Keys found {set(state.keys())}"
         )
 
     @torch.jit.export

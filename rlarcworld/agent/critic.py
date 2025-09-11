@@ -16,17 +16,18 @@ algorithm.
 
 """
 
-from typing import Dict
+import logging
+
 import torch
 import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
+
 from rlarcworld.agent.nn_modules import (
-    CnnPreTrainedModule,
     CnnAttention,
+    CnnPreTrainedModule,
     CrossAttentionClassifier,
 )
 from rlarcworld.utils.device import enable_cuda
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +47,13 @@ class ArcCriticNetwork(torch.nn.Module):
         self,
         grid_size: int,
         color_values: int,
-        num_atoms: Dict[str, int],
-        v_min: Dict[str, int],
-        v_max: Dict[str, int],
+        num_atoms: dict[str, int],
+        v_min: dict[str, int],
+        v_max: dict[str, int],
         embedding_size: int = 128,
         config=None,
     ):
-        super(ArcCriticNetwork, self).__init__()
+        super().__init__()
         self.num_atoms = num_atoms
         self.grid_size = grid_size
         self.color_values = color_values
@@ -158,7 +159,7 @@ class ArcCriticNetwork(torch.nn.Module):
             "terminated",
         }
         assert set(state.keys()) == in_keys, ValueError(
-            "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
+            f"State keys must be {in_keys}. Keys found {set(state.keys())}"
         )
 
     @torch.jit.export

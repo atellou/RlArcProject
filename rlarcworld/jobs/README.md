@@ -88,23 +88,23 @@ default: &default
   batch_size: 128
   grid_size: 30
   color_values: 11
-  
+
   # Training
   max_epochs: 1
   max_steps: 1000000
   validation_steps_frequency: 1000
-  
+
   # D4PG Hyperparameters
   policy_lr: 0.0001
   critic_lr: 0.001
   gamma: 0.99
-  
+
   # Replay Buffer
   replay_buffer_size: 1000000
   warmup_buffer_ratio: 0.1
 
 # Additional configurations can inherit from default using YAML anchors
-test: 
+test:
   <<: *default
   batch_size: 5
   max_steps: 20

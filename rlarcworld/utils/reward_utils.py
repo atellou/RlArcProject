@@ -1,9 +1,9 @@
 """Utility functions for reward processing in RL training."""
 
 import logging
-from typing import Dict, Optional
 
 import torch
+
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 
 logger = logging.getLogger(__name__)
@@ -13,9 +13,9 @@ class RewardProcessor:
     def __init__(
         self,
         n_steps: int = 1,
-        device: Optional[torch.device] = None,
-        v_min_n_step: Optional[float] = None,
-        v_max_n_step: Optional[float] = None,
+        device: torch.device | None = None,
+        v_min_n_step: float | None = None,
+        v_max_n_step: float | None = None,
     ):
         self.n_steps = n_steps
         self.device = device
@@ -26,7 +26,7 @@ class RewardProcessor:
         self,
         env: PixelAwareRewardWrapper,
         reward: torch.Tensor,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """Process and format rewards from the environment.
 
         Args:

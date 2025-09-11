@@ -1,10 +1,12 @@
-from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+import logging
+
 import numpy as np
+import pytest
 import torch
 from tensordict import TensorDict
-import logging
-import pytest
+
+from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -46,24 +48,32 @@ def assertions_grids(
     ), "Difference change is not the expected value. The change is: {} and the expected change is: {}".format(
         sum_changed_values, sum_init_diff_values
     )
-    torch.testing.assert_close(
-        observation["target"],
-        dummy_batch["batch"]["output"],
-    ), "Target grid should not change"
-
-    torch.testing.assert_close(
-        info["initial"], dummy_batch["batch"]["input"]
-    ), "Initial grid should not change"
-    torch.testing.assert_close(
-        info["index"][:, y_loc, x_loc],
-        torch.ones(batch_size, dtype=torch.int64) * step,
-    ), "Index grid incorrectly updated. Expected: {} in X[{}],Y[{}] locations for every sample.".format(
-        step, x_loc, y_loc
+    (
+        torch.testing.assert_close(
+            observation["target"],
+            dummy_batch["batch"]["output"],
+        ),
+        "Target grid should not change",
     )
 
-    torch.testing.assert_close(
-        info["examples"], dummy_batch["examples"]
-    ), "Examples grids should not change"
+    (
+        torch.testing.assert_close(info["initial"], dummy_batch["batch"]["input"]),
+        "Initial grid should not change",
+    )
+    (
+        torch.testing.assert_close(
+            info["index"][:, y_loc, x_loc],
+            torch.ones(batch_size, dtype=torch.int64) * step,
+        ),
+        "Index grid incorrectly updated. Expected: {} in X[{}],Y[{}] locations for every sample.".format(
+            step, x_loc, y_loc
+        ),
+    )
+
+    (
+        torch.testing.assert_close(info["examples"], dummy_batch["examples"]),
+        "Examples grids should not change",
+    )
     assert len(info["examples"].shape) == 5, "Examples grids should be 5D"
     assert (
         info["examples"].shape[0] == batch_size
@@ -80,23 +90,27 @@ def assert_reward_arc(
     is_last_step,
 ):
     if is_last_step:
-        torch.testing.assert_close(
-            reward, torch.ones_like(reward)
-        ), "The last step should have a reward of 1"
+        (
+            torch.testing.assert_close(reward, torch.ones_like(reward)),
+            "The last step should have a reward of 1",
+        )
     else:
-        torch.testing.assert_close(
-            reward,
-            (
+        (
+            torch.testing.assert_close(
+                reward,
                 (
-                    torch.sum(
-                        torch.abs(observation["grid"] - observation["target"]),
-                        dim=(1, 2),
+                    (
+                        torch.sum(
+                            torch.abs(observation["grid"] - observation["target"]),
+                            dim=(1, 2),
+                        )
+                        == 0
                     )
-                    == 0
-                )
-                * submission
-            ).type(torch.float32),
-        ), "The step should have a reward of 0"
+                    * submission
+                ).type(torch.float32),
+            ),
+            "The step should have a reward of 0",
+        )
 
 
 def assert_reward_pixel(
@@ -109,30 +123,34 @@ def assert_reward_pixel(
     max_penalty,
 ):
     if is_last_step:
-        torch.testing.assert_close(
-            reward, torch.ones_like(reward)
-        ), "The last step should have a reward of 0"
+        (
+            torch.testing.assert_close(reward, torch.ones_like(reward)),
+            "The last step should have a reward of 0",
+        )
     else:
         grid_diff = torch.sum(
             ((observation["target"] - observation["grid"]) != 0).long(),
             dim=(1, 2),
         )
         reference = (change - 1) * (grid_diff != 0).long()
-        torch.testing.assert_close(
-            reward,
-            reference
-            + (grid_diff * submission * max_penalty)
-            + ((grid_diff == 0).long() * submission),
-        ), "The step do not have the expected reward."
+        (
+            torch.testing.assert_close(
+                reward,
+                reference
+                + (grid_diff * submission * max_penalty)
+                + ((grid_diff == 0).long() * submission),
+            ),
+            "The step do not have the expected reward.",
+        )
 
 
 def episodes_simulation(batch_size, size, color_values, env):
-    logger.info("Batch size: {}".format(batch_size))
-    logger.info("Grid size: {}".format(size))
-    logger.info("Color values: {}".format(color_values))
+    logger.info(f"Batch size: {batch_size}")
+    logger.info(f"Grid size: {size}")
+    logger.info(f"Color values: {color_values}")
     episodes = np.random.randint(2, 3)
     for episode in range(episodes):
-        logger.info("Episode: {}/{}".format(episode, episodes))
+        logger.info(f"Episode: {episode}/{episodes}")
         dummy_batch = TensorDict(
             {
                 "batch": {
@@ -173,7 +191,7 @@ def episodes_simulation(batch_size, size, color_values, env):
                 action = action.long()
                 action = to_dict_tensors(action, to_torch=True)
                 assert env.action_space.contains(action.numpy()), ValueError(
-                    "Action not in action space: {}".format(action)
+                    f"Action not in action space: {action}"
                 )
                 last_diff = env.get_difference()
                 observation, reward, terminated, truncated, info = env.step(action)
@@ -197,7 +215,9 @@ def episodes_simulation(batch_size, size, color_values, env):
                 grid_diff_abs = torch.sum(torch.abs(grid_diff))
                 if is_last_step:
                     assert terminated, "The last step should terminate the episode"
-                    assert grid_diff_abs == 0, "The last step should have zero difference"
+                    assert (
+                        grid_diff_abs == 0
+                    ), "The last step should have zero difference"
                 else:
                     assert not terminated or (
                         terminated and grid_diff_abs == 0
@@ -235,6 +255,7 @@ def episodes_simulation(batch_size, size, color_values, env):
 
 
 # ------------------------- Tests -------------------------
+
 
 def test_environment(env: ArcBatchGridEnv):
     logger.info("Testing ArcBatchGridEnv (fixture)")
@@ -397,7 +418,9 @@ def test_arc_wrapper_save_and_load(tmp_path):
 
 
 def test_wrapper(wrapped_env: PixelAwareRewardWrapper):
-    logger.info("\nTesting ArcBatchGridEnv with wrapper PixelAwareRewardWrapper (fixture)")
+    logger.info(
+        "\nTesting ArcBatchGridEnv with wrapper PixelAwareRewardWrapper (fixture)"
+    )
     batch_size = np.random.randint(2, 4)
     size = wrapped_env.get_wrapper_attr("grid_size")
     color_values = wrapped_env.get_wrapper_attr("color_values")

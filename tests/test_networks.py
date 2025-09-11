@@ -1,21 +1,23 @@
-import torch
+import logging
+
 import pytest
+import torch
 from tensordict import TensorDict
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.agent.nn_modules import (
-    CnnPreTrainedModule,
-    MultiHeadAttention,
     CnnAttention,
+    CnnPreTrainedModule,
     CrossAttentionClassifier,
+    MultiHeadAttention,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------- Fixtures ----------------
+
 
 @pytest.fixture()
 def batch_size() -> int:
@@ -24,6 +26,7 @@ def batch_size() -> int:
 
 
 # ---------------- Tests ----------------
+
 
 def test_cnn_pretrained():
     logger.info("Testing CNN Pretrained Module")
@@ -136,6 +139,7 @@ def test_train_arc_critic_network(batch_size: int):
 
 # ---------------- Helpers (former methods) ----------------
 
+
 def train_arc_critic_network(batch_size: int):
     size = 30
     color_values = 11
@@ -145,16 +149,23 @@ def train_arc_critic_network(batch_size: int):
         size,
         color_values,
     )
-    num_atoms = {"pixel_wise": int(torch.randint(50, 100, size=(1,)).item()), "binary": 1}
+    num_atoms = {
+        "pixel_wise": int(torch.randint(50, 100, size=(1,)).item()),
+        "binary": 1,
+    }
     v_min = {"pixel_wise": -40, "binary": 0}
     v_max = {"pixel_wise": 2, "binary": 1}
     network = ArcCriticNetwork(size, color_values, num_atoms, v_min, v_max)
 
     input_sample = TensorDict(
         {
-            "last_grid": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
+            "last_grid": torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
             "grid": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
-            "examples": torch.randint(0, color_values, size=(batch_size, 10, 2, size, size)),
+            "examples": torch.randint(
+                0, color_values, size=(batch_size, 10, 2, size, size)
+            ),
             "initial": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
             "index": torch.randint(0, size, size=(batch_size, 1, size, size)),
             "terminated": torch.randint(0, 2, size=(batch_size, 1)).float(),
@@ -202,19 +213,24 @@ def train_arc_critic_network(batch_size: int):
     target = TensorDict(
         {
             "pixel_wise": torch.softmax(
-                torch.randint(-40, 2, size=(batch_size, num_atoms["pixel_wise"]))
-                .float(),
+                torch.randint(
+                    -40, 2, size=(batch_size, num_atoms["pixel_wise"])
+                ).float(),
                 dim=-1,
             ),
-            "binary": torch.randint(0, 2, size=(batch_size, num_atoms["binary"]))
-            .float(),
+            "binary": torch.randint(
+                0, 2, size=(batch_size, num_atoms["binary"])
+            ).float(),
         }
     ).to(network.device)
 
     for key, dist in output.items():
-        torch.testing.assert_close(
-            torch.sum(dist, dim=1), torch.ones(batch_size).to(network.device)
-        ), f"Probability mass function not normalized for key: {key}"
+        (
+            torch.testing.assert_close(
+                torch.sum(dist, dim=1), torch.ones(batch_size).to(network.device)
+            ),
+            f"Probability mass function not normalized for key: {key}",
+        )
         assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
         assert torch.all(dist <= 1), f"Probability values greater than 1 for key: {key}"
 
@@ -254,9 +270,13 @@ def train_arc_actor_network(batch_size: int):
 
     input_sample = TensorDict(
         {
-            "last_grid": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
+            "last_grid": torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
             "grid": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
-            "examples": torch.randint(0, color_values, size=(batch_size, 10, 2, size, size)),
+            "examples": torch.randint(
+                0, color_values, size=(batch_size, 10, 2, size, size)
+            ),
             "initial": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
             "index": torch.randint(0, size, size=(batch_size, 1, size, size)),
         }
@@ -295,9 +315,12 @@ def train_arc_actor_network(batch_size: int):
     ).to(network.device)
 
     for key, dist in output.items():
-        torch.testing.assert_close(
-            torch.sum(dist, dim=1), torch.ones(batch_size).to(network.device)
-        ), f"Probability mass function not normalized for key: {key}"
+        (
+            torch.testing.assert_close(
+                torch.sum(dist, dim=1), torch.ones(batch_size).to(network.device)
+            ),
+            f"Probability mass function not normalized for key: {key}",
+        )
         assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
         assert torch.all(dist <= 1), f"Probability values greater than 1 for key: {key}"
 

@@ -1,27 +1,50 @@
+import logging
+
 import torch
 import torch.nn as nn
-from torchvision import models
 import torch.nn.functional as F
-
 from tensordict import TensorDict
-
-import logging
-from typing import Optional
+from torchvision import models
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_submodule(root: nn.Module, path: str) -> nn.Module | None:
+    """Resolve a submodule by dotted path allowing integer indices for sequential modules.
+
+    Examples:
+        - "features" -> root.features
+        - "features.0" -> root.features[0]
+        - "features.0.0" -> root.features[0][0]
+        - "classifier" -> root.classifier
+    """
+    cur: nn.Module | torch.nn.Module = root
+    if not path:
+        return cur
+    for part in path.split("."):
+        if part.isdigit():
+            idx = int(part)
+            try:
+                cur = cur[idx]  # type: ignore[index]
+            except Exception:
+                return None
+        else:
+            if not hasattr(cur, part):
+                return None
+            cur = getattr(cur, part)
+    return cur
 
 
 class CnnPreTrainedModule(nn.Module):
     def __init__(
         self,
         model: str = "efficientnet_b0",
-        model_weights: str = "EfficientNet_B0_Weights.DEFAULT",
+        model_weights: str | None = "DEFAULT",
         freeze: str = "ALL",
-        do_not_freeze: Optional[str] = None,
+        do_not_freeze: list[str] | None = None,
         embedding_size: int = 128,
     ):
-        super(CnnPreTrainedModule, self).__init__()
-
+        super().__init__()
         self.base_model = getattr(models, model)(weights=model_weights)
         self.base_model.features[0][0] = nn.Conv2d(
             1, 32, kernel_size=3, stride=1, padding=1, bias=False
@@ -39,18 +62,31 @@ class CnnPreTrainedModule(nn.Module):
                 param.requires_grad = False
         else:
             for layer in freeze:
-                if not hasattr(self.base_model, layer):
-                    for param in getattr(self.base_model, layer).parameters():
+                layer = layer.strip()
+                if not layer:
+                    continue
+                target = resolve_submodule(self.base_model, layer)
+                if target is not None:
+                    for param in target.parameters():
                         param.requires_grad = False
+                else:
+                    logger.warning(
+                        "Layer path '%s' not found in model to freeze", layer
+                    )
 
         if do_not_freeze is not None:
-            do_not_freeze = do_not_freeze.split(",")
             for layer in do_not_freeze:
-                if hasattr(self.base_model, layer):
-                    for param in getattr(self.base_model, layer).parameters():
+                layer = layer.strip()
+                if not layer:
+                    continue
+                target = resolve_submodule(self.base_model, layer)
+                if target is not None:
+                    for param in target.parameters():
                         param.requires_grad = True
                 else:
-                    logging.warning(f"Layer {layer} not found in model")
+                    logger.warning(
+                        "Layer path '%s' not found in model to unfreeze", layer
+                    )
 
         for param in self.base_model.features[0][0].parameters():
             param.requires_grad = True
@@ -104,8 +140,8 @@ class MultiHeadAttention(nn.Module):
         nheads: int,
         dropout: float = 0.0,
         bias: bool = True,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -129,7 +165,7 @@ class MultiHeadAttention(nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        attn_mask: Optional[torch.Tensor] = None,
+        attn_mask: torch.Tensor | None = None,
         is_causal: bool = False,
     ) -> torch.Tensor:
         """
@@ -219,7 +255,7 @@ class CnnAttention(nn.Module):
         The module consists of two CNN embeddings for time steps t0 and t1, and a MultiHeadAttention module.
         """
 
-        super(CnnAttention, self).__init__()
+        super().__init__()
         self.cnn_embedding_t0 = CnnPreTrainedModule()
         self.cnn_embedding_t1 = CnnPreTrainedModule()
 
@@ -337,6 +373,3 @@ class CrossAttentionClassifier(nn.Module):
         )
 
         return logits
-
-
-CnnPreTrainedModule()

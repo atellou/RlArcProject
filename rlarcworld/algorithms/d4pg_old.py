@@ -1,26 +1,25 @@
-import os
 import copy
+import logging
+import os
+from collections.abc import Generator
+from typing import Any
+
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 import torch.optim as optim
-
-from torch.utils.tensorboard import SummaryWriter
-
+from gymnasium import Env
 from tensordict import TensorDict
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from torchrl.data import ReplayBuffer
 
-from gymnasium import Env
-from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld import utils
-import logging
-from typing import Optional, Dict, Any, Tuple, Generator
+from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 
 logger = logging.getLogger(__name__)
 
 
 class D4PG:
-
     def __init__(
         self,
         env: PixelAwareRewardWrapper,
@@ -30,11 +29,11 @@ class D4PG:
         batch_size: int,
         policy_lr: float = 3e-4,
         critic_lr: float = 3e-3,
-        lr_scheduler_kwargs: Optional[Dict] = None,
-        validation_samples: Optional[DataLoader] = None,
-        replay_buffer: Optional[ReplayBuffer] = None,
+        lr_scheduler_kwargs: dict | None = None,
+        validation_samples: DataLoader | None = None,
+        replay_buffer: ReplayBuffer | None = None,
         warmup_buffer_ratio: float = 0.2,
-        beta_scheduler: Optional[utils.beta_scheduler.BetaScheduler] = None,
+        beta_scheduler: utils.beta_scheduler.BetaScheduler | None = None,
         n_steps: int = 1,
         gamma: float = 0.99,
         carsm=False,
@@ -42,11 +41,11 @@ class D4PG:
         entropy_coef_decay: float = 0.995,
         tau: float = 0.001,
         target_update_frequency: int = 10,
-        tb_writer: Optional[SummaryWriter] = None,
-        history_file: Optional[str] = None,
-        extras_hparams: Optional[Dict] = None,
-        save_path: Optional[str] = None,
-        config: Optional[Dict] = None,
+        tb_writer: SummaryWriter | None = None,
+        history_file: str | None = None,
+        extras_hparams: dict | None = None,
+        save_path: str | None = None,
+        config: dict | None = None,
         max_grad_norm: float = 0.0,
     ):
         """
@@ -376,7 +375,7 @@ class D4PG:
         action: TensorDict,
         target_dist: TensorDict,
         compute_td_error: bool = False,
-    ) -> Tuple[TensorDict, TensorDict]:
+    ) -> tuple[TensorDict, TensorDict]:
         """
         Computes the loss for the critic network.
 
@@ -412,9 +411,9 @@ class D4PG:
     def compute_actor_loss(
         self,
         state: TensorDict,
-        target_q: Optional[TensorDict] = None,
-        action_probs: Optional[TensorDict] = None,
-        critic_probs: Optional[TensorDict] = None,
+        target_q: TensorDict | None = None,
+        action_probs: TensorDict | None = None,
+        critic_probs: TensorDict | None = None,
     ) -> torch.Tensor:
         """
         Compute the loss for the actor network.
@@ -580,7 +579,7 @@ class D4PG:
         self,
         batch: TensorDict,
         training: bool = True,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Computes actor and critic losses for a batch of transitions.
 
@@ -680,7 +679,7 @@ class D4PG:
 
     def step(
         self, env: Env
-    ) -> Tuple[TensorDict, TensorDict, torch.Tensor, TensorDict, bool, bool]:
+    ) -> tuple[TensorDict, TensorDict, torch.Tensor, TensorDict, bool, bool]:
         """
         Performs a single step in the environment using the current policy.
 
@@ -755,9 +754,9 @@ class D4PG:
         env: Env,
         samples: DataLoader,
         max_steps: int = -1,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         **kwargs,
-    ) -> Generator[Tuple[int, TensorDict], None, None]:
+    ) -> Generator[tuple[int, TensorDict], None, None]:
         """
         Simulates episodes in the environment using the current policy.
 
@@ -808,9 +807,9 @@ class D4PG:
         env: PixelAwareRewardWrapper,
         samples: DataLoader,
         max_steps: int = -1,
-        tb_writer_tag: Optional[str] = None,
+        tb_writer_tag: str | None = None,
         merge_graphs: bool = True,
-    ) -> Generator[Tuple[int, TensorDict], None, None]:
+    ) -> Generator[tuple[int, TensorDict], None, None]:
         """
         Simulates episodes in the environment and handles logging.
 
@@ -897,10 +896,10 @@ class D4PG:
     def validation_process(
         self,
         max_steps: int = -1,
-        tb_writer_tag: Optional[str] = "Validation",
+        tb_writer_tag: str | None = "Validation",
         logger_frequency: int = 1000,
         merge_graphs: bool = True,
-    ) -> Generator[Tuple[int, TensorDict], None, None]:
+    ) -> Generator[tuple[int, TensorDict], None, None]:
         """
         Performs validation on the validation environment.
 
@@ -988,11 +987,11 @@ class D4PG:
         validation_steps_per_train_step: int = -1,
         validation_steps_per_episode: int = -1,
         logger_frequency: int = 1000,
-        tb_writer_tag: Optional[str] = "Train",
-        validation_tb_writer_tag: Optional[str] = "Validation",
+        tb_writer_tag: str | None = "Train",
+        validation_tb_writer_tag: str | None = "Validation",
         merge_graphs: bool = True,
         checkpoint_frequency: int = -1,
-        checkpoint_path: Optional[str] = None,
+        checkpoint_path: str | None = None,
     ):
         """
         Train the model using the provided samples.
@@ -1146,7 +1145,7 @@ class D4PG:
                         self.apply_decay()
 
                     if step_number % self.target_update_frequency == 0:
-                        logger.debug("Updating networks step {}".format(step_number))
+                        logger.debug(f"Updating networks step {step_number}")
                         self.update_target_networks(tau=self.tau)
                         decay_flag = True
 
@@ -1187,7 +1186,7 @@ class D4PG:
                             data_loaders=True,
                         )
             iteration -= 1
-            logger.info("Total steps: {}".format(iteration))
+            logger.info(f"Total steps: {iteration}")
             if hasattr(self, "validation_env"):
                 logger.info("Running last validation process")
                 for (
@@ -1241,11 +1240,11 @@ class D4PG:
                 self.tb_writer.close()
 
         except Exception as e:
-            logger.error("Error training D4PG: {}".format(e))
+            logger.error(f"Error training D4PG: {e}")
             checkpoint_path = os.path.join(checkpoint_path, "on_error")
             save_path = os.path.join(save_path, "on_error")
             if checkpoint_path is not None:
-                logger.info("Saving checkpoint in {}".format(checkpoint_path))
+                logger.info(f"Saving checkpoint in {checkpoint_path}")
                 self.save_checkpoint(
                     checkpoint_path,
                     iteration=iteration,
@@ -1258,12 +1257,12 @@ class D4PG:
                     data_loaders=True,
                 )
             if save_path is not None and loss_actor is not None:
-                logger.info("Saving model in {}".format(save_path))
+                logger.info(f"Saving model in {save_path}")
                 self.save_model(save_path)
             raise
         else:
             if checkpoint_path is not None:
-                logger.info("Saving checkpoint in {}".format(checkpoint_path))
+                logger.info(f"Saving checkpoint in {checkpoint_path}")
                 self.save_checkpoint(
                     checkpoint_path,
                     iteration=iteration,
@@ -1276,17 +1275,17 @@ class D4PG:
                     data_loaders=True,
                 )
             if save_path is not None and loss_actor is not None:
-                logger.info("Saving model in {}".format(save_path))
+                logger.info(f"Saving model in {save_path}")
                 self.save_model(save_path)
 
     def checkpoint(
         self,
         iteration: int,
-        epoch_number: Optional[int] = None,
-        episode_number: Optional[int] = None,
-        step_number: Optional[int] = None,
-        loss_actor: Optional[float] = None,
-        loss_critic: Optional[float] = None,
+        epoch_number: int | None = None,
+        episode_number: int | None = None,
+        step_number: int | None = None,
+        loss_actor: float | None = None,
+        loss_critic: float | None = None,
         replay_buffer: bool = False,
         data_loaders: bool = False,
     ) -> dict:
@@ -1312,7 +1311,7 @@ class D4PG:
             raise AttributeError(
                 "Iteration not found in D4PG object, no checkpoint to save"
             )
-        logger.info("Creating checkpoint for iteration {}...".format(iteration))
+        logger.info(f"Creating checkpoint for iteration {iteration}...")
         checkpoint = {
             "version": "1.0.0",
             "device": self.device,
@@ -1363,9 +1362,9 @@ class D4PG:
             checkpoint["data_loaders"] = {"train": {}}
             # Only save sampler state if it has state_dict method
             if hasattr(self.train_samples.sampler, "state_dict"):
-                checkpoint["data_loaders"]["train"][
-                    "sampler_state"
-                ] = self.train_samples.sampler.state_dict()
+                checkpoint["data_loaders"]["train"]["sampler_state"] = (
+                    self.train_samples.sampler.state_dict()
+                )
 
             if (
                 hasattr(self, "validation_samples")
@@ -1373,9 +1372,9 @@ class D4PG:
             ):
                 checkpoint["data_loaders"]["validation"] = {}
                 if hasattr(self.validation_samples.sampler, "state_dict"):
-                    checkpoint["data_loaders"]["validation"][
-                        "sampler_state"
-                    ] = self.validation_samples.sampler.state_dict()
+                    checkpoint["data_loaders"]["validation"]["sampler_state"] = (
+                        self.validation_samples.sampler.state_dict()
+                    )
 
         checkpoint["hyperparameters"].update(self.extras_hparams)
         return checkpoint
@@ -1388,13 +1387,13 @@ class D4PG:
             path (str): Path to save the checkpoint.
             **kwargs: Additional keyword arguments to pass to the checkpoint method.
         """
-        logger.info("Saving checkpoint in {}...".format(path))
+        logger.info(f"Saving checkpoint in {path}...")
         os.makedirs(path, exist_ok=True)
         torch.save(self.checkpoint(**kwargs), os.path.join(path, "attributes.ptc"))
 
         # Save replay buffer if requested and exists
         if kwargs.get("replay_buffer", False) and self.replay_buffer:
-            logger.info("Saving replay buffer in {}...".format(path))
+            logger.info(f"Saving replay buffer in {path}...")
             self.replay_buffer.save(os.path.join(path, "replay_buffer.ptc"))
 
         # Save environment states
@@ -1410,10 +1409,10 @@ class D4PG:
             # Save validation environment
             val_env_path = os.path.join(env_path, "validation")
             os.makedirs(val_env_path, exist_ok=True)
-            logger.info("Saving validation environment in {}...".format(path))
+            logger.info(f"Saving validation environment in {path}...")
             self.validation_env.save(os.path.join(val_env_path))
 
-        logger.info("Checkpoint saved in {}".format(path))
+        logger.info(f"Checkpoint saved in {path}")
 
     def load_checkpoint(self, path: str) -> None:
         """Load model checkpoint with comprehensive error handling and validation.

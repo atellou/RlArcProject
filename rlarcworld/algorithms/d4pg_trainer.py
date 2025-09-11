@@ -1,4 +1,5 @@
-from typing import Callable, Dict, Iterator, Optional, Tuple, Protocol, Any
+from collections.abc import Callable, Iterator
+from typing import Any, Protocol
 
 import torch
 from tensordict import TensorDict
@@ -22,7 +23,7 @@ class ReplayBufferProto(Protocol):
 # Callback/hook signatures
 OnStepFn = Callable[[int, int, TensorDict, torch.Tensor, torch.Tensor], None]
 OnValidateFn = Callable[[int, int, torch.Tensor, torch.Tensor, TensorDict], None]
-OnCheckpointFn = Callable[[Dict[str, Any]], None]
+OnCheckpointFn = Callable[[dict[str, Any]], None]
 
 
 class D4PGTrainer:
@@ -43,15 +44,15 @@ class D4PGTrainer:
         self,
         *,
         core: D4PGCore,
-        step_stream_factory: Optional[Callable[[int], Iterator[TensorDict]]] = None,
-        replay_buffer: Optional[ReplayBufferProto] = None,
-        batch_size: Optional[int] = None,
+        step_stream_factory: Callable[[int], Iterator[TensorDict]] | None = None,
+        replay_buffer: ReplayBufferProto | None = None,
+        batch_size: int | None = None,
         warmup_buffer_ratio: float = 0.2,
         target_update_frequency: int = 10,
-        on_step: Optional[OnStepFn] = None,
-        on_validate: Optional[OnValidateFn] = None,
-        on_checkpoint: Optional[OnCheckpointFn] = None,
-        device: Optional[str] = None,
+        on_step: OnStepFn | None = None,
+        on_validate: OnValidateFn | None = None,
+        on_checkpoint: OnCheckpointFn | None = None,
+        device: str | None = None,
     ) -> None:
         """
         Initialize the trainer with the provided components.
@@ -83,7 +84,7 @@ class D4PGTrainer:
             raise ValueError("batch_size must be provided when replay_buffer is None")
 
     # ---------------- Orchestration helpers ----------------
-    def _maybe_store_and_sample(self, step_state: TensorDict) -> Optional[TensorDict]:
+    def _maybe_store_and_sample(self, step_state: TensorDict) -> TensorDict | None:
         """Store the transition in the replay buffer and return a batch if ready.
 
         Args:
@@ -100,7 +101,9 @@ class D4PGTrainer:
         batch_size = step_state.batch_size[0]
 
         # Use max priority from buffer if available, else 1.0
-        maxp = getattr(getattr(self.replay_buffer, "sampler", None), "_max_priority", 1.0)
+        maxp = getattr(
+            getattr(self.replay_buffer, "sampler", None), "_max_priority", 1.0
+        )
         # Normalize to python float for torch.full fill_value
         try:
             if isinstance(maxp, torch.Tensor):
@@ -146,13 +149,11 @@ class D4PGTrainer:
         epochs: int = 1,
         max_steps_per_epoch: int = -1,
         validate_every_steps: int = -1,
-        validate_fn: Optional[
-            Callable[[int, int], Tuple[torch.Tensor, torch.Tensor, TensorDict]]
-        ] = None,
+        validate_fn: None
+        | (Callable[[int, int], tuple[torch.Tensor, torch.Tensor, TensorDict]]) = None,
         checkpoint_every_steps: int = -1,
-        checkpoint_payload_fn: Optional[
-            Callable[[int, int, torch.Tensor, torch.Tensor], Dict[str, Any]]
-        ] = None,
+        checkpoint_payload_fn: None
+        | (Callable[[int, int, torch.Tensor, torch.Tensor], dict[str, Any]]) = None,
     ) -> None:
         """Run a training loop using the provided step stream and hooks.
 

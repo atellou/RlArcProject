@@ -13,7 +13,9 @@ def make_support(num_atoms=5, v_min=-2.0, v_max=2.0, device="cpu"):
 def test_shapes_and_normalization():
     device = torch.device("cpu")
     batch_size = 4
-    z_atoms, v_min, v_max, num_atoms = make_support(num_atoms=7, v_min=-3.0, v_max=3.0, device=device)
+    z_atoms, v_min, v_max, num_atoms = make_support(
+        num_atoms=7, v_min=-3.0, v_max=3.0, device=device
+    )
 
     # uniform next_q_dist
     next_q_dist = torch.full((batch_size, num_atoms), 1.0 / num_atoms, device=device)
@@ -88,7 +90,9 @@ def test_shapes_and_normalization_parametrized(num_atoms, v_min, v_max):
 def test_terminated_independent_of_nsteps(n_steps, term_flag):
     device = torch.device("cpu")
     batch_size = 3
-    z_atoms, v_min, v_max, num_atoms = make_support(num_atoms=9, v_min=-4.0, v_max=4.0, device=device)
+    z_atoms, v_min, v_max, num_atoms = make_support(
+        num_atoms=9, v_min=-4.0, v_max=4.0, device=device
+    )
 
     # next_q_dist peaked at center atom to make mapping clearer
     next_q_dist = torch.zeros((batch_size, num_atoms), device=device)
@@ -116,7 +120,16 @@ def test_terminated_independent_of_nsteps(n_steps, term_flag):
     # For terminated=1, projection should ignore next_q_dist shift (gamma term) regardless of n_steps
     if term_flag == 1:
         proj_n1 = categorical_projection(
-            next_q_dist, rewards, torch.ones_like(terminated), gamma, z_atoms, v_min, v_max, num_atoms, True, 1
+            next_q_dist,
+            rewards,
+            torch.ones_like(terminated),
+            gamma,
+            z_atoms,
+            v_min,
+            v_max,
+            num_atoms,
+            True,
+            1,
         )
         torch.testing.assert_close(proj, proj_n1)
 
@@ -129,7 +142,9 @@ def test_terminated_independent_of_nsteps(n_steps, term_flag):
 def test_gamma_zero_behavior():
     device = torch.device("cpu")
     batch_size = 2
-    z_atoms, v_min, v_max, num_atoms = make_support(num_atoms=5, v_min=-2.0, v_max=2.0, device=device)
+    z_atoms, v_min, v_max, num_atoms = make_support(
+        num_atoms=5, v_min=-2.0, v_max=2.0, device=device
+    )
 
     # arbitrary next distribution
     next_q_dist = torch.rand((batch_size, num_atoms), device=device)
