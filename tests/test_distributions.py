@@ -41,6 +41,48 @@ def test_shapes_and_normalization():
     assert torch.all(proj <= 1)
 
 
+@pytest.mark.parametrize(
+    "num_atoms,v_min,v_max",
+    [
+        (5, -2.0, 2.0),
+        (7, -3.0, 3.0),
+        (11, -1.0, 1.0),
+        (9, -4.0, 4.0),
+    ],
+)
+def test_shapes_and_normalization_parametrized(num_atoms, v_min, v_max):
+    device = torch.device("cpu")
+    batch_size = 3
+    z_atoms, v_min, v_max, num_atoms = make_support(
+        num_atoms=num_atoms, v_min=v_min, v_max=v_max, device=device
+    )
+
+    # random but normalized next_q_dist
+    next_q_dist = torch.rand((batch_size, num_atoms), device=device)
+    next_q_dist = next_q_dist / next_q_dist.sum(dim=1, keepdim=True)
+    rewards = torch.randn((batch_size, 1), device=device).clamp(v_min, v_max)
+    terminated = torch.zeros((batch_size, 1), device=device)
+    gamma = 0.95
+
+    proj = categorical_projection(
+        next_q_dist,
+        rewards,
+        terminated,
+        gamma,
+        z_atoms,
+        v_min,
+        v_max,
+        num_atoms,
+        apply_softmax=True,
+        n_steps=2,
+    )
+
+    assert proj.shape == (batch_size, num_atoms)
+    torch.testing.assert_close(proj.sum(dim=1), torch.ones(batch_size, device=device))
+    assert torch.all(proj >= 0)
+    assert torch.all(proj <= 1)
+
+
 @pytest.mark.parametrize("n_steps", [1, 3])
 @pytest.mark.parametrize("term_flag", [0, 1])
 def test_terminated_independent_of_nsteps(n_steps, term_flag):

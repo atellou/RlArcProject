@@ -86,8 +86,8 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 - [ ] Parametrized tests
 
-  - [ ] `categorical_projection` (shapes, normalization)
-  - [ ] `BetaScheduler` (increasing, clamping)
+  - [x] `categorical_projection` (shapes, normalization)
+  - [x] `BetaScheduler` (increasing, clamping)
   - [ ] AMP/no-AMP code paths where relevant
 - [ ] Pre-commit hooks
 - [x] Linters for import validity and formatting

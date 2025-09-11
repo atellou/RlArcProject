@@ -23,11 +23,9 @@ class BetaScheduler:
             float: The updated value of beta.
         """
         self.internal_step += 1
-        self.beta = min(
-            self.end,
-            self.start
-            + (self.end - self.start) * (self.internal_step / max(self.steps, 1)),
-        )
+        # Linear interpolation from start to end over steps, clamped at end
+        progress = min(1.0, self.internal_step / max(self.steps, 1))
+        self.beta = self.start + (self.end - self.start) * progress
         return self.beta
 
     def state_dict(self) -> dict:

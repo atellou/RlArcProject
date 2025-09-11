@@ -7,14 +7,18 @@ from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.utils.configure_logger import configure_logger
+from rlarcworld.utils.device import enable_cuda
 
 
 # Configure logger for test session
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
 
 
-@pytest.fixture()
-def core_setup(device):
+@pytest.fixture(params=[False, True])
+def core_setup(request):
+    amp_flag = bool(request.param)
+    config = enable_cuda(amp_enabled=amp_flag)
+    device = torch.device(config["device"])  # "cuda" when available and amp enabled, else cpu
     grid_size = 30
     color_values = 11
     batch_size = 4
@@ -22,7 +26,7 @@ def core_setup(device):
     actor = ArcActorNetwork(
         grid_size=grid_size,
         color_values=color_values,
-        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+        config={"device": str(device), "amp_enabled": config["amp_enabled"], "use_checkpointing": False},
     )
     actor.eval()
 
@@ -35,7 +39,7 @@ def core_setup(device):
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
-        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+        config={"device": str(device), "amp_enabled": config["amp_enabled"], "use_checkpointing": False},
     )
     critic.eval()
     # Ensure critic.z_atoms lives on the same device
@@ -51,8 +55,8 @@ def core_setup(device):
         entropy_coef=0.0,
         entropy_coef_decay=1.0,
         max_grad_norm=0.0,
-        amp_enabled=False,  # parametrize later if needed
-        config={"device": str(device), "amp_enabled": False, "use_checkpointing": False},
+        amp_enabled=config["amp_enabled"],
+        config=config,
     )
 
     # Create synthetic batch
