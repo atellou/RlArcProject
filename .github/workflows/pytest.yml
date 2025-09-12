@@ -1,0 +1,46 @@
+name: Pytest
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+    paths:
+      - 'rlarcworld/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: Set up Python ${{ matrix.python-version }}
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        uv sync --dev
+
+    - name: Run tests with pytest
+      run: |
+        uv run pytest
+
+    - name: Upload coverage reports
+      if: matrix.python-version == '3.12'
+      uses: codecov/codecov-action@v4
+      with:
+        fail_ci_if_error: false

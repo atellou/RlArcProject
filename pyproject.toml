@@ -2,11 +2,12 @@
 name = "rlarcworld"
 version = "0.1.0"
 description = "An environment to train on arc dataset a model-based reinforcement learning agent"
-authors = ["atellou <andresfe.t.u@gmail.com>"]
-license = "http://www.apache.org/licenses/"
+authors = [
+    {name = "atellou", email = "andresfe.t.u@gmail.com"}
+]
+license = {text = "Apache-2.0"}
 readme = "README.md"
-license-file = "LICENSE"
-requires-python = "==3.10.*"
+requires-python = "==3.12.*"
 dependencies = [
     "torch",
     "gymnasium",
@@ -26,4 +27,6 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel",
+    "pytest>=8.4.1",
+    "pre-commit>=3.8.0",
 ]

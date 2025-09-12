@@ -13,19 +13,21 @@ and the linear layer is used to output a distribution over the possible actions.
 The actor network is trained using the policy gradient algorithm.
 """
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
+
 from rlarcworld.agent.nn_modules import (
-    CnnPreTrainedModule,
     CnnAttention,
+    CnnPreTrainedModule,
     CrossAttentionClassifier,
 )
-from rlarcworld.utils import enable_cuda
-import logging
+from rlarcworld.utils.device import enable_cuda
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 
 class ArcActorNetwork(nn.Module):
@@ -39,9 +41,10 @@ class ArcActorNetwork(nn.Module):
             grid_size (int): The size of the grid.
             color_values (int): The number of colors.
         """
-        super(ArcActorNetwork, self).__init__()
+        super().__init__()
         self.grid_size = grid_size
         self.color_values = color_values
+        self.action_head_keys = {"x_location", "y_location", "color_values", "submit"}
         self.inputs_layers = torch.nn.ModuleDict(
             {
                 "last_grid": CnnPreTrainedModule(
@@ -133,7 +136,7 @@ class ArcActorNetwork(nn.Module):
             "index",
         }
         assert set(state.keys()) == in_keys, ValueError(
-            "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
+            f"State keys must be {in_keys}. Keys found {set(state.keys())}"
         )
 
     @torch.jit.export
@@ -152,9 +155,10 @@ class ArcActorNetwork(nn.Module):
             ValueError: If the action keys do not match the required keys.
         """
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
-        in_keys = {"color_values", "submit", "x_location", "y_location"}
-        assert set(action.keys()) == in_keys, ValueError(
-            "Action keys must be {}. Keys found {}".format(in_keys, set(action.keys()))
+        assert set(action.keys()) == self.action_head_keys, ValueError(
+            "Action keys must be {}. Keys found {}".format(
+                self.action_head_keys, set(action.keys())
+            )
         )
 
     def forward(self, state: TensorDict) -> TensorDict:
@@ -178,9 +182,11 @@ class ArcActorNetwork(nn.Module):
         # Validate input
         self.input_val(state)
 
+        # Determine current device from module parameters (in case module was moved after init)
+        current_device = next(self.parameters()).device
         # Broadcast the state
         for key, value in state.items():
-            value = value.to(self.device)
+            value = value.to(current_device)
             if key == "index":
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
@@ -218,5 +224,5 @@ class ArcActorNetwork(nn.Module):
                 for action_type, logits in state.items()
             },
         )
-
+        self.output_val(state)
         return state.auto_batch_size_()

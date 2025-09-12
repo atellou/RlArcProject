@@ -16,17 +16,18 @@ algorithm.
 
 """
 
-from typing import Dict
+import logging
+
 import torch
 import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
+
 from rlarcworld.agent.nn_modules import (
-    CnnPreTrainedModule,
     CnnAttention,
+    CnnPreTrainedModule,
     CrossAttentionClassifier,
 )
-from rlarcworld.utils import enable_cuda
-import logging
+from rlarcworld.utils.device import enable_cuda
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +47,13 @@ class ArcCriticNetwork(torch.nn.Module):
         self,
         grid_size: int,
         color_values: int,
-        num_atoms: Dict[str, int],
-        v_min: Dict[str, int],
-        v_max: Dict[str, int],
+        num_atoms: dict[str, int],
+        v_min: dict[str, int],
+        v_max: dict[str, int],
         embedding_size: int = 128,
         config=None,
     ):
-        super(ArcCriticNetwork, self).__init__()
+        super().__init__()
         self.num_atoms = num_atoms
         self.grid_size = grid_size
         self.color_values = color_values
@@ -158,7 +159,7 @@ class ArcCriticNetwork(torch.nn.Module):
             "terminated",
         }
         assert set(state.keys()) == in_keys, ValueError(
-            "State keys must be {}. Keys found {}".format(in_keys, set(state.keys()))
+            f"State keys must be {in_keys}. Keys found {set(state.keys())}"
         )
 
     @torch.jit.export
@@ -208,16 +209,19 @@ class ArcCriticNetwork(torch.nn.Module):
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
         state.update(action)
 
+        # Resolve current device from parameters (in case module was moved after init)
+        current_device = next(self.parameters()).device
+
         # Broadcast the state
         action_keys = torch.cat(
             tuple(state.pop(k) for k in self.no_scale_keys),
             dim=1,
-        ).to(self.device)
+        ).to(current_device)
         action_keys = self.actions_mlp(action_keys).unsqueeze(1)
 
         # Grid inputs
         for key, value in state.items():
-            value = value.to(self.device)
+            value = value.to(current_device)
             if key == "index":
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
@@ -254,5 +258,6 @@ class ArcCriticNetwork(torch.nn.Module):
                 for action_type, logits in state.items()
             },
         )
+        self.output_val(state)
 
         return state.auto_batch_size_()

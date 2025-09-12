@@ -1,17 +1,16 @@
-import os
-from typing import List, Optional, Tuple
-import torch
-import gymnasium as gym
 import logging
+import os
 
-from rlarcworld.utils import TorchQueue
+import gymnasium as gym
+import torch
 from tensordict import TensorDict
+
+from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
 
 
 class PixelAwareRewardWrapper(gym.Wrapper):
-
     def __init__(
         self,
         env,
@@ -19,8 +18,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         n_steps: int = 1,
         gamma: float = 1.0,
         apply_clamp: bool = False,
-        v_min: Optional[int] = None,
-        v_max: Optional[int] = None,
+        v_min: int | None = None,
+        v_max: int | None = None,
     ):
         """
         Initialize the PixelAwareRewardWrapper.
@@ -64,9 +63,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             self.gamma ** torch.arange(1, self.n_steps + 1)
         )
 
-    def reset(
-        self, *, seed: Optional[int] = None, options: Optional[dict] = None
-    ) -> Tuple:
+    def reset(self, *, seed: int | None = None, options: dict | None = None) -> tuple:
         """
         Resets the environment and initializes reward-related attributes.
 
@@ -94,7 +91,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         return reset
 
     def n_step_reward(
-        self, v_min: Optional[int] = None, v_max: Optional[int] = None
+        self, v_min: int | None = None, v_max: int | None = None
     ) -> torch.Tensor:
         """
         Computes the reward for the current grid of the environment.
@@ -107,33 +104,13 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             torch.Tensor: The computed reward
         """
+        total = torch.sum(self._reward_storage * self.discount_factor, dim=1)
         if isinstance(v_min, int) and isinstance(v_max, int):
-            return torch.tensor(
-                torch.clamp(
-                    torch.sum(self._reward_storage * self.discount_factor, dim=1),
-                    min=v_min,
-                    max=v_max,
-                )
-                .cpu()
-                .numpy()
-            ).to(self.device)
+            total = torch.clamp(total, min=v_min, max=v_max)
         elif self.apply_clamp:
-            return torch.tensor(
-                torch.clamp(
-                    torch.sum(self._reward_storage * self.discount_factor, dim=1),
-                    min=self.v_min,
-                    max=self.v_max,
-                )
-                .cpu()
-                .numpy()
-            ).to(self.device)
+            total = torch.clamp(total, min=self.v_min, max=self.v_max)
 
-        else:
-            return torch.tensor(
-                torch.sum(self._reward_storage * self.discount_factor, dim=1)
-                .cpu()
-                .numpy()
-            ).to(self.device)
+        return total.to(self.device)
 
     def get_state(self, **kwargs) -> dict:
         """
@@ -203,13 +180,14 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         index = [slice(None)] * q.ndim
         index[dim] = -1
         res = q[tuple(index)]
-        return torch.tensor(res, device=res.device, dtype=res.dtype)
+        # res is already a tensor; avoid reconstructing via torch.tensor()
+        return res.to(self.device)
 
     def reward(
         self,
         last_diffs: torch.Tensor,
         grid_diffs: torch.Tensor,
-        submission: List[int],
+        submission: list[int],
     ) -> torch.Tensor:
         """
         Return reward based on actions and grids
@@ -256,8 +234,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             return reward
 
     def step(
-        self, actions: List[int]
-    ) -> Tuple[TensorDict, torch.Tensor, bool, bool, dict]:
+        self, actions: list[int]
+    ) -> tuple[TensorDict, torch.Tensor, bool, bool, dict]:
         """
         Step through the environment and return the observation, reward, terminated, truncated, and info.
 
@@ -289,7 +267,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Args:
             path (str): The path to save the environment to.
         """
-        logger.debug("Saving environment to {}".format(path))
+        logger.debug(f"Saving environment to {path}")
         parent_path = os.path.join(path, "parent")
         child_path = os.path.join(path, "child")
         self.env.save(parent_path)
@@ -322,7 +300,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         parent_path: str,
         child_path: str,
         weights_only: bool = False,
-        device: Optional[str] = None,
+        device: str | None = None,
     ):
         """
         Loads the environment from a checkpoint.

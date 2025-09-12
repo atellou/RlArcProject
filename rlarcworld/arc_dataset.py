@@ -1,17 +1,16 @@
-import os
 import json
+import logging
+import os
 
 import numpy as np
-
 import torch
-from torch.utils.data import Dataset
 from google.cloud import storage
-import logging
+from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
 
 
-class ArcSampleTransformer(object):
+class ArcSampleTransformer:
     """
     Resize and Concatenate the grids in a sample to a given size.
 
@@ -53,9 +52,9 @@ class ArcSampleTransformer(object):
             torch.Tensor: The padded grid.
         """
         assert len(grid.shape) == 2, "The grid should be a 2D array."
-        height, width = [
+        height, width = (
             target - grid for grid, target in zip(grid.shape, self.output_size[-2:])
-        ]
+        )
         assert height >= 0 and width >= 0, "The output size is smaller than the grid."
         logger.debug(
             "Shape original grid={}, Padded height={}, Padded width={}.".format(
@@ -110,7 +109,7 @@ class ArcSampleTransformer(object):
         Returns:
             dict: The transformed sample.
         """
-        logger.debug("Perform {} transformations...".format(self.__class__.__name__))
+        logger.debug(f"Perform {self.__class__.__name__} transformations...")
         sample["examples"] = self.concat_examples(sample["examples"])
         n_examples = sample["examples"].shape[0]
         if n_examples < self.examples_stack_dim:
@@ -187,14 +186,14 @@ class ArcDataset(Dataset):
         Returns:
             dict: The train and test samples.
         """
-        logger.debug("Open file: {}".format(file_key))
+        logger.debug(f"Open file: {file_key}")
 
         if self.bucket is not None:
             blob = self.bucket.blob(file_key)
             file_contents = blob.download_as_string()
             sample = json.loads(file_contents)
         else:
-            with open(file_key, "r") as file:
+            with open(file_key) as file:
                 sample = json.load(file)
         if test_index is not None:
             sample["test"] = {
@@ -265,12 +264,12 @@ class ArcDataset(Dataset):
         Returns:
             dict: The transformed sample.
         """
-        logger.debug("Sample index: {}".format(idx))
+        logger.debug(f"Sample index: {idx}")
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
         file_id = self.file_ids[idx]
-        logger.debug("File id: {}".format(file_id))
+        logger.debug(f"File id: {file_id}")
         sample = self.samples[file_id]
 
         if isinstance(sample, str):

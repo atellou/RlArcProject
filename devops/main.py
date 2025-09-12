@@ -1,23 +1,22 @@
-import os
 import argparse
-from typing import Optional
+import logging
+import os
+
 import google.auth
 import vertexai
 from google.cloud import aiplatform
-
-import logging
 
 logger = logging.getLogger(__name__)
 
 
 def init_sample(
-    project: Optional[str] = None,
-    location: Optional[str] = None,
-    experiment: Optional[str] = None,
-    staging_bucket: Optional[str] = None,
-    credentials: Optional[google.auth.credentials.Credentials] = None,
-    encryption_spec_key_name: Optional[str] = None,
-    service_account: Optional[str] = None,
+    project: str | None = None,
+    location: str | None = None,
+    experiment: str | None = None,
+    staging_bucket: str | None = None,
+    credentials: google.auth.credentials.Credentials | None = None,
+    encryption_spec_key_name: str | None = None,
+    service_account: str | None = None,
 ):
     """
     Initialize the Vertex AI environment.
