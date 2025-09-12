@@ -43,10 +43,9 @@ def assertions_grids(
     sum_init_diff_values,
     dummy_batch,
 ):
-    assert (
-        sum_changed_values == sum_init_diff_values
-    ), "Difference change is not the expected value. The change is: {} and the expected change is: {}".format(
-        sum_changed_values, sum_init_diff_values
+    assert sum_changed_values == sum_init_diff_values, (
+        "Difference change is not the expected value. The change is: {} and "
+        "the expected change is: {}".format(sum_changed_values, sum_init_diff_values)
     )
     (
         torch.testing.assert_close(
@@ -65,8 +64,9 @@ def assertions_grids(
             info["index"][:, y_loc, x_loc],
             torch.ones(batch_size, dtype=torch.int64) * step,
         ),
-        "Index grid incorrectly updated. Expected: {} in X[{}],Y[{}] locations for every sample.".format(
-            step, x_loc, y_loc
+        (
+            "Index grid incorrectly updated. Expected: {} in X[{}],Y[{}] "
+            "locations for every sample.".format(step, x_loc, y_loc)
         ),
     )
 

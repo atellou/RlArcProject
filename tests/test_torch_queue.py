@@ -19,7 +19,8 @@ def test_torch_queue_init():
     # clone() should work; TensorDict should be able to carry it
     queue = queue.clone()
     td = TensorDict({"Hello": queue}, batch_size=[])
-    # Moving to CUDA may fail on CPU-only machines; ensure it doesn't crash the test suite
+    # Moving to CUDA may fail on CPU-only machines;
+    # ensure it doesn't crash the test suite
     if torch.cuda.is_available():
         td_cuda = td.to("cuda")
         assert isinstance(td_cuda, TensorDict)

@@ -7,8 +7,8 @@ from tensordict import TensorDict
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.utils.logging_utils import configure_logger
 from rlarcworld.utils.device import enable_cuda
+from rlarcworld.utils.logging_utils import configure_logger
 
 # Configure logger for test session
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)

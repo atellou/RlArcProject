@@ -1,19 +1,41 @@
-import torch
+"""CUDA/AMP device configuration helpers."""
+
 import logging
+from typing import TypedDict
+
+import torch
 
 logger = logging.getLogger(__name__)
 
 
-def enable_cuda(amp_enabled: bool = True, use_checkpointing: bool = False):
+class CudaConfig(TypedDict):
+    """Typed configuration returned by ``enable_cuda``.
+
+    Keys:
+    - ``amp_enabled``: whether AMP should be enabled
+    - ``use_checkpointing``: whether gradient checkpointing should be enabled
+    - ``device``: selected device string ("cuda" or "cpu")
     """
-    Configures CUDA settings for AMP and gradient checkpointing.
+
+    amp_enabled: bool
+    use_checkpointing: bool
+    device: str
+
+
+def enable_cuda(
+    amp_enabled: bool = True, use_checkpointing: bool = False
+) -> CudaConfig:
+    """Configures CUDA settings for AMP and gradient checkpointing.
 
     Args:
-        amp_enabled (bool, optional): Flag to indicate whether to use AMP. Defaults to True.
-        use_checkpointing (bool, optional): Flag to indicate whether to use gradient checkpointing. Defaults to False.
+        amp_enabled (bool, optional): Flag to indicate whether to use AMP.
+            Defaults to True.
+        use_checkpointing (bool, optional): Flag to indicate whether to use
+            gradient checkpointing. Defaults to False.
 
     Returns:
-        dict: Configuration dictionary with keys 'amp_enabled', 'use_checkpointing', and 'device'.
+        CudaConfig: Configuration with keys 'amp_enabled', 'use_checkpointing',
+            and 'device'.
     """
     cuda_available = torch.cuda.is_available()
     # Only query device properties if CUDA is available
@@ -30,11 +52,17 @@ def enable_cuda(amp_enabled: bool = True, use_checkpointing: bool = False):
 
     amp_available = cuda_available and capability_major >= 7
     logger.info(
-        f"CUDA available: {cuda_available}, AMP available: {amp_available}, Device: {device_name}, Capability: {capability_major}"
+        "CUDA available: %s, AMP available: %s, Device: %s, Capability: %s",
+        cuda_available,
+        amp_available,
+        device_name,
+        capability_major,
     )
     gradient_checkpointing_enabled = amp_available
     logger.info(
-        f"Gradient checkpointing enabled: {gradient_checkpointing_enabled}, use_checkpointing: {use_checkpointing}"
+        "Gradient checkpointing enabled: %s, use_checkpointing: %s",
+        gradient_checkpointing_enabled,
+        use_checkpointing,
     )
 
     return {

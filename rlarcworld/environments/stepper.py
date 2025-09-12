@@ -1,5 +1,4 @@
-"""
-Environment Stepper for RL training loops.
+"""Environment Stepper for RL training loops.
 
 This module provides a class to handle environment interactions in a clean way,
 separating environment stepping logic from the training loop.
@@ -14,7 +13,8 @@ from torch.utils.data import DataLoader
 
 from rlarcworld.agent.actor import ArcActorNetwork
 
-# Step callback type: receives (env, state, action_probs, reward, observation, terminated, truncated, info)
+# Step callback type: receives
+# (env, state, action_probs, reward, observation, terminated, truncated, info)
 # and returns the same tuple possibly modified
 StepArgs = tuple[
     Env,
@@ -71,9 +71,7 @@ class EnvStepper:
         self.on_step = on_step
         self.loaded_checkpoint = False
 
-    def step(
-        self, env: Env, state: TensorDict | None = None
-    ) -> tuple[TensorDict, TensorDict, bool, bool, dict]:
+    def step(self, env: Env, state: TensorDict | None = None) -> TensorDict:
         """Take a single step in the environment.
 
         Args:
@@ -196,5 +194,8 @@ class EnvStepper:
             step_data = self.step(env)
             yield step_number, step_data
 
-            done = step_data["terminated"] or step_data["truncated"]
+            # Ensure Python bool type for loop control
+            term = bool(step_data["terminated"].item())
+            trunc = bool(step_data["truncated"].item())
+            done = term or trunc
             step_number += 1

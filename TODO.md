@@ -43,7 +43,7 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 ## Test Coverage
 
-- [ ] Add/extend unit tests under `tests/` for utils
+- [x] Add/extend unit tests under `tests/` for utils
 
   - [x] `schedulers.BetaScheduler`: monotonic increase, saturation at `end`, state_dict/load roundtrip
   - [x] `device.enable_cuda`: mock `torch.cuda.is_available()` and device capability to validate fields
@@ -53,8 +53,16 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 ## Nice-to-Have
 
-- [ ] Add type annotations and docstrings consistency across all utils modules
-- [ ] Centralize constants or enums (e.g., logger formats) if reused
+- [x] Add type annotations and docstrings consistency across all modules
+  - [x] Utils
+  - [x] Environments
+  - [x] Agent
+  - [x] Algorithms
+- [x] Centralize constants or enums (e.g., logger formats) if reused
+  - [x] Utils
+  - [x] Environments
+  - [x] Agent
+  - [x] Algorithms
 
 ## Pytest Migration Plan
 

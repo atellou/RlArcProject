@@ -1,3 +1,5 @@
+"""Package metadata for rlarcworld."""
+
 from setuptools import find_packages, setup
 
 setup(

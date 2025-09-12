@@ -5,6 +5,7 @@ from rlarcworld.utils.device import enable_cuda
 
 class DummyCuda:
     def __init__(self, available: bool, major_cap: int | None = None):
+        """Initialize a minimal CUDA stub for testing."""
         self._available = available
         self._major = major_cap
 
@@ -52,7 +53,8 @@ class DummyCuda:
             True,
             {"amp_enabled": True, "use_checkpointing": True, "device": "cuda"},
         ),
-        # CUDA with capability >=7 but amp_enabled=False => device stays cpu; ckpt still allowed by function logic when requested
+        # CUDA with capability >=7 but amp_enabled=False => device stays cpu;
+        # checkpointing still allowed by function logic when requested
         (
             True,
             8,

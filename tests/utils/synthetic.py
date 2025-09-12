@@ -5,8 +5,7 @@ from tensordict import TensorDict
 def make_synthetic_step_on_device(
     device: torch.device, grid_size: int, color_values: int
 ):
-    """
-    Returns a function that builds a synthetic training step TensorDict on the given device.
+    """Returns a function that builds a synthetic training step.
 
     The returned function has signature: (batch_size: int, actor) -> TensorDict
     and constructs keys matching what the trainer expects.

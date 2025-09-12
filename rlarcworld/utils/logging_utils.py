@@ -1,6 +1,16 @@
+"""Lightweight logging utilities."""
+
 import logging
 import os
+
 from pythonjsonlogger.json import JsonFormatter
+
+# Module-level logging format constants
+JSON_LOG_FORMAT = (
+    "%(name)s|%(levelname)s|%(message)s|%(created)f|%(lineno)d|%(pathname)s"
+)
+PLAIN_LOG_FORMAT = "%(lineno)d|%(pathname)s|%(name)s|%(levelname)s:%(message)s"
+DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 
 class CustomJsonFormatter(JsonFormatter):
@@ -34,15 +44,11 @@ def configure_logger(level: str | None = None, json_format: bool = True):
             existing_stream_handler = h
             break
 
+    formatter: logging.Formatter
     if json_format:
-        formatter = CustomJsonFormatter(
-            "%(name)s|%(levelname)s|%(message)s|%(created)f|%(lineno)d|%(pathname)s",
-            "%Y-%m-%dT%H:%M:%S",
-        )
+        formatter = CustomJsonFormatter(JSON_LOG_FORMAT, DATE_FORMAT)
     else:
-        formatter = logging.Formatter(
-            "%(lineno)d|%(pathname)s|%(name)s|%(levelname)s:%(message)s"
-        )
+        formatter = logging.Formatter(PLAIN_LOG_FORMAT)
 
     if existing_stream_handler is None:
         handler = logging.StreamHandler()

@@ -1,20 +1,28 @@
+"""Small helpers for nested dictionary manipulation.
+
+Currently includes `get_nested_ref`, which returns a reference to the leaf
+dictionary and the final key for a slash-separated path.
+"""
+
 from typing import Any
 
 
 def get_nested_ref(
     dictionary: dict, key: str, sep: str = "/", default: Any = None
 ) -> tuple[dict, str]:
-    """
-    Retrieves a nested value from a dictionary using a key with a specified separator.
+    """Retrieve a nested reference using a separator-delimited key.
 
     Args:
         dictionary (dict): The dictionary to retrieve the value from.
         key (str): The key to retrieve the value from.
-        sep (str, optional): The separator to use when splitting the key. Defaults to "/".
-        default (any, optional): The default value to return if the key is not found. Defaults to None.
+        sep (str, optional): The separator used to split the key. Defaults to
+            "/".
+        default (any, optional): The default value to set if the key is not
+            found. Defaults to None.
 
     Returns:
-        (dict, str): A reference to the leaf dictionary that holds the final key, and the final key string.
+        (dict, str): A reference to the leaf dictionary that holds the final
+            key, and the final key string.
     """
     if sep in key:
         first_key, other_keys = key.split(sep, 1)

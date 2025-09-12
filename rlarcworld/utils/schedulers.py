@@ -1,7 +1,19 @@
+"""Lightweight parameter schedulers used during training.
+
+Currently includes a simple linear beta scheduler.
+"""
+
+
 class BetaScheduler:
+    """Linearly interpolate a parameter value over a fixed number of steps.
+
+    This scheduler increases (or decreases) ``beta`` from ``start`` to ``end``
+    over ``steps`` calls to :meth:`step`. The value is clamped once ``end`` is
+    reached.
+    """
+
     def __init__(self, start: float, end: float, steps: int, internal_step: int = 0):
-        """
-        Initializes a new BetaScheduler instance.
+        """Initializes a new BetaScheduler instance.
 
         Args:
             start (float): The initial value of beta.
@@ -16,8 +28,7 @@ class BetaScheduler:
         self.beta = self.start
 
     def step(self) -> float:
-        """
-        Steps the scheduler forward by one step.
+        """Steps the scheduler forward by one step.
 
         Returns:
             float: The updated value of beta.
@@ -29,8 +40,7 @@ class BetaScheduler:
         return self.beta
 
     def state_dict(self) -> dict:
-        """
-        Returns the state dictionary of the scheduler.
+        """Returns the state dictionary of the scheduler.
 
         Returns:
             dict: The state dictionary of the scheduler.
@@ -44,8 +54,7 @@ class BetaScheduler:
         }
 
     def load(self, state_dict: dict):
-        """
-        Loads the state dictionary of the scheduler.
+        """Loads the state dictionary of the scheduler.
 
         Args:
             state_dict (dict): The state dictionary of the scheduler.
