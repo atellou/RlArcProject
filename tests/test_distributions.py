@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from rlarcworld.utils.distributions import categorical_projection
+from rlarcworld.algorithms.distributions import categorical_projection
 
 
 def make_support(num_atoms=5, v_min=-2.0, v_max=2.0, device="cpu"):

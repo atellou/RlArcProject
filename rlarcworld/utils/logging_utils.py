@@ -1,5 +1,5 @@
 import logging
-
+import os
 from pythonjsonlogger.json import JsonFormatter
 
 
@@ -15,14 +15,17 @@ class CustomJsonFormatter(JsonFormatter):
         return log_record
 
 
-def configure_logger(level: str = "WARNING", json_format: bool = True):
+def configure_logger(level: str | None = None, json_format: bool = True):
     """Configures python root logger safely.
 
     This function avoids attaching duplicate StreamHandlers if called multiple times
     (common in tests) and sets the formatter according to json_format.
     """
     root_logger = logging.getLogger()
-    root_logger.setLevel(getattr(logging, level.upper()))
+    if level is not None:
+        root_logger.setLevel(getattr(logging, level.upper()))
+    else:
+        root_logger.setLevel(os.getenv("LOG_LEVEL", "WARNING"))
 
     # Find existing stream handler if present
     existing_stream_handler = None

@@ -5,7 +5,7 @@ import torch.optim as optim
 from tensordict import TensorDict
 
 from rlarcworld.utils.device import enable_cuda
-from rlarcworld.utils.distributions import categorical_projection
+from rlarcworld.algorithms.distributions import categorical_projection
 
 
 class AmpScaler:

@@ -8,7 +8,6 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 - [ ] Update all imports to new utils structure
 
-  - [ ] Use `from rlarcworld.utils.distributions import categorical_projection`
   - [ ] Use `from rlarcworld.utils.dict_utils import get_nested_ref`
   - [ ] Use `from rlarcworld.utils.schedulers import BetaScheduler`
   - [ ] Use `from rlarcworld.utils.device import enable_cuda`
@@ -27,18 +26,18 @@ We will not maintain backward compatibility. Update code and tests to the new la
   - [x] Use `internal_step / steps` instead of `/ end` in `step()`
   - [ ] Clamp progress: `progress = min(internal_step, steps)/max(steps,1)` to avoid tiny overshoots
 
-- [ ] AMP autocast usage (`rlarcworld/utils/env_stepper.py`)
+- [ ] AMP autocast usage (`rlarcworld/environments/stepper.py`)
 
   - [x] Do not pass `None` to `torch.amp.autocast`; use conditional or `nullcontext`
   - [ ] Consider consolidating with a shared AMP utility/context if needed
   - [ ] Provide a small testing utility to generate device-aware synthetic steps to reduce duplication in AMP tests
 
-- [ ] EnvStepper episode/reset behavior (`rlarcworld/utils/env_stepper.py`)
+- [ ] EnvStepper episode/reset behavior (`rlarcworld/environments/stepper.py`)
 
   - [ ] Prefer a pattern where the trainer provides per-episode batches for `reset()` rather than internally consuming `DataLoader` with `next(iter(samples))`
   - [ ] Ensure step streams align with trainer’s episode orchestration
 
-- [ ] Reward processing ergonomics (`rlarcworld/utils/reward_utils.py`)
+- [ ] Reward processing ergonomics (`rlarcworld/environments/reward_processor.py`)
 
   - [ ] Consider optional `critic` argument to auto-extract `v_min/v_max` for `n_step_reward` when available to reduce plumbing at call sites
 
@@ -46,11 +45,11 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 - [ ] Add/extend unit tests under `tests/` for utils
 
-  - [ ] `schedulers.BetaScheduler`: monotonic increase, saturation at `end`, state_dict/load roundtrip
-  - [ ] `device.enable_cuda`: mock `torch.cuda.is_available()` and device capability to validate fields
-  - [ ] `distributions.categorical_projection`: shape checks, probability mass preservation (sum≈1), atoms alignment
-  - [ ] `dict_utils.get_nested_ref`: nested creation, default callable behavior
-  - [ ] `logging_utils.configure_logger`: single handler after multiple calls
+  - [x] `schedulers.BetaScheduler`: monotonic increase, saturation at `end`, state_dict/load roundtrip
+  - [x] `device.enable_cuda`: mock `torch.cuda.is_available()` and device capability to validate fields
+  - [x] `distributions.categorical_projection`: shape checks, probability mass preservation (sum≈1), atoms alignment
+  - [x] `dict_utils.get_nested_ref`: nested creation, default callable behavior
+  - [x] `logging_utils.configure_logger`: single handler after multiple calls
 
 ## Nice-to-Have
 
@@ -93,14 +92,3 @@ We will not maintain backward compatibility. Update code and tests to the new la
 - [x] Linters for import validity and formatting
 
 ---
-
-Context: utils modules currently present under `rlarcworld/utils/`:
-
-- `device.py`
-- `dict_utils.py`
-- `distributions.py`
-- `env_stepper.py`
-- `logging_utils.py`
-- `reward_utils.py`
-- `schedulers.py`
-- `torch_queue.py`

@@ -21,7 +21,7 @@ from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.utils.beta_scheduler import BetaScheduler
-from rlarcworld.utils.configure_logger import configure_logger
+from rlarcworld.utils.logging_utils import configure_logger
 from rlarcworld.utils.device import enable_cuda
 
 logger = logging.getLogger(__name__)
