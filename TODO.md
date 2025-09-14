@@ -6,36 +6,32 @@ This document tracks follow-ups and improvements for the recent `rlarcworld/util
 
 We will not maintain backward compatibility. Update code and tests to the new layout and merge when green.
 
-- [ ] Update all imports to new utils structure
+### rlarcworld
 
-  - [ ] Use `from rlarcworld.utils.dict_utils import get_nested_ref`
-  - [ ] Use `from rlarcworld.utils.schedulers import BetaScheduler`
-  - [ ] Use `from rlarcworld.utils.device import enable_cuda`
-  - [ ] Use `from rlarcworld.utils.torch_queue import TorchQueue`
-  - [ ] Use `from rlarcworld.utils.logging_utils import configure_logger`
+- [ ] Review checkpoints and create tests.
+- [ ] Check D4PG trainer implementation and update to be able to run multiple algorithms.
 
-- [ ] Logger configuration hardening (`rlarcworld/utils/logging_utils.py`)
+### Experiments
 
-  - [ ] Avoid duplicate `StreamHandler` additions when `configure_logger()` is called multiple times (tests often reconfigure logging)
-  - [ ] Keep JSON and plain-text format options stable
+- [ ] Update jobs to a separate structure that allows the resources in rlarcworld to be used in the jobs. Jobs is in reality a space to define the experiments to run.
+
+### devops
+
+- [ ] Update divide structure defined to allow the jobs to be run in on cloud resources.
 
 ## Medium Priority
 
-- [ ] BetaScheduler robustness (`rlarcworld/utils/schedulers.py`)
+- [x] BetaScheduler robustness (`rlarcworld/utils/schedulers.py`)
 
+  - [x] Support end < start
   - [x] Use `internal_step / steps` instead of `/ end` in `step()`
-  - [ ] Clamp progress: `progress = min(internal_step, steps)/max(steps,1)` to avoid tiny overshoots
+  - [x] Clamp progress: `min(1.0, self.internal_step / max(self.steps, 1))` to avoid tiny overshoots
 
-- [ ] AMP autocast usage (`rlarcworld/environments/stepper.py`)
+- [x] AMP autocast usage (`rlarcworld/environments/stepper.py`)
 
   - [x] Do not pass `None` to `torch.amp.autocast`; use conditional or `nullcontext`
-  - [ ] Consider consolidating with a shared AMP utility/context if needed
-  - [ ] Provide a small testing utility to generate device-aware synthetic steps to reduce duplication in AMP tests
-
-- [ ] EnvStepper episode/reset behavior (`rlarcworld/environments/stepper.py`)
-
-  - [ ] Prefer a pattern where the trainer provides per-episode batches for `reset()` rather than internally consuming `DataLoader` with `next(iter(samples))`
-  - [ ] Ensure step streams align with trainer’s episode orchestration
+  - [x] Consider consolidating with a shared AMP utility/context if needed
+  - [x] Provide a small testing utility to generate device-aware synthetic steps to reduce duplication in AMP tests
 
 - [ ] Reward processing ergonomics (`rlarcworld/environments/reward_processor.py`)
 

@@ -12,6 +12,7 @@ from tensordict import TensorDict
 from torch.utils.data import DataLoader
 
 from rlarcworld.agent.actor import ArcActorNetwork
+from rlarcworld.utils.device import AmpScaler
 
 # Step callback type: receives
 # (env, state, action_probs, reward, observation, terminated, truncated, info)
@@ -70,6 +71,8 @@ class EnvStepper:
         self.amp_enabled = amp_enabled
         self.on_step = on_step
         self.loaded_checkpoint = False
+        # Shared AMP context manager (no-op on CPU or when disabled)
+        self.amp_cm = AmpScaler(amp_enabled=self.amp_enabled, device=self.device)
 
     def step(self, env: Env, state: TensorDict | None = None) -> TensorDict:
         """Take a single step in the environment.
@@ -91,11 +94,8 @@ class EnvStepper:
             if state is None:
                 state = env.get_state(unsqueeze=1).to(self.device)
 
-            # Get action from actor
-            if self.amp_enabled and torch.cuda.is_available():
-                with torch.amp.autocast(device_type="cuda"):
-                    action_probs = self.actor(state)
-            else:
+            # Get action from actor (AMP context is a no-op if disabled/CPU)
+            with self.amp_cm:
                 action_probs = self.actor(state)
 
             # Convert to discrete actions for environment (ensure 1D per batch)

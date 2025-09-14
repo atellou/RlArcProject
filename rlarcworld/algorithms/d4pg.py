@@ -8,54 +8,7 @@ import torch.optim as optim
 from tensordict import TensorDict
 
 from rlarcworld.algorithms.distributions import categorical_projection
-from rlarcworld.utils.device import enable_cuda
-
-
-class AmpScaler:
-    """Small wrapper that makes AMP usage optional and ergonomic."""
-
-    def __init__(self, amp_enabled: bool, device: str) -> None:
-        """Initialize AMP scaler and autocast context if enabled."""
-        if amp_enabled:
-            self.scaler = torch.amp.GradScaler(device=device)
-            self._cm = torch.amp.autocast(device_type="cuda")
-        else:
-            self.scaler = None
-            self._cm = None
-
-    def __enter__(self):
-        """Enter autocast context if AMP is enabled."""
-        if self._cm is not None:
-            return self._cm.__enter__()
-        return None
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit autocast context if AMP is enabled."""
-        if self._cm is not None:
-            return self._cm.__exit__(exc_type, exc_val, exc_tb)
-        return False
-
-    def scale(self, loss: torch.Tensor) -> torch.Tensor:
-        """Conditionally scale a loss tensor when AMP is enabled."""
-        if self.scaler is not None:
-            return self.scaler.scale(loss)
-        return loss
-
-    def step(self, optimizer: torch.optim.Optimizer) -> None:
-        """Conditionally step optimizer and update scaler."""
-        if self.scaler is not None:
-            self.scaler.step(optimizer)
-            self.scaler.update()
-        else:
-            optimizer.step()
-
-    def unscale(self, optimizer: torch.optim.Optimizer) -> None:
-        """Unscale gradients for a given optimizer when AMP is enabled.
-
-        Call this before gradient clipping to ensure clipping happens on unscaled grads.
-        """
-        if self.scaler is not None:
-            self.scaler.unscale_(optimizer)
+from rlarcworld.utils.device import AmpScaler, enable_cuda
 
 
 class D4PGCore:
