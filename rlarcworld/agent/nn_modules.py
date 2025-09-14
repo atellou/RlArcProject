@@ -1,3 +1,10 @@
+"""Neural network building blocks for ARC agents.
+
+This module defines reusable neural network components used by the
+actor and critic, including CNN feature extractors, multi-head
+attention, and cross-attention classifier heads.
+"""
+
 import logging
 
 import torch
@@ -10,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_submodule(root: nn.Module, path: str) -> nn.Module | None:
-    """Resolve a submodule by dotted path allowing integer indices for sequential modules.
+    """Resolve a submodule by dotted path for sequential modules.
 
     Examples:
         - "features" -> root.features
@@ -25,7 +32,7 @@ def resolve_submodule(root: nn.Module, path: str) -> nn.Module | None:
         if part.isdigit():
             idx = int(part)
             try:
-                cur = cur[idx]  # type: ignore[index]
+                cur = cur[idx]
             except Exception:
                 return None
         else:
@@ -36,14 +43,30 @@ def resolve_submodule(root: nn.Module, path: str) -> nn.Module | None:
 
 
 class CnnPreTrainedModule(nn.Module):
+    """Pre-trained CNN module."""
+
     def __init__(
         self,
         model: str = "efficientnet_b0",
         model_weights: str | None = "DEFAULT",
-        freeze: str = "ALL",
+        freeze: list[str] | None = None,
         do_not_freeze: list[str] | None = None,
         embedding_size: int = 128,
     ):
+        """Initialize the pre-trained CNN module.
+
+        Args:
+            model (str, optional): The name of the pre-trained model.
+             Defaults to "efficientnet_b0".
+            model_weights (str, optional): The weights of the pre-trained model.
+             Defaults to "DEFAULT".
+            freeze (list[str], optional): List of layers to freeze.
+             Defaults to None.
+            do_not_freeze (list[str], optional): List of layers to unfreeze.
+             Defaults to None.
+            embedding_size (int, optional): The size of the embedding.
+             Defaults to 128.
+        """
         super().__init__()
         self.base_model = getattr(models, model)(weights=model_weights)
         self.base_model.features[0][0] = nn.Conv2d(
@@ -56,7 +79,8 @@ class CnnPreTrainedModule(nn.Module):
         self.base_model.classifier = nn.Identity()
 
         # Freeze all layers except conv1 and embedding_layer
-        freeze = freeze.split(",")
+        if freeze is None:
+            freeze = ["ALL"]
         if "ALL" in freeze:
             for param in self.base_model.parameters():
                 param.requires_grad = False
@@ -101,8 +125,7 @@ class CnnPreTrainedModule(nn.Module):
         self.add_module("embedding_layer", self.embedding_layer)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Compute the output embedding for a given input image.
+        """Compute the output embedding for a given input image.
 
         Args:
             x (torch.Tensor): The input image, of shape (N, C, H, W).
@@ -116,19 +139,9 @@ class CnnPreTrainedModule(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    """
-    Computes multi-head attention. Supports nested or padded tensors.
-    Ref:https://pytorch.org/tutorials/intermediate/transformer_building_blocks.html
+    """Computes multi-head attention. Supports nested or padded tensors.
 
-    Args:
-        E_q (int): Size of embedding dim for query
-        E_k (int): Size of embedding dim for key
-        E_v (int): Size of embedding dim for value
-        E_total (int): Total embedding dim of combined heads post input projection. Each head
-            has dim E_total // nheads
-        nheads (int): Number of heads
-        dropout (float, optional): Dropout probability. Default: 0.0
-        bias (bool, optional): Whether to add bias to input projection. Default: True
+    Ref:https://pytorch.org/tutorials/intermediate/transformer_building_blocks.html
     """
 
     def __init__(
@@ -143,6 +156,21 @@ class MultiHeadAttention(nn.Module):
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
     ):
+        """Initialize the multi-head attention module.
+
+        Args:
+            E_q (int): Size of embedding dim for query
+            E_k (int): Size of embedding dim for key
+            E_v (int): Size of embedding dim for value
+            E_total (int): Total embedding dim of combined heads post input projection.
+             Each head has dim E_total // nheads
+            nheads (int): Number of heads
+            dropout (float, optional): Dropout probability. Default: 0.0
+            bias (bool, optional): Whether to add bias to input projection.
+             Default: True
+            device (torch.device, optional): Device to use. Default: None
+            dtype (torch.dtype, optional): Data type to use. Default: None
+        """
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.nheads = nheads
@@ -168,8 +196,9 @@ class MultiHeadAttention(nn.Module):
         attn_mask: torch.Tensor | None = None,
         is_causal: bool = False,
     ) -> torch.Tensor:
-        """
-        Forward pass; runs the following process:
+        """Forward pass.
+
+        Runs the following process:
             1. Apply input projection
             2. Split heads and prepare for SDPA
             3. Run SDPA
@@ -179,7 +208,8 @@ class MultiHeadAttention(nn.Module):
             query (torch.Tensor): query of shape (``N``, ``L_q``, ``E_qk``)
             key (torch.Tensor): key of shape (``N``, ``L_kv``, ``E_qk``)
             value (torch.Tensor): value of shape (``N``, ``L_kv``, ``E_v``)
-            attn_mask (torch.Tensor, optional): attention mask of shape (``N``, ``L_q``, ``L_kv``) to pass to SDPA. Default: None
+            attn_mask (torch.Tensor, optional): attention mask of shape
+             (``N``, ``L_q``, ``L_kv``) to pass to SDPA. Default: None
             is_causal (bool, optional): Whether to apply causal mask. Default: False
 
         Returns:
@@ -236,6 +266,12 @@ class MultiHeadAttention(nn.Module):
 
 
 class CnnAttention(nn.Module):
+    """CnnAttention module.
+
+    The module consists of two CNN embeddings for time steps t0 and t1,
+    and a MultiHeadAttention module.
+    """
+
     def __init__(
         self,
         embedding_size: int = 128,
@@ -243,18 +279,19 @@ class CnnAttention(nn.Module):
         dropout: float = 0.0,
         bias: bool = True,
     ):
-        """
-        Initializes the CnnAttention module.
+        """Initializes the CnnAttention module.
 
         Args:
-            embedding_size (int, optional): The size of the embedding for the Cnn modules and the multi-head attention. Defaults to 128.
-            nheads (int, optional): The number of attention heads in the multi-head attention module. Defaults to 8.
-            dropout (float, optional): The dropout probability for the multi-head attention module. Defaults to 0.0.
-            bias (bool, optional): Whether to include a bias term in the multi-head attention module. Defaults to True.
+            embedding_size (int, optional): The size of the embedding for the Cnn
+             modules and the multi-head attention module. Defaults to 128.
+            nheads (int, optional): The number of attention heads in
+             the multi-head attention module. Defaults to 4.
+            dropout (float, optional): The dropout probability for
+             the multi-head attention module. Defaults to 0.0.
+            bias (bool, optional): Whether to include a bias term in
+             the multi-head attention module. Defaults to True.
 
-        The module consists of two CNN embeddings for time steps t0 and t1, and a MultiHeadAttention module.
         """
-
         super().__init__()
         self.cnn_embedding_t0 = CnnPreTrainedModule()
         self.cnn_embedding_t1 = CnnPreTrainedModule()
@@ -270,15 +307,17 @@ class CnnAttention(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass; runs the following process:
-            1. Flatten the input
+        """Forward pass.
+
+        Runs the following process:
+            1. Flattens the input
             2. Extract features from t=0 and t=1 using two different Cnn modules
             3. Run multi-head attention on the two feature vectors
             4. Reshape the output to match the input shape
 
         Args:
-            x (torch.Tensor): input of shape (``N``, ``num_examples``, ``times_state``, ``height``, ``width``)
+            x (torch.Tensor): input of shape
+             (``N``, ``num_examples``, ``times_state``, ``height``, ``width``)
 
         Returns:
             x (torch.Tensor): output of shape (``N``, ``num_examples``, ``E_out``)
@@ -292,6 +331,8 @@ class CnnAttention(nn.Module):
 
 
 class CrossAttentionClassifier(nn.Module):
+    """CrossAttentionClassifier for the ARC environment."""
+
     def __init__(
         self,
         output_classes: dict,
@@ -300,16 +341,19 @@ class CrossAttentionClassifier(nn.Module):
         dropout: float = 0.0,
         bias: bool = True,
     ):
-        """
-        Initialize a CrossAttentionClassifier.
+        """Initialize a CrossAttentionClassifier.
 
         Args:
-            output_classes (dict): A dictionary mapping output types to the number of classes in each type.
-            embedding_size (int, optional): The size of the embedding dimension. Defaults to 128.
-            num_heads (int, optional): The number of attention heads in the multi-head attention module. Defaults to 4.
-            dropout (float, optional): The dropout probability for the multi-head attention module. Defaults to 0.0.
-            bias (bool, optional): Whether to include a bias term in the multi-head attention module. Defaults to True.
-
+            output_classes (dict): A dictionary mapping output
+             types to the number of classes in each type.
+            embedding_size (int, optional): The size of the
+             embedding dimension. Defaults to 128.
+            nheads (int, optional): The number of attention heads in
+             the multi-head attention module. Defaults to 4.
+            dropout (float, optional): The dropout probability for the
+             multi-head attention module. Defaults to 0.0.
+            bias (bool, optional): Whether to include a bias term in
+             the multi-head attention module. Defaults to True.
         """
         super().__init__()
         self.output_classes = output_classes
@@ -338,14 +382,7 @@ class CrossAttentionClassifier(nn.Module):
         )
 
     def forward(self, embeddings: torch.Tensor) -> TensorDict:
-        """
-        Computes the forward pass of the CrossAttentionClassifier.
-
-        Args:
-            embeddings (torch.Tensor): input embeddings of shape (Batch Size, Sequence Length, Embedding Dimension)
-
-        Returns:
-            TensorDict of logits: A dictionary of output logits, mapping each output type to a tensor of shape (Batch Size, Num_classes)
+        """Computes the forward pass of the CrossAttentionClassifier.
 
         The forward pass consists of the following steps:
 
@@ -353,6 +390,15 @@ class CrossAttentionClassifier(nn.Module):
         2. Apply cross-attention (query attends to the embeddings)
         3. Remove the sequence dimension (1)
         4. Pass through the classifier
+
+        Args:
+            embeddings (torch.Tensor): input embeddings of shape
+             (Batch Size, Sequence Length, Embedding Dimension)
+
+        Returns:
+            TensorDict of logits: A dictionary of output logits,
+            mapping each output type to a tensor of shape (Batch Size, Num_classes)
+
         """
         batch_size = embeddings.size(0)
 

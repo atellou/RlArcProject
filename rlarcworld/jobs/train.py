@@ -1,3 +1,5 @@
+"""Entrypoint to train the D4PG agent on the ARC environment."""
+
 import argparse
 import json
 import logging
@@ -5,7 +7,7 @@ import os
 
 import numpy as np
 import torch
-import yaml
+import yaml  # type: ignore[import-untyped]
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchrl.data.replay_buffers import (
@@ -16,33 +18,41 @@ from torchrl.data.replay_buffers import (
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
-from rlarcworld.algorithms.d4pg import D4PG
+from rlarcworld.algorithms.d4pg import D4PGCore
+from rlarcworld.algorithms.d4pg_trainer import D4PGTrainer
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.utils.beta_scheduler import BetaScheduler
-from rlarcworld.utils.configure_logger import configure_logger
 from rlarcworld.utils.device import enable_cuda
+from rlarcworld.utils.logging_utils import configure_logger
 
 logger = logging.getLogger(__name__)
 
 
 def load_args_from_yaml(file_path: str, key: str) -> dict:
+    """Load a configuration dictionary from a YAML file under a given key.
+
+    Args:
+        file_path: Path to the YAML file.
+        key: Top-level key to extract.
+
+    Returns:
+        The configuration dictionary found under the specified key.
+    """
     with open(file_path) as f:
         args_dict = yaml.safe_load(f)
     return args_dict[key]
 
 
-def check_args(args: dict) -> list[str]:
-    """Validate the arguments and return a list of error messages for any issues found.
+def check_args(args: dict) -> None:
+    """Validate arguments and raise ValueError if any issues are found.
 
     Args:
         args: Dictionary of arguments to validate
 
     Returns:
-        List of error messages, empty if all validations pass
+        None. Raises on invalid arguments.
     """
-
     should_have = {
         "grid_size",
         "color_values",
@@ -66,7 +76,10 @@ def check_args(args: dict) -> list[str]:
                 or args["v_max"].get("n_reward") is None
             ):
                 errors.append(
-                    "num_atoms.n_reward, v_min.n_reward, and v_max.n_reward are required when n_steps > 1"
+                    (
+                        "num_atoms.n_reward, v_min.n_reward, and v_max.n_reward "
+                        "are required when n_steps > 1"
+                    )
                 )
         else:
             if (
@@ -75,7 +88,10 @@ def check_args(args: dict) -> list[str]:
                 or args["v_max"].get("n_reward") is not None
             ):
                 errors.append(
-                    "num_atoms.n_reward, v_min.n_reward, and v_max.n_reward should not be specified when n_steps is None"
+                    (
+                        "num_atoms.n_reward, v_min.n_reward, and v_max.n_reward "
+                        "should not be specified when n_steps is None"
+                    )
                 )
     if errors:
         raise ValueError("Invalid arguments: \n" + "\n".join(errors))
@@ -85,7 +101,10 @@ def check_args(args: dict) -> list[str]:
         or args["v_max"].get("binary") is not None
     ):
         errors.append(
-            "num_atoms.binary, v_min.binary, and v_max.binary should not be specified when n_steps is None"
+            (
+                "num_atoms.binary, v_min.binary, and v_max.binary should not be "
+                "specified when n_steps is None"
+            )
         )
     if (
         args["num_atoms"].get("pixel_wise") is not None
@@ -93,7 +112,10 @@ def check_args(args: dict) -> list[str]:
         or args["v_max"].get("pixel_wise") is not None
     ):
         errors.append(
-            "num_atoms.pixel_wise, v_min.pixel_wise, and v_max.pixel_wise should not be specified when n_steps is None"
+            (
+                "num_atoms.pixel_wise, v_min.pixel_wise, and v_max.pixel_wise "
+                "should not be specified when n_steps is None"
+            )
         )
     if errors:
         raise ValueError("Invalid arguments: \n" + "\n".join(errors))
@@ -108,8 +130,7 @@ def train_d4pg(
     tensorboard_log_dir: str,
     args: dict,
 ):
-    """
-    Train a D4PG agent on the ARC environment.
+    """Train a D4PG agent on the ARC environment.
 
     Args:
         config_key (str): Key for the configuration in the YAML file
@@ -166,19 +187,7 @@ def train_d4pg(
         worker_init_fn=lambda worker_id: torch.manual_seed(seed + worker_id),
     )
 
-    logger.info(f"Load Datasets from {validation_data_uri}")
-    dataset = ArcDataset(
-        arc_dataset_dir=validation_data_uri,
-        keep_in_memory=False,
-        transform=ArcSampleTransformer(
-            (args["grid_size"], args["grid_size"]), examples_stack_dim=10
-        ),
-    )
-    validation_samples = DataLoader(
-        dataset=dataset,
-        batch_size=args["loader_batch_size"],
-        worker_init_fn=lambda worker_id: torch.manual_seed(seed + worker_id),
-    )
+    # Validation dataset can be set up similarly if needed.
 
     # Set up environment
     env = ArcBatchGridEnv(
@@ -214,7 +223,6 @@ def train_d4pg(
     )
 
     # Set up replay buffer
-    beta_scheduler = BetaScheduler(start=args["beta"], end=1, steps=args["max_steps"])
     sampler = PrioritizedSampler(
         args["replay_buffer_size"],
         alpha=args["alpha"],
@@ -223,39 +231,57 @@ def train_d4pg(
     storage = LazyMemmapStorage(args["replay_buffer_size"])
     rb = TensorDictReplayBuffer(storage=storage, sampler=sampler)
 
-    # Set up D4PG algorithm
-    d4pg = D4PG(
-        env=env,
-        train_samples=train_samples,
-        validation_samples=validation_samples,
+    # Set up D4PG core and trainer
+    core = D4PGCore(
         actor=actor,
         critic=critic,
-        batch_size=args["batch_size"],
-        replay_buffer=rb,
-        warmup_buffer_ratio=args["warmup_buffer_ratio"],
-        target_update_frequency=args["target_update_frequency"],
-        beta_scheduler=beta_scheduler,
-        n_steps=args["n_steps"],
-        gamma=args["gamma"],
         policy_lr=args["policy_lr"],
         critic_lr=args["critic_lr"],
         lr_scheduler_kwargs=args["lr_scheduler"],
+        gamma=args["gamma"],
         tau=args["tau"],
-        tb_writer=tb_writer,
-        save_path=models_dir,
-        config=device_configs,
+        n_steps=args["n_steps"],
+        config=dict(device_configs),
     )
 
-    # Set up training loop
-    d4pg.fit(
+    # Step stream factory using EnvStepper-like behavior is outside this file;
+    # here we provide a minimal closure to iterate the dataloader and env.
+    def step_stream_factory(epoch: int):
+        for batch in train_samples:
+            # classic reset per batch
+            env.reset(options={"batch": batch["task"], "examples": batch["examples"]})
+            # One step per batch for simplicity; integrate your own stepper here
+            state = env.get_state(unsqueeze=1)
+            action_probs = actor(state)
+            actions = {k: torch.argmax(v, dim=-1) for k, v in action_probs.items()}
+            obs, reward, terminated, truncated, _ = env.step(actions)
+            next_state = env.get_state(unsqueeze=1)
+            yield {
+                "state": state,
+                "actions": action_probs,
+                "reward": {
+                    "pixel_wise": reward.unsqueeze(-1),
+                    "binary": env.get_source_env_reward().unsqueeze(-1),
+                },
+                "next_state": next_state,
+                "terminated": torch.tensor(
+                    [terminated], device=device_configs["device"]
+                ),
+            }
+
+    trainer = D4PGTrainer(
+        core=core,
+        step_stream_factory=step_stream_factory,
+        replay_buffer=rb,
+        batch_size=args["batch_size"],
+        warmup_buffer_ratio=args["warmup_buffer_ratio"],
+        target_update_frequency=args["target_update_frequency"],
+    )
+
+    # Run training loop (epochs/steps control via trainer)
+    trainer.train(
         epochs=args["max_epochs"],
-        max_steps=args["max_steps"],
-        validation_steps_frequency=args["validation_steps_frequency"],
-        validation_steps_per_train_step=args["validation_steps_per_train_step"],
-        validation_steps_per_episode=args["validation_steps_per_episode"],
-        logger_frequency=args["logger_frequency"],
-        checkpoint_frequency=checkpoint_frequency,
-        checkpoint_dir=checkpoint_dir,
+        max_steps_per_epoch=args["max_steps"],
     )
 
 

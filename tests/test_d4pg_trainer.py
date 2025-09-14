@@ -34,7 +34,7 @@ def test_d4pg_trainer_training_updates_and_loss_ranges(
     losses_actor = []
     losses_critic = []
 
-    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+    def on_step(epoch, step, loss_actor, loss_critic, batch):
         if loss_actor is not None:
             losses_actor.append(loss_actor)
         if loss_critic is not None:
@@ -110,8 +110,8 @@ def test_d4pg_trainer_training_updates_and_loss_ranges(
     assert critic_changed, "Critic parameters did not update in trainer loop"
 
     # Losses recorded: finite and reasonable ranges (broad sanity bounds)
-    assert all(torch.isfinite(torch.tensor(v)) for v in losses_actor)
-    assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+    assert all(torch.isfinite(v) for v in losses_actor)
+    assert all(torch.isfinite(v) for v in losses_critic)
 
 
 def test_d4pg_trainer_per_update_priority_called(
@@ -223,9 +223,9 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
     first_training_step = None
     losses_actor, losses_critic = [], []
 
-    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+    def on_step(epoch, step, loss_actor, loss_critic, batch):
         nonlocal first_training_step
-        if decay_flag and first_training_step is None:
+        if batch is not None and first_training_step is None:
             first_training_step = step
         if loss_actor is not None:
             losses_actor.append(loss_actor)
@@ -243,7 +243,8 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
         device=str(device),
     )
 
-    # Compute expected minimal steps before training starts: find smallest n such that n*batch_size > capacity*warmup_ratio
+    # Compute expected minimal steps before training starts:
+    # find smallest n such that n*batch_size > capacity*warmup_ratio
     import math
 
     threshold = capacity * warmup_ratio
@@ -256,8 +257,8 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
     ), "Training did not start after warmup threshold"
     assert first_training_step >= expected_min_steps - 1  # step is zero-based index
     # After warmup, we should have at least one finite loss recorded
-    assert any(torch.isfinite(torch.tensor(v)) for v in losses_actor)
-    assert any(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+    assert any(torch.isfinite(v) for v in losses_actor)
+    assert any(torch.isfinite(v) for v in losses_critic)
 
 
 def test_d4pg_trainer_real_replay_buffer_and_target_updates(
@@ -287,10 +288,7 @@ def test_d4pg_trainer_real_replay_buffer_and_target_updates(
     # Track losses too
     losses_actor, losses_critic = [], []
 
-    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
-        # Only check when a training step happened
-        if not decay_flag:
-            return
+    def on_step(epoch, step, loss_actor, loss_critic, batch):
         # Record losses
         if loss_actor is not None:
             losses_actor.append(loss_actor)
@@ -325,8 +323,8 @@ def test_d4pg_trainer_real_replay_buffer_and_target_updates(
     assert updates_detected["critic"] >= 1
     # Sanity ranges to catch divergence; these are intentionally broad
     assert len(losses_actor) > 0 and len(losses_critic) > 0
-    assert all(torch.isfinite(torch.tensor(v)) for v in losses_actor)
-    assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+    assert all(torch.isfinite(v) for v in losses_actor)
+    assert all(torch.isfinite(v) for v in losses_critic)
     assert all(
         abs(v) < 1e3 for v in losses_actor
     ), f"Actor loss out of range: {losses_actor}"
@@ -419,7 +417,7 @@ def test_d4pg_trainer_per_warmup_and_priority(
     per_buffer = _make_per_buffer(max_size=10)
     losses_actor, losses_critic = [], []
 
-    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+    def on_step(epoch, step, loss_actor, loss_critic, batch):
         # Record losses if present
         if loss_actor is not None:
             losses_actor.append(loss_actor)
@@ -431,7 +429,8 @@ def test_d4pg_trainer_per_warmup_and_priority(
         step_stream_factory=step_stream_factory,
         replay_buffer=per_buffer,
         batch_size=batch_size,
-        warmup_buffer_ratio=0.5,  # need >5 samples before training starts (given max_size=10)
+        # need >5 samples before training starts (given max_size=10)
+        warmup_buffer_ratio=0.5,
         target_update_frequency=2,
         on_step=on_step,
         device=str(device),
@@ -441,10 +440,11 @@ def test_d4pg_trainer_per_warmup_and_priority(
 
     # Ensure priority update attempted
     assert per_buffer.update_called is True
-    # Training should have occurred after warmup threshold; losses should be recorded and finite
+    # Training should have occurred after warmup threshold;
+    # losses should be recorded and finite
     assert len(losses_actor) > 0 and len(losses_critic) > 0
-    assert all(torch.isfinite(torch.tensor(v)) for v in losses_actor)
-    assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+    assert all(torch.isfinite(v) for v in losses_actor)
+    assert all(torch.isfinite(v) for v in losses_critic)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="AMP test requires CUDA")
@@ -480,7 +480,7 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
 
     losses_actor, losses_critic = [], []
 
-    def on_step(epoch, step, loss_actor, loss_critic, batch, decay_flag):
+    def on_step(epoch, step, loss_actor, loss_critic, batch):
         if loss_actor is not None:
             losses_actor.append(loss_actor)
         if loss_critic is not None:
@@ -502,5 +502,5 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
 
     # Assert training produced finite losses
     assert len(losses_actor) > 0 and len(losses_critic) > 0
-    assert all(torch.isfinite(torch.tensor(v)) for v in losses_actor)
-    assert all(torch.isfinite(torch.tensor(v)) for v in losses_critic)
+    assert all(torch.isfinite(v) for v in losses_actor)
+    assert all(torch.isfinite(v) for v in losses_critic)

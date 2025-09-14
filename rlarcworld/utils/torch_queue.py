@@ -1,7 +1,21 @@
+"""Typed tensor-backed FIFO queue utilities.
+
+This module defines `TorchQueue`, a thin tensor subclass that maintains a
+bounded queue along a specified dimension. It provides convenient `push` and
+`pop` operations while preserving device/dtype.
+"""
+
 import torch
 
 
 class TorchQueue(torch.Tensor):
+    """Tensor subclass implementing a bounded FIFO queue along one dimension.
+
+    The queue is represented as a tensor and stores a fixed number of items
+    along the configured `queue_dim`. When pushing beyond capacity, the oldest
+    entries are discarded to maintain the maximum `queue_size`.
+    """
+
     _queue_size: int
     _queue_dim: int
 
@@ -13,13 +27,13 @@ class TorchQueue(torch.Tensor):
         *args,
         **kwargs,
     ):
-        """
-        Creates a new TorchQueue instance.
+        """Creates a new TorchQueue instance.
 
         Args:
             data (torch.Tensor): The data to be stored in the queue.
             queue_size (int): The maximum size of the queue.
-            queue_dim (int, optional): The dimension along which the queue is stored. Defaults to 0.
+            queue_dim (int, optional): The dimension along which the queue is
+                stored. Defaults to 0.
             *args: Additional arguments to pass to the parent class.
             **kwargs: Additional keyword arguments to pass to the parent class.
 
@@ -31,18 +45,19 @@ class TorchQueue(torch.Tensor):
         return obj
 
     def __init__(self, data: torch.Tensor, queue_size: int, queue_dim: int = 0):
-        """
-        Initializes a new TorchQueue instance.
+        """Initializes a new TorchQueue instance.
 
         Args:
             data (torch.Tensor): The data to be stored in the queue.
             queue_size (int): The maximum size of the queue.
-            queue_dim (int, optional): The dimension along which the queue is stored. Defaults to 0.
+            queue_dim (int, optional): The dimension along which the queue is
+                stored. Defaults to 0.
 
         Raises:
             AssertionError: If queue_size is not a positive integer.
             AssertionError: If queue_dim is not an integer.
-            AssertionError: If the size of the queue dimension is greater than the queue size.
+            AssertionError: If the size of the queue dimension is greater than
+                the queue size.
         """
         assert (
             isinstance(queue_size, int) and queue_size > 0
@@ -58,9 +73,7 @@ class TorchQueue(torch.Tensor):
         self.__reversed_indices = torch.arange(-1 - queue_size, 0).to(self.device)
 
     def clone(self, *args, **kwargs) -> "TorchQueue":
-        """
-        Clones the TorchQueue instance.
-        """
+        """Clones the TorchQueue instance."""
         return TorchQueue(
             super().clone(*args, **kwargs),
             queue_size=self._queue_size,
@@ -68,6 +81,11 @@ class TorchQueue(torch.Tensor):
         )
 
     def to(self, *args, **kwargs) -> "TorchQueue":
+        """Return a copy on the specified device/dtype preserving queue attrs.
+
+        Mirrors `torch.Tensor.to` but ensures the returned value is a
+        `TorchQueue` with the same `queue_size` and `queue_dim` metadata.
+        """
         new_obj = super().to(*args, **kwargs)
         if new_obj is self:
             return self
@@ -89,8 +107,7 @@ class TorchQueue(torch.Tensor):
         return self.shape[self._queue_dim] == self._queue_size
 
     def push(self, item: torch.Tensor) -> "TorchQueue":
-        """
-        Adds an item to the queue. If the queue is full, the oldest item is removed first.
+        """Add an item; if full, drop the oldest element along `queue_dim`.
 
         Args:
             item (torch.Tensor): The item to be added to the queue.
@@ -110,9 +127,7 @@ class TorchQueue(torch.Tensor):
         return TorchQueue(item, queue_size=self._queue_size, queue_dim=self._queue_dim)
 
     def __correct_queue_size(self, item: torch.Tensor = None) -> "TorchQueue":
-        """
-        Correct the size of the queue along the specified dimension when full.
-        """
+        """Correct the size of the queue along the specified dimension when full."""
         if item is None:
             item = self
         return TorchQueue(
@@ -126,19 +141,18 @@ class TorchQueue(torch.Tensor):
         )
 
     def pop(self) -> tuple[torch.Tensor, "TorchQueue"]:
-        """
-        Pops the oldest elements along the specified dimension.
+        """Pops the oldest elements along the specified dimension.
 
         Returns:
             torch.Tensor: The oldest item in the queue.
             TorchQueue: The updated queue without the oldest item.
         """
         # Build indices to slice along queue_dim
-        indices_oldest = [slice(None)] * self.ndim
+        indices_oldest: list[object] = [slice(None)] * self.ndim
         indices_oldest[self._queue_dim] = 0
         oldest = self[tuple(indices_oldest)]
 
-        indices_rest = [slice(None)] * self.ndim
+        indices_rest: list[object] = [slice(None)] * self.ndim
         indices_rest[self._queue_dim] = slice(1, None)
         rest = self[tuple(indices_rest)]
         return oldest, TorchQueue(

@@ -1,11 +1,12 @@
 import pytest
 import torch
 
-from rlarcworld.utils.distributions import categorical_projection
+from rlarcworld.algorithms.distributions import categorical_projection
 
 
 def make_support(num_atoms=5, v_min=-2.0, v_max=2.0, device="cpu"):
-    # categorical_projection expects z_atoms to broadcast with (batch, 1), so shape (1, num_atoms)
+    # categorical_projection expects z_atoms to broadcast with (batch, 1),
+    # so shape (1, num_atoms)
     z_atoms = torch.linspace(v_min, v_max, steps=num_atoms, device=device).view(1, -1)
     return z_atoms, v_min, v_max, num_atoms
 
@@ -117,7 +118,8 @@ def test_terminated_independent_of_nsteps(n_steps, term_flag):
         n_steps=n_steps,
     )
 
-    # For terminated=1, projection should ignore next_q_dist shift (gamma term) regardless of n_steps
+    # For terminated=1, projection should ignore next_q_dist shift (gamma term)
+    # regardless of n_steps
     if term_flag == 1:
         proj_n1 = categorical_projection(
             next_q_dist,
@@ -157,7 +159,8 @@ def test_gamma_zero_behavior():
         next_q_dist,
         rewards,
         terminated,
-        gamma=0.0,  # should ignore next_q_dist support and project purely around rewards
+        # should ignore next_q_dist support and project purely around rewards
+        gamma=0.0,
         z_atoms=z_atoms,
         v_min=v_min,
         v_max=v_max,

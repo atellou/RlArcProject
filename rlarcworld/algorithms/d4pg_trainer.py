@@ -1,3 +1,10 @@
+"""Trainer wrapper around D4PGCore with pluggable components.
+
+This module contains a lightweight trainer that orchestrates sampling,
+updates, target network sync, and optional callbacks for logging,
+validation, and checkpointing.
+"""
+
 from collections.abc import Callable, Iterator
 from typing import Any, Protocol
 
@@ -7,46 +14,80 @@ from tensordict import TensorDict
 from .d4pg import D4PGCore
 
 
+class ValidateFn(Protocol):
+    """Validation function signature."""
+
+    def __call__(self, epoch: int, step: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return validation metrics for the given epoch and step."""
+        ...
+
+
+class CheckpointPayloadFn(Protocol):
+    """Checkpoint payload function signature."""
+
+    def __call__(
+        self, epoch: int, step: int, actor: torch.nn.Module, critic: torch.nn.Module
+    ) -> dict[str, Any]:
+        """Build a checkpoint payload from trainer state and models."""
+        ...
+
+
 class ReplayBufferProto(Protocol):
-    """A minimal protocol for prioritized or uniform replay buffers."""
+    """A minimal protocol for prioritized or uniform replay buffers.
 
-    def extend(self, batch: torch.Tensor) -> Any: ...
+    The implementing buffer may be prioritized or uniform and should expose
+    extend/sample/update_priority and an optional ``storage`` attribute.
+    """
 
-    def sample(self, batch_size: int) -> TensorDict: ...
+    def extend(self, batch: torch.Tensor) -> Any:
+        """Append a batch of transitions and return indices/handles."""
+        ...
 
-    def update_priority(self, indices: Any, priorities: torch.Tensor) -> None: ...
+    def sample(self, batch_size: int) -> TensorDict:
+        """Sample a batch of transitions as a TensorDict."""
+        ...
+
+    def update_priority(self, indices: Any, priorities: torch.Tensor) -> None:
+        """Update sampling priorities for the given indices."""
+        ...
 
     @property
-    def storage(self) -> Any: ...
+    def storage(self) -> Any:  # noqa: D401 - property described in class doc
+        """Underlying storage implementation (buffer-specific)."""
+        ...
 
 
-# Callback/hook signatures
-OnStepFn = Callable[[int, int, TensorDict, torch.Tensor, torch.Tensor], None]
+# Callback/hook signatures (epoch, step, loss_actor, loss_critic, batch)
+OnStepFn = Callable[
+    [int, int, torch.Tensor | None, torch.Tensor | None, TensorDict | None], None
+]
 OnValidateFn = Callable[[int, int, torch.Tensor, torch.Tensor, TensorDict], None]
 OnCheckpointFn = Callable[[dict[str, Any]], None]
 
 
 class D4PGTrainer:
-    """
-    Decoupled trainer/wrapper for D4PGCore.
+    """Decoupled trainer/wrapper for D4PGCore.
 
-    This wrapper is designed to be environment- and logging-agnostic. It relies on
-    dependency injection through callables:
-      - step_stream_factory: returns an iterator/generator that yields per-step TensorDicts
-        with the keys expected by the core ('state', 'actions', 'reward', 'next_state', 'terminated').
+    This wrapper is designed to be environment- and logging-agnostic. It
+    relies on dependency injection through callables:
+      - step_stream_factory: returns an iterator that yields per-step
+        TensorDicts with keys expected by the core ('state', 'actions',
+        'reward', 'next_state', 'terminated').
       - replay_buffer (optional): any object satisfying ReplayBufferProto.
-      - on_step/on_validate/on_checkpoint (optional): callbacks to plug logging/traceability/checkpointing.
+      - on_step/on_validate/on_checkpoint (optional): callbacks for
+        logging/traceability/checkpointing.
 
-    The wrapper only orchestrates: sampling, training steps, target updates, and hooks.
+    The wrapper only orchestrates sampling, training steps, target updates,
+    and calling hooks.
     """
 
     def __init__(
         self,
         *,
         core: D4PGCore,
-        step_stream_factory: Callable[[int], Iterator[TensorDict]] | None = None,
+        batch_size: int,
+        step_stream_factory: Callable[[int], Iterator[TensorDict]],
         replay_buffer: ReplayBufferProto | None = None,
-        batch_size: int | None = None,
         warmup_buffer_ratio: float = 0.2,
         target_update_frequency: int = 10,
         on_step: OnStepFn | None = None,
@@ -54,20 +95,23 @@ class D4PGTrainer:
         on_checkpoint: OnCheckpointFn | None = None,
         device: str | None = None,
     ) -> None:
-        """
-        Initialize the trainer with the provided components.
+        """Initialize the trainer with the provided components.
 
         Args:
             core (D4PGCore): The core D4PG agent to train.
-            step_stream_factory (Optional[Callable[[int], Iterator[TensorDict]]]): A factory function that returns an iterator/generator that yields per-step TensorDicts with the keys expected by the core ('state', 'actions', 'reward', 'next_state', 'terminated'). Defaults to None.
-            replay_buffer (Optional[ReplayBufferProto]): A replay buffer to store transitions for experience replay. Defaults to None.
-            batch_size (Optional[int]): The batch size for training. Defaults to None.
-            warmup_buffer_ratio (float): The ratio of buffer to fill before training. Defaults to 0.2.
-            target_update_frequency (int): The frequency of target updates. Defaults to 10.
-            on_step (Optional[OnStepFn]): A callback function to plug logging/traceability/checkpointing. Defaults to None.
-            on_validate (Optional[OnValidateFn]): A callback function to plug logging/traceability/checkpointing. Defaults to None.
-            on_checkpoint (Optional[OnCheckpointFn]): A callback function to plug logging/traceability/checkpointing. Defaults to None.
-            device (Optional[str]): The device to use for training. Defaults to None.
+            batch_size (int): The batch size for training.
+            step_stream_factory (Optional[Callable[[int], Iterator[TensorDict]]]):
+                Factory returning an iterator that yields per-step TensorDicts
+                with keys expected by the core ('state', 'actions', 'reward',
+                'next_state', 'terminated').
+            replay_buffer (Optional[ReplayBufferProto]): A replay buffer to
+                store transitions for experience replay.
+            warmup_buffer_ratio (float): Ratio of buffer to fill before training.
+            target_update_frequency (int): Frequency of target updates.
+            on_step (Optional[OnStepFn]): Callback for logging/tracing.
+            on_validate (Optional[OnValidateFn]): Callback for validation.
+            on_checkpoint (Optional[OnCheckpointFn]): Callback for checkpointing.
+            device (Optional[str]): The device to use for training.
         """
         self.core = core
         self.step_stream_factory = step_stream_factory
@@ -78,7 +122,9 @@ class D4PGTrainer:
         self.on_step = on_step
         self.on_validate = on_validate
         self.on_checkpoint = on_checkpoint
-        self.device = device or next(core.parameters()).device
+        self.device = (
+            device or getattr(core, "device", None) or str(torch.device("cpu"))
+        )
 
         if self.replay_buffer is None and self.batch_size is None:
             raise ValueError("batch_size must be provided when replay_buffer is None")
@@ -149,23 +195,24 @@ class D4PGTrainer:
         epochs: int = 1,
         max_steps_per_epoch: int = -1,
         validate_every_steps: int = -1,
-        validate_fn: None
-        | (Callable[[int, int], tuple[torch.Tensor, torch.Tensor, TensorDict]]) = None,
+        validate_fn: None | ValidateFn = None,
         checkpoint_every_steps: int = -1,
-        checkpoint_payload_fn: None
-        | (Callable[[int, int, torch.Tensor, torch.Tensor], dict[str, Any]]) = None,
+        checkpoint_payload_fn: None | CheckpointPayloadFn = None,
     ) -> None:
         """Run a training loop using the provided step stream and hooks.
 
         Args:
-            epochs (int): Number of epochs to train for
-            max_steps_per_epoch (int): Maximum number of steps per epoch (-1 for no limit)
-            validate_every_steps (int): Run validation every N steps (-1 to disable)
-            validate_fn (Optional[Callable[[int, int], Tuple[torch.Tensor, torch.Tensor, TensorDict]]]): Validation function. Defaults to None.
-            checkpoint_every_steps (int): Save checkpoint every N steps (-1 to disable)
-            checkpoint_payload_fn (Optional[Callable[[int, int, torch.Tensor, torch.Tensor], Dict[str, Any]]]): Checkpoint payload function. Defaults to None.
+            epochs (int): Number of epochs to train for.
+            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
+            validate_every_steps (int): Run validation every N steps (-1 to
+                disable).
+            validate_fn (ValidateFn): Validation function receiving (epoch, step) and
+                returning a tuple of (actor_metric, critic_metric) tensors.
+            checkpoint_every_steps (int): Save checkpoint every N steps (-1 to
+                disable).
+            checkpoint_payload_fn (CheckpointPayloadFn): Function that builds a
+             checkpoint payload dict from (epoch, step, actor_module, critic_module).
         """
-
         for epoch in range(epochs):
             step_stream = self.step_stream_factory(epoch)
 
@@ -173,7 +220,6 @@ class D4PGTrainer:
 
             for step_idx, step_state in enumerate(step_stream):
                 iteration = epoch * max_steps_per_epoch + step_idx
-                decay_flag = False
 
                 # Store transition and maybe sample batch
                 batch = self._maybe_store_and_sample(step_state)
@@ -187,25 +233,15 @@ class D4PGTrainer:
                         update_critic=True,
                         compute_td_error=True,  # Enable TD error computation for PER
                     )
-                    decay_flag = True
 
                 # Call step callback
-                if self.on_step is not None:
-                    self.on_step(
-                        epoch=epoch,
-                        step=step_idx,
-                        loss_actor=(
-                            loss_actor.item() if loss_actor is not None else None
-                        ),
-                        loss_critic=(
-                            loss_critic.item() if loss_critic is not None else None
-                        ),
-                        batch=batch,
-                        decay_flag=decay_flag,
-                    )
+                if self.on_step is not None and batch is not None:
+                    la = loss_actor if isinstance(loss_actor, torch.Tensor) else None
+                    lc = loss_critic if isinstance(loss_critic, torch.Tensor) else None
+                    self.on_step(epoch, step_idx, la, lc, batch)
 
                 # Update target networks periodically
-                if decay_flag and iteration % self.target_update_frequency == 0:
+                if batch is not None and iteration % self.target_update_frequency == 0:
                     self.core.update_target_networks()
 
                 # Validation
@@ -215,7 +251,8 @@ class D4PGTrainer:
                     and validate_fn is not None
                 ):
                     with torch.no_grad():
-                        v_actor, v_critic, ctx = validate_fn(epoch, step_idx)
+                        v_actor, v_critic = validate_fn(epoch, step_idx)
+                        ctx = TensorDict({}, batch_size=[])
                     if self.on_validate is not None:
                         self.on_validate(epoch, step_idx, v_actor, v_critic, ctx)
 

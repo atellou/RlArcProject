@@ -1,6 +1,9 @@
+"""ARC dataset and sample transformations utilities."""
+
 import json
 import logging
 import os
+from typing import Callable
 
 import numpy as np
 import torch
@@ -11,8 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class ArcSampleTransformer:
-    """
-    Resize and Concatenate the grids in a sample to a given size.
+    """Resize and Concatenate the grids in a sample to a given size.
 
     Args:
         output_size (tuple or int): Desired output size. If tuple, output is
@@ -22,32 +24,37 @@ class ArcSampleTransformer:
 
     def __init__(
         self,
-        output_size: tuple[int],
+        output_size: tuple[int, int],
         examples_stack_dim: int = 10,
         padding_constant_value: int = -1,
         zero_based_correction: int = 1,
     ):
-        """
-        Transformations for ARC samples dataset, specific to dimension transformations.
+        """Transformations for ARC samples dataset.
+
         Args:
-            output_size (tuple): The desired output size for the grids.
-            examples_stack_dim (int, optional): The dimension of the stack of examples. Defaults to 10.
-            padding_constant_value (int, optional): The constant value to pad the grids. Defaults to -1.
-            zero_based_correction (int, optional): The correction to apply to make the grids minimum value 0. Defaults to 1 (grid+1).
+            output_size (tuple[int, int]): Desired output size for the grids as
+                (height, width).
+            examples_stack_dim (int, optional): Dimension of the stack of
+                examples. Defaults to 10.
+            padding_constant_value (int, optional): Constant value to pad the
+                grids. Defaults to -1.
+            zero_based_correction (int, optional): Correction to make grid's
+                minimum value 0. Defaults to 1 (grid+1).
         """
-        assert isinstance(
-            output_size, (tuple)
-        ), "The output size should be tuple with the last two elements being the height, width."
+        assert (
+            isinstance(output_size, tuple) and len(output_size) == 2
+        ), "The output size should be a tuple (height, width)."
         self.zero_based_correction = zero_based_correction
         self.constant_value = padding_constant_value
         self.output_size = output_size
         self.examples_stack_dim = examples_stack_dim
 
     def pad_to_size(self, grid: torch.Tensor) -> torch.Tensor:
-        """
-        Pad the grid to the given size.
+        """Pad the grid to the given size.
+
         Args:
             grid (torch.Tensor): The grid to be padded.
+
         Returns:
             torch.Tensor: The padded grid.
         """
@@ -68,11 +75,12 @@ class ArcSampleTransformer:
     def concat_unsqueeze(
         self, grid_one: torch.Tensor, grid_two: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Concatenate two grids in a third dimension.
+        """Concatenate two grids in a third dimension.
+
         Args:
             grid_one (torch.Tensor): The first grid.
-            output_grid (torch.Tensor): The second grid.
+            grid_two (torch.Tensor): The second grid.
+
         Returns:
             torch.Tensor: The concatenated grid.
         """
@@ -82,12 +90,15 @@ class ArcSampleTransformer:
         return torch.cat((grid_one.unsqueeze(0), grid_two.unsqueeze(0)), dim=0)
 
     def concat_examples(self, train_examples: list[dict]) -> torch.Tensor:
-        """
-        Stack the train examples into a single tensor.
+        """Stack the train examples into a single tensor.
+
         Args:
-            train_examples (list): A list of dictionaries containing the input and output grids.
+            train_examples (list): A list of dictionaries containing the input
+                and output grids.
+
         Returns:
-            torch.Tensor: The concatenated tensor of train examples of shape (Examples, Stages, Grid Height, Grid Width).
+            torch.Tensor: The concatenated tensor of train examples of shape
+            (Examples, Stages, Grid Height, Grid Width).
         """
         logger.debug("Concat examples...")
         return torch.cat(
@@ -101,11 +112,12 @@ class ArcSampleTransformer:
             dim=0,
         )
 
-    def __call__(self, sample: dict[list]) -> torch.Tensor:
-        """
-        Apply the transformations to the sample.
+    def __call__(self, sample: dict) -> dict:
+        """Apply the transformations to the sample.
+
         Args:
             sample (dict): A dictionary containing the input and output grids.
+
         Returns:
             dict: The transformed sample.
         """
@@ -123,7 +135,10 @@ class ArcSampleTransformer:
             )
 
             assert sample["examples"].shape[0] == self.examples_stack_dim, ValueError(
-                "The number of examples (second dimension) should be equal to examples_stack_dim. "
+                (
+                    "The number of examples (second dimension) should be "
+                    "equal to examples_stack_dim. "
+                )
                 + "Train Examples shape: {},Padding size: {}".format(
                     sample["examples"].shape, pad_size
                 )
@@ -146,28 +161,29 @@ class ArcDataset(Dataset):
         self,
         arc_dataset_dir: str,
         keep_in_memory: bool = False,
-        transform: callable = None,
-        gcs_bucket_name: str = None,
+        transform: Callable[[dict], dict] | None = None,
+        gcs_bucket_name: str | None = None,
     ):
-        """
-        Creates a Torch Dataset from the ARC dataset.
+        """Creates a Torch Dataset from the ARC dataset.
 
         Args:
             arc_dataset_dir (string): Directory with all the dataset samples.
-            keep_in_memory (bool, optional): Whether to keep the dataset in memory.
-            transform (callable, optional): Optional transform to be applied on a sample.
+            keep_in_memory (bool, optional): Whether to keep the dataset in
+                memory.
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
             gcs_bucket_name (string, optional): GCS bucket name.
         """
         if arc_dataset_dir.startswith("gs://"):
             arc_dataset_dir = arc_dataset_dir.split("gs://")[-1]
-            arc_dataset_dir = arc_dataset_dir.split("/")
-            gcs_bucket_name = arc_dataset_dir[0]
-            arc_dataset_dir = "/".join(arc_dataset_dir[1:])
+            parts = arc_dataset_dir.split("/")
+            gcs_bucket_name = parts[0]
+            arc_dataset_dir = "/".join(parts[1:])
 
         self.arc_dir = arc_dataset_dir
         self.keep_in_memory = keep_in_memory
         self.transform = transform
-        self.transformed = set()
+        self.transformed: set[tuple[str, int]] = set()
         self.gcs_bucket_name = gcs_bucket_name
         if self.gcs_bucket_name is not None:
             self.storage_client = storage.Client(os.environ["ML_PROJECT_ID"])
@@ -176,13 +192,13 @@ class ArcDataset(Dataset):
             self.bucket = None
         self.load_dataset()
 
-    def open_file(self, file_key: str, test_index: int = None) -> dict:
-        """
-        Open file and return train and test samples.
+    def open_file(self, file_key: str, test_index: int | None = None) -> dict:
+        """Open file and return train and test samples.
 
         Args:
             file_key (str): The key of the file to open.
             test_index (int, optional): The index of the test sample to return.
+
         Returns:
             dict: The train and test samples.
         """
@@ -218,14 +234,16 @@ class ArcDataset(Dataset):
         return {"train": sample["train"], "test": sample["test"]}
 
     def load_dataset(self):
-        """
-        Creates a dictionary of file location or samples from the dataset.
-        For the samples with more than one test pair,
-        the key for the dictionary is added and underscore plus test pair index.
+        """Creates a dictionary of file location or samples from the dataset.
+
+        For the samples with more than one test pair, the key for the
+        dictionary is added and underscore plus test pair index.
 
         Two behaviors:
-        If "self.keep_in_memory" is False (default) create dictionary of file_id[key]:file_dir[value] pairs.
-        If "self.keep_in_memory" is True create dictionary of file_id[key]:[value] pairs.
+        If "self.keep_in_memory" is False (default) create dictionary of
+        file_id[key]:file_dir[value] pairs.
+        If "self.keep_in_memory" is True create dictionary of
+        file_id[key]:[value] pairs.
 
         Returns:
             None
@@ -254,19 +272,21 @@ class ArcDataset(Dataset):
         self.file_ids = list(self.samples.keys())
 
     def __len__(self) -> int:
+        """Return the number of samples in the dataset."""
         return len(self.file_ids)
 
-    def __getitem__(self, idx: int) -> dict:
-        """
-        Returns extracted and transformed sample from the dataset.
+    def __getitem__(self, idx: int | torch.Tensor) -> dict:
+        """Returns extracted and transformed sample from the dataset.
+
         Args:
             idx (int): Index of the sample to be returned.
+
         Returns:
             dict: The transformed sample.
         """
         logger.debug(f"Sample index: {idx}")
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
+        if isinstance(idx, torch.Tensor):
+            idx = int(idx.item())
 
         file_id = self.file_ids[idx]
         logger.debug(f"File id: {file_id}")
@@ -278,7 +298,7 @@ class ArcDataset(Dataset):
 
         sample.setdefault("examples", sample.pop("train", None))
         sample.setdefault("task", sample.pop("test", None))
-        if self.transform:
+        if self.transform is not None:
             logger.debug("Transform data")
             if self.keep_in_memory and file_id not in self.transformed:
                 sample = self.transform(sample)

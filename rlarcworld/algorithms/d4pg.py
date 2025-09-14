@@ -1,15 +1,21 @@
+"""Core components for D4PG training (algorithm-only logic)."""
+
 import copy
+from typing import cast
 
 import torch
 import torch.optim as optim
 from tensordict import TensorDict
 
+from rlarcworld.algorithms.distributions import categorical_projection
 from rlarcworld.utils.device import enable_cuda
-from rlarcworld.utils.distributions import categorical_projection
 
 
 class AmpScaler:
+    """Small wrapper that makes AMP usage optional and ergonomic."""
+
     def __init__(self, amp_enabled: bool, device: str) -> None:
+        """Initialize AMP scaler and autocast context if enabled."""
         if amp_enabled:
             self.scaler = torch.amp.GradScaler(device=device)
             self._cm = torch.amp.autocast(device_type="cuda")
@@ -18,21 +24,25 @@ class AmpScaler:
             self._cm = None
 
     def __enter__(self):
+        """Enter autocast context if AMP is enabled."""
         if self._cm is not None:
             return self._cm.__enter__()
         return None
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit autocast context if AMP is enabled."""
         if self._cm is not None:
             return self._cm.__exit__(exc_type, exc_val, exc_tb)
         return False
 
     def scale(self, loss: torch.Tensor) -> torch.Tensor:
+        """Conditionally scale a loss tensor when AMP is enabled."""
         if self.scaler is not None:
             return self.scaler.scale(loss)
         return loss
 
     def step(self, optimizer: torch.optim.Optimizer) -> None:
+        """Conditionally step optimizer and update scaler."""
         if self.scaler is not None:
             self.scaler.step(optimizer)
             self.scaler.update()
@@ -49,18 +59,18 @@ class AmpScaler:
 
 
 class D4PGCore:
-    """
-    Minimal, environment-agnostic core for D4PG.
+    """Minimal, environment-agnostic core for D4PG.
 
     Responsibilities (algorithm-only):
     - Hold actor/critic and their target copies
     - Compute target distribution (Bellman projection onto atoms)
-    - Compute critic and actor losses (including optional CARSM and entropy regularization)
+    - Compute critic and actor losses (including optional CARSM and entropy
+      regularization)
     - Apply gradients (with optional AMP and gradient clipping)
     - Soft-update target networks
 
-    Excludes (non-core):
-    - Env stepping, dataloaders, replay buffers, logging/traceability, checkpointing
+    Excludes (non-core): env stepping, dataloaders, replay buffers,
+    logging/traceability, checkpointing.
     """
 
     def __init__(
@@ -81,24 +91,32 @@ class D4PGCore:
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
     ) -> None:
-        """
-        Initialize the D4PGCore.
+        """Initialize the D4PGCore.
 
         Args:
             actor (torch.nn.Module): Actor network.
             critic (torch.nn.Module): Critic network.
-            policy_lr (float, optional): Learning rate for actor network. Defaults to 3e-4.
-            critic_lr (float, optional): Learning rate for critic network. Defaults to 3e-3.
-            lr_scheduler_kwargs (Optional[Dict], optional): Keyword arguments for learning rate scheduler StepLR. Defaults to None.
+            policy_lr (float, optional): Learning rate for actor network.
+                Defaults to 3e-4.
+            critic_lr (float, optional): Learning rate for critic network.
+                Defaults to 3e-3.
+            lr_scheduler_kwargs (Optional[Dict], optional): Keyword arguments
+                for learning rate scheduler StepLR. Defaults to None.
             gamma (float, optional): Discount factor. Defaults to 0.99.
             tau (float, optional): Soft update parameter. Defaults to 0.005.
-            n_steps (int, optional): Number of steps for n-step returns. Defaults to 1.
+            n_steps (int, optional): Number of steps for n-step returns.
+                Defaults to 1.
             carsm (bool, optional): Whether to use CARSM. Defaults to False.
-            entropy_coef (float, optional): Entropy coefficient. Defaults to 0.0.
-            entropy_coef_decay (float, optional): Entropy coefficient decay. Defaults to 1.0.
-            config (Optional[Dict], optional): Configuration dictionary. Defaults to None.
-            max_grad_norm (float, optional): Maximum gradient norm. Defaults to 0.0.
-            amp_enabled (bool, optional): Whether to use automatic mixed precision. Defaults to True.
+            entropy_coef (float, optional): Entropy coefficient. Defaults to
+                0.0.
+            entropy_coef_decay (float, optional): Entropy coefficient decay.
+                Defaults to 1.0.
+            config (Optional[Dict], optional): Configuration dictionary.
+                Defaults to None.
+            max_grad_norm (float, optional): Maximum gradient norm. Defaults to
+                0.0.
+            amp_enabled (bool, optional): Whether to use automatic mixed
+                precision. Defaults to True.
         """
         assert entropy_coef >= 0, "Entropy coefficient must be non-negative"
         assert entropy_coef_decay >= 0, "Entropy coefficient decay must be non-negative"
@@ -153,8 +171,7 @@ class D4PGCore:
         next_state: TensorDict,
         terminated: torch.Tensor,
     ) -> TensorDict:
-        """
-        Computes the target distribution for the critic network.
+        """Computes the target distribution for the critic network.
 
         Args:
             reward (torch.Tensor): Rewards from the batch.
@@ -169,9 +186,10 @@ class D4PGCore:
                 action_probs = self.actor_target(next_state)
                 next_q_dist = self.critic_target(next_state, action_probs)
 
-        assert (
-            next_q_dist.keys() == reward.keys()
-        ), f"Mismatched keys next_q_dist={list(next_q_dist.keys())}, reward={list(reward.keys())}"
+        assert next_q_dist.keys() == reward.keys(), (
+            f"Mismatched keys next_q_dist={list(next_q_dist.keys())}, "
+            f"reward={list(reward.keys())}"
+        )
 
         target_dist = TensorDict(
             {
@@ -199,14 +217,15 @@ class D4PGCore:
         target_dist: TensorDict,
         compute_td_error: bool = False,
     ) -> tuple[TensorDict, TensorDict, TensorDict]:
-        """
-        Computes the loss for the critic network.
+        """Compute the loss for the critic network.
 
         Args:
             state (TensorDict): TensorDict of current states.
             action (TensorDict): TensorDict of actions.
-            target_dist (TensorDict): Target distribution from the target critic.
-            compute_td_error (bool, optional): Whether to compute the TD error. Defaults to False.
+            target_dist (TensorDict): Target distribution from the target
+                critic.
+            compute_td_error (bool, optional): Whether to compute the TD error.
+                Defaults to False.
 
         Returns:
             Tuple[TensorDict, TensorDict]: Critic loss and TD error.
@@ -229,12 +248,12 @@ class D4PGCore:
     def _categorize_actions(
         self, actions: TensorDict, as_dict: bool = False
     ) -> TensorDict:
-        """
-        Categorizes actions into a single tensor or a dictionary of tensors.
+        """Categorize actions into a tensor or dictionary of tensors.
 
         Args:
             actions (TensorDict): TensorDict of action probabilities.
-            as_dict (bool, optional): Whether to return a dictionary of tensors. Defaults to False.
+            as_dict (bool, optional): Whether to return a dictionary of
+                tensors. Defaults to False.
 
         Returns:
             TensorDict: Categorized actions.
@@ -255,14 +274,16 @@ class D4PGCore:
         action_probs: TensorDict | None = None,
         critic_probs: TensorDict | None = None,
     ) -> TensorDict:
-        """
-        Compute the loss for the actor network.
+        """Compute the loss for the actor network.
 
         Args:
             state (TensorDict): TensorDict of current states.
-            target_q (TensorDict, optional): Target Q-values. Required when using CARSM loss.
-            action_probs (TensorDict, optional): Pre-computed action probabilities. If None, will be computed using actor network.
-            critic_probs (TensorDict, optional): Pre-computed critic probabilities. If None, will be computed using critic network.
+            target_q (TensorDict, optional): Target Q-values. Required when
+                using CARSM loss.
+            action_probs (TensorDict, optional): Pre-computed action
+                probabilities. If None, will be computed using actor network.
+            critic_probs (TensorDict, optional): Pre-computed critic
+                probabilities. If None, will be computed using critic network.
 
         Returns:
             TensorDict: Actor loss.
@@ -283,8 +304,8 @@ class D4PGCore:
 
         # Optional entropy and CARSM log_probs
         if self.entropy_coef != 0 or self.carsm:
-            entropy = 0
-            log_probs = []
+            entropy: torch.Tensor = torch.tensor(0.0, device=self.device)
+            log_probs: list[torch.Tensor] = []
             action = self._categorize_actions(action_probs, as_dict=True)
             for key in action_probs.keys():
                 if self.carsm:
@@ -294,13 +315,13 @@ class D4PGCore:
                     entropy += -torch.sum(
                         action_probs[key] * torch.log(action_probs[key] + 1e-10), dim=-1
                     ).mean()
-            entropy /= max(1, len(action_probs))
+            entropy = entropy / max(1, len(action_probs))
             if self.carsm:
-                log_probs = torch.sum(torch.stack(log_probs, dim=-1), dim=-1).unsqueeze(
-                    -1
-                )
+                log_probs_tensor = torch.sum(
+                    torch.stack(log_probs, dim=-1), dim=-1
+                ).unsqueeze(-1)
                 if len(action_probs.keys()) > 0:
-                    log_probs = log_probs / len(action_probs.keys())
+                    log_probs_tensor = log_probs_tensor / len(action_probs.keys())
 
         # Expected Q
         loss = TensorDict({})
@@ -312,16 +333,17 @@ class D4PGCore:
                 keepdim=True,
             )
             if self.carsm:
-                q_exp = (target_q[key] - q_exp) * log_probs
+                # Narrow type for mypy: target_q must be provided in CARSM branch
+                assert target_q is not None
+                tq = cast(TensorDict, target_q)
+                q_exp = (tq[key] - q_exp) * log_probs_tensor
             loss[key] = -torch.mean(q_exp)
             if self.entropy_coef != 0:
                 loss[key] = loss[key] - self.entropy_coef * entropy
         return loss
 
     def step_schedulers_and_decay(self) -> None:
-        """
-        Steps the schedulers and decays the entropy coefficient.
-        """
+        """Steps the schedulers and decays the entropy coefficient."""
         if self.actor_scheduler is not None:
             self.actor_scheduler.step()
         if self.critic_scheduler is not None:
@@ -329,9 +351,7 @@ class D4PGCore:
         self.entropy_coef *= self.entropy_coef_decay
 
     def update_target_networks(self) -> None:
-        """
-        Updates the target networks using the Polyak averaging method.
-        """
+        """Updates the target networks using the Polyak averaging method."""
         for tgt, src in zip(self.actor_target.parameters(), self.actor.parameters()):
             tgt.data.copy_(self.tau * src.data + (1 - self.tau) * tgt.data)
         for tgt, src in zip(self.critic_target.parameters(), self.critic.parameters()):
@@ -346,20 +366,20 @@ class D4PGCore:
         update_actor: bool = True,
         update_critic: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Computes actor and critic losses for a batch of transitions.
+        """Compute actor and critic losses for a batch of transitions.
 
         Args:
-            batch (TensorDict): Batch of transitions containing:
-                - state (TensorDict): Current states
-                - actions (TensorDict): Actions taken
-                - reward (TensorDict): Rewards received
-                - next_state (TensorDict): Next states
-                - terminated (torch.Tensor): Terminal flags
-            compute_td_error (bool, optional): Whether to compute TD error. Defaults to False.
-            training (bool, optional): Whether to compute gradients and update networks. Defaults to True.
-            update_actor (bool, optional): Whether to update the actor. Defaults to True.
-            update_critic (bool, optional): Whether to update the critic. Defaults to True.
+            batch (TensorDict): Batch containing state, actions, reward,
+                next_state, and terminated.
+            compute_td_error (bool, optional): Whether to compute TD error.
+                Defaults to False.
+            training (bool, optional): Whether to compute gradients and update
+                networks. Defaults to True.
+            update_actor (bool, optional): Whether to update the actor.
+                Defaults to True.
+            update_critic (bool, optional): Whether to update the critic.
+                Defaults to True.
+
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Actor loss and critic loss
         """

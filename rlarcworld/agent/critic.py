@@ -1,5 +1,4 @@
-"""
-Critic network for the ARC environment.
+"""Critic network for the ARC environment.
 
 This module contains the implementation of the critic network for the ARC
 environment. The critic network is a neural network that takes as input the
@@ -27,21 +26,15 @@ from rlarcworld.agent.nn_modules import (
     CnnPreTrainedModule,
     CrossAttentionClassifier,
 )
+from rlarcworld.common.enums import ActionKeys, StateKeys
+from rlarcworld.common.types import STATE_REQUIRED_KEYS
 from rlarcworld.utils.device import enable_cuda
 
 logger = logging.getLogger(__name__)
 
 
 class ArcCriticNetwork(torch.nn.Module):
-    r"""
-    Args:
-        grid_size (int): Size of the grid.
-        color_values (int): The number of color values in the grid.
-        num_atoms (Dict[str, int]): The number of atoms in the distribution for each reward type.
-        v_min (Dict[str, int]): The minimum value for each reward type.
-        v_max (Dict[str, int]): The maximum value for each reward type.
-        test (bool, optional): Whether to set the network to test mode. Defaults to False.
-    """
+    """Critic network for the ARC environment."""
 
     def __init__(
         self,
@@ -53,6 +46,18 @@ class ArcCriticNetwork(torch.nn.Module):
         embedding_size: int = 128,
         config=None,
     ):
+        """Initialize the critic network for the ARC environment.
+
+        Args:
+            grid_size (int): Size of the grid.
+            color_values (int): The number of color values in the grid.
+            num_atoms (Dict[str, int]): The number of atoms in the distribution
+                for each reward type.
+            v_min (Dict[str, int]): The minimum value for each reward type.
+            v_max (Dict[str, int]): The maximum value for each reward type.
+            embedding_size (int, optional): The size of the embedding. Defaults to 128.
+            config (CudaConfig, optional): CUDA configuration. Defaults to None.
+        """
         super().__init__()
         self.num_atoms = num_atoms
         self.grid_size = grid_size
@@ -62,9 +67,10 @@ class ArcCriticNetwork(torch.nn.Module):
         self.config = enable_cuda() if config is None else config
         self.device = self.config["device"]
         for key, min_val in v_min.items():
-            assert (
-                min_val < self.v_max[key]
-            ), f"v_min[{key}]={min_val} is not lower than v_max[{key}]={self.v_max[key]}"
+            assert min_val < self.v_max[key], (
+                f"v_min[{key}]={min_val} is not lower"
+                + " than v_max[{key}]={self.v_max[key]}"
+            )
         self.z_atoms = TensorDict(
             {
                 key: torch.linspace(v_min[key], v_max[key], value)
@@ -72,35 +78,34 @@ class ArcCriticNetwork(torch.nn.Module):
             }
         ).to(self.device)
         self.no_scale_keys = [
-            "x_location",
-            "y_location",
-            "color_values",
-            "submit",
-            "terminated",
+            ActionKeys.X_LOCATION.value,
+            ActionKeys.Y_LOCATION.value,
+            ActionKeys.COLOR_VALUES.value,
+            ActionKeys.SUBMIT.value,
         ]
 
         self.actions_mlp = torch.nn.Sequential(
             torch.nn.Linear(
-                (self.grid_size * 2) + self.color_values + 3, embedding_size * 2
+                (self.grid_size * 2) + self.color_values + 2, embedding_size * 2
             ),
             torch.nn.ReLU(),
             torch.nn.Linear(embedding_size * 2, embedding_size),
         )
         self.inputs_layers = torch.nn.ModuleDict(
             {
-                "last_grid": CnnPreTrainedModule(
+                StateKeys.LAST_GRID.value: CnnPreTrainedModule(
                     embedding_size=embedding_size,
                 ),
-                "grid": CnnPreTrainedModule(
+                StateKeys.GRID.value: CnnPreTrainedModule(
                     embedding_size=embedding_size,
                 ),
-                "examples": CnnAttention(
+                StateKeys.EXAMPLES.value: CnnAttention(
                     embedding_size=embedding_size, nheads=4, dropout=0.2, bias=True
                 ),
-                "initial": CnnPreTrainedModule(
+                StateKeys.INITIAL.value: CnnPreTrainedModule(
                     embedding_size=embedding_size,
                 ),
-                "index": CnnPreTrainedModule(
+                StateKeys.INDEX.value: CnnPreTrainedModule(
                     embedding_size=embedding_size,
                 ),
             }
@@ -121,8 +126,7 @@ class ArcCriticNetwork(torch.nn.Module):
 
     @torch.jit.export
     def scale_arc_grids(self, x: torch.Tensor) -> torch.Tensor:
-        r"""
-        Scales the input tensor by the number of color values.
+        r"""Scales the input tensor by the number of color values.
 
         Args:
             x (torch.Tensor): The input tensor to scale.
@@ -134,11 +138,16 @@ class ArcCriticNetwork(torch.nn.Module):
 
     @torch.jit.export
     def input_val(self, state: TensorDict):
-        r"""
-        Validates the input state TensorDict.
+        r"""Validates the input state TensorDict.
 
-        Ensures that the input state is of type TensorDict and contains the
-        required keys: "last_grid", "grid", "examples", "initial", "index", and "terminated".
+        Ensures that the input state is of type TensorDict
+        required keys:
+            - "last_grid"
+            - "grid"
+            - "examples"
+            - "initial"
+            - "index"
+            - "terminated"
 
         Args:
             state (TensorDict): The input state to validate.
@@ -150,22 +159,14 @@ class ArcCriticNetwork(torch.nn.Module):
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict"
         )
-        in_keys = {
-            "last_grid",
-            "grid",
-            "examples",
-            "initial",
-            "index",
-            "terminated",
-        }
+        in_keys = set(STATE_REQUIRED_KEYS)
         assert set(state.keys()) == in_keys, ValueError(
             f"State keys must be {in_keys}. Keys found {set(state.keys())}"
         )
 
     @torch.jit.export
     def output_val(self, distribution: TensorDict):
-        r"""
-        Validates the output distribution TensorDict.
+        r"""Validates the output distribution TensorDict.
 
         Ensures that the output distribution is of type TensorDict and contains the
         required keys: "pixel_wise" and "binary".
@@ -188,8 +189,7 @@ class ArcCriticNetwork(torch.nn.Module):
         )
 
     def forward(self, state: TensorDict, action: TensorDict) -> TensorDict:
-        r"""
-        Forward pass of the critic network.
+        r"""Forward pass of the critic network.
 
         Args:
             state (TensorDict): The state of the environment.
@@ -204,9 +204,11 @@ class ArcCriticNetwork(torch.nn.Module):
             AssertionError: If a NaN is detected in the output.
         """
         state = state.clone()
+        # Only present in training
+        state.pop(StateKeys.TERMINATED.value, None)
+
         # Validate input
         self.input_val(state)
-        assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
         state.update(action)
 
         # Resolve current device from parameters (in case module was moved after init)
@@ -222,7 +224,7 @@ class ArcCriticNetwork(torch.nn.Module):
         # Grid inputs
         for key, value in state.items():
             value = value.to(current_device)
-            if key == "index":
+            if key == StateKeys.INDEX.value:
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
             else:
@@ -235,7 +237,7 @@ class ArcCriticNetwork(torch.nn.Module):
             else:
                 state[key] = self.inputs_layers[key](value)
 
-            if key != "examples":
+            if key != StateKeys.EXAMPLES.value:
                 state[key] = state[key].unsqueeze(1)
 
         # Concatenate flattned states

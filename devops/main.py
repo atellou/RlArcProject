@@ -1,3 +1,5 @@
+"""Utilities to launch Vertex AI custom training jobs for rlarcworld."""
+
 import argparse
 import logging
 import os
@@ -18,8 +20,7 @@ def init_sample(
     encryption_spec_key_name: str | None = None,
     service_account: str | None = None,
 ):
-    """
-    Initialize the Vertex AI environment.
+    """Initialize the Vertex AI environment.
 
     Args:
         project: GCP project ID

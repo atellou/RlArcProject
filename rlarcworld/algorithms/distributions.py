@@ -1,3 +1,5 @@
+"""Distributions to be used in the algorithms."""
+
 import torch
 
 
@@ -13,8 +15,7 @@ def categorical_projection(
     apply_softmax: bool = True,
     n_steps: int = 1,
 ) -> torch.Tensor:
-    """
-    Projects the target distribution using the Bellman update.
+    """Projects the target distribution using the Bellman update.
 
     Args:
         next_q_dist (torch.Tensor): Next state Q-distribution (batch_size, num_atoms).

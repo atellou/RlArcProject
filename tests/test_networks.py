@@ -12,6 +12,7 @@ from rlarcworld.agent.nn_modules import (
     CrossAttentionClassifier,
     MultiHeadAttention,
 )
+from rlarcworld.common.enums import ActionKeys, RewardKeys, StateKeys
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,11 @@ def test_cnn_mha():
 
 def test_cross_attention():
     logger.info("Testing CnnModule + MultiHeadAttention + CrossAttention")
-    output_classes = {"x_location": 10, "y_location": 5, "color_values": 2}
+    output_classes = {
+        ActionKeys.X_LOCATION.value: 10,
+        ActionKeys.Y_LOCATION.value: 5,
+        ActionKeys.COLOR_VALUES.value: 2,
+    }
     model = torch.nn.Sequential(
         CnnAttention(embedding_size=128, nheads=4, dropout=0.1, bias=True),
         CrossAttentionClassifier(
@@ -150,25 +155,30 @@ def train_arc_critic_network(batch_size: int):
         color_values,
     )
     num_atoms = {
-        "pixel_wise": int(torch.randint(50, 100, size=(1,)).item()),
-        "binary": 1,
+        RewardKeys.PIXEL_WISE.value: int(torch.randint(50, 100, size=(1,)).item()),
+        RewardKeys.BINARY.value: 1,
     }
-    v_min = {"pixel_wise": -40, "binary": 0}
-    v_max = {"pixel_wise": 2, "binary": 1}
+    v_min = {RewardKeys.PIXEL_WISE.value: -40, RewardKeys.BINARY.value: 0}
+    v_max = {RewardKeys.PIXEL_WISE.value: 2, RewardKeys.BINARY.value: 1}
     network = ArcCriticNetwork(size, color_values, num_atoms, v_min, v_max)
 
     input_sample = TensorDict(
         {
-            "last_grid": torch.randint(
+            StateKeys.LAST_GRID.value: torch.randint(
                 0, color_values, size=(batch_size, 1, size, size)
             ),
-            "grid": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
-            "examples": torch.randint(
+            StateKeys.GRID.value: torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
+            StateKeys.EXAMPLES.value: torch.randint(
                 0, color_values, size=(batch_size, 10, 2, size, size)
             ),
-            "initial": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
-            "index": torch.randint(0, size, size=(batch_size, 1, size, size)),
-            "terminated": torch.randint(0, 2, size=(batch_size, 1)).float(),
+            StateKeys.INITIAL.value: torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
+            StateKeys.INDEX.value: torch.randint(
+                0, size, size=(batch_size, 1, size, size)
+            ),
         }
     )
 
@@ -183,10 +193,16 @@ def train_arc_critic_network(batch_size: int):
 
     action_probs = TensorDict(
         {
-            "x_location": torch.softmax(torch.randn(batch_size, 30), dim=-1),
-            "y_location": torch.softmax(torch.randn(batch_size, 30), dim=-1),
-            "color_values": torch.softmax(torch.randn(batch_size, 11), dim=-1),
-            "submit": torch.softmax(torch.randn(batch_size, 2), dim=-1),
+            ActionKeys.X_LOCATION.value: torch.softmax(
+                torch.randn(batch_size, size), dim=-1
+            ),
+            ActionKeys.Y_LOCATION.value: torch.softmax(
+                torch.randn(batch_size, size), dim=-1
+            ),
+            ActionKeys.COLOR_VALUES.value: torch.softmax(
+                torch.randn(batch_size, color_values), dim=-1
+            ),
+            ActionKeys.SUBMIT.value: torch.softmax(torch.randn(batch_size, 2), dim=-1),
         }
     )
 
@@ -212,14 +228,14 @@ def train_arc_critic_network(batch_size: int):
 
     target = TensorDict(
         {
-            "pixel_wise": torch.softmax(
+            RewardKeys.PIXEL_WISE.value: torch.softmax(
                 torch.randint(
-                    -40, 2, size=(batch_size, num_atoms["pixel_wise"])
+                    -40, 2, size=(batch_size, num_atoms[RewardKeys.PIXEL_WISE.value])
                 ).float(),
                 dim=-1,
             ),
-            "binary": torch.randint(
-                0, 2, size=(batch_size, num_atoms["binary"])
+            RewardKeys.BINARY.value: torch.randint(
+                0, 2, size=(batch_size, num_atoms[RewardKeys.BINARY.value])
             ).float(),
         }
     ).to(network.device)
@@ -234,9 +250,9 @@ def train_arc_critic_network(batch_size: int):
         assert torch.all(dist >= 0), f"Negative probability values for key: {key}"
         assert torch.all(dist <= 1), f"Probability values greater than 1 for key: {key}"
 
-    loss = criterion(output["pixel_wise"], target["pixel_wise"]) + criterion(
-        output["binary"], target["binary"]
-    )
+    loss = criterion(
+        output[RewardKeys.PIXEL_WISE.value], target[RewardKeys.PIXEL_WISE.value]
+    ) + criterion(output[RewardKeys.BINARY.value], target[RewardKeys.BINARY.value])
 
     assert not torch.isnan(loss), f"{criterion._get_name()} is NaN for Critic network"
 
@@ -270,15 +286,21 @@ def train_arc_actor_network(batch_size: int):
 
     input_sample = TensorDict(
         {
-            "last_grid": torch.randint(
+            StateKeys.LAST_GRID.value: torch.randint(
                 0, color_values, size=(batch_size, 1, size, size)
             ),
-            "grid": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
-            "examples": torch.randint(
+            StateKeys.GRID.value: torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
+            StateKeys.EXAMPLES.value: torch.randint(
                 0, color_values, size=(batch_size, 10, 2, size, size)
             ),
-            "initial": torch.randint(0, color_values, size=(batch_size, 1, size, size)),
-            "index": torch.randint(0, size, size=(batch_size, 1, size, size)),
+            StateKeys.INITIAL.value: torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
+            StateKeys.INDEX.value: torch.randint(
+                0, size, size=(batch_size, 1, size, size)
+            ),
         }
     )
     network.input_val(input_sample)
@@ -305,12 +327,18 @@ def train_arc_actor_network(batch_size: int):
 
     target = TensorDict(
         {
-            "x_location": torch.softmax(torch.rand(size=(batch_size, size)), dim=1),
-            "y_location": torch.softmax(torch.rand(size=(batch_size, size)), dim=1),
-            "color_values": torch.softmax(
+            ActionKeys.X_LOCATION.value: torch.softmax(
+                torch.rand(size=(batch_size, size)), dim=1
+            ),
+            ActionKeys.Y_LOCATION.value: torch.softmax(
+                torch.rand(size=(batch_size, size)), dim=1
+            ),
+            ActionKeys.COLOR_VALUES.value: torch.softmax(
                 torch.rand(size=(batch_size, color_values)), dim=1
             ),
-            "submit": torch.softmax(torch.rand(size=(batch_size, 2)), dim=1),
+            ActionKeys.SUBMIT.value: torch.softmax(
+                torch.rand(size=(batch_size, 2)), dim=1
+            ),
         }
     ).to(network.device)
 

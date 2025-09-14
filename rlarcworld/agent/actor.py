@@ -1,5 +1,4 @@
-"""
-Actor network for the ARC environment.
+"""Actor network for the ARC environment.
 
 This module contains the implementation of the actor network for the ARC
 environment. The actor network is a neural network that takes as input the
@@ -25,6 +24,11 @@ from rlarcworld.agent.nn_modules import (
     CnnPreTrainedModule,
     CrossAttentionClassifier,
 )
+from rlarcworld.common.enums import ActionKeys, StateKeys
+from rlarcworld.common.types import (
+    ACTION_KEYS_SET,
+    STATE_REQUIRED_KEYS,
+)
 from rlarcworld.utils.device import enable_cuda
 
 logger = logging.getLogger()
@@ -36,33 +40,36 @@ class ArcActorNetwork(nn.Module):
     def __init__(
         self, grid_size: int, color_values: int, embedding_size=128, config=None
     ):
-        """
+        """Actor network for the ARC environment.
+
         Args:
             grid_size (int): The size of the grid.
             color_values (int): The number of colors.
+            embedding_size (int, optional): The size of the embedding. Defaults to 128.
+            config (CudaConfig, optional): CUDA configuration. Defaults to None.
         """
         super().__init__()
         self.grid_size = grid_size
         self.color_values = color_values
-        self.action_head_keys = {"x_location", "y_location", "color_values", "submit"}
+        self.action_head_keys = set(ACTION_KEYS_SET)
+        # Build module dict using canonical string keys
         self.inputs_layers = torch.nn.ModuleDict(
             {
-                "last_grid": CnnPreTrainedModule(
+                StateKeys.LAST_GRID.value: CnnPreTrainedModule(
                     embedding_size=embedding_size,
                 ),
-                "grid": CnnPreTrainedModule(
+                StateKeys.GRID.value: CnnPreTrainedModule(
                     embedding_size=embedding_size,
                 ),
-                "examples": CnnAttention(
+                StateKeys.EXAMPLES.value: CnnAttention(
                     embedding_size=embedding_size, nheads=4, dropout=0.2, bias=True
                 ),
-                "initial": CnnPreTrainedModule(
+                StateKeys.INITIAL.value: CnnPreTrainedModule(
                     embedding_size=embedding_size,
                 ),
-                "index": CnnPreTrainedModule(
+                StateKeys.INDEX.value: CnnPreTrainedModule(
                     embedding_size=embedding_size,
                 ),
-                # "terminated": torch.nn.Linear(1, 1),
             }
         )
 
@@ -70,10 +77,10 @@ class ArcActorNetwork(nn.Module):
             nn.LayerNorm(embedding_size),
             CrossAttentionClassifier(
                 output_classes={
-                    "x_location": self.grid_size,
-                    "y_location": self.grid_size,
-                    "color_values": self.color_values,
-                    "submit": 2,
+                    ActionKeys.X_LOCATION.value: self.grid_size,
+                    ActionKeys.Y_LOCATION.value: self.grid_size,
+                    ActionKeys.COLOR_VALUES.value: self.color_values,
+                    ActionKeys.SUBMIT.value: 2,
                 },
                 embedding_size=128,
                 nheads=4,
@@ -86,19 +93,10 @@ class ArcActorNetwork(nn.Module):
         self.device = self.config["device"]
 
         self.to(self.device)
-        # params = torch.tensor(
-        #     [[p.numel() * int(p.requires_grad), p.numel()] for p in self.parameters()]
-        # )
-        # print(
-        #     "Actor Network Params:\n {} trainable, {} total".format(
-        #         sum(params[:, 0]), sum(params[:, 1])
-        #     )
-        # )
 
     @torch.jit.export
     def scale_arc_grids(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Scales the input tensor by the number of color values.
+        """Scales the input tensor by the number of color values.
 
         Args:
             x (torch.Tensor): The input tensor to scale.
@@ -106,91 +104,56 @@ class ArcActorNetwork(nn.Module):
         Returns:
             torch.Tensor: The scaled tensor.
         """
-
         return x / self.color_values
 
     @torch.jit.export
-    def input_val(self, state: TensorDict):
-        """
-        Validates the input state TensorDict.
-
-        Ensures that the input state is of type TensorDict and contains the
-        required keys: "last_grid", "grid", "examples", "initial", "index", and "terminated".
-
-        Args:
-            state (TensorDict): The input state to validate.
-
-        Raises:
-            TypeError: If the input state is not a TensorDict.
-            ValueError: If the state keys do not match the required keys.
-        """
-
+    def input_val(self, state: TensorDict) -> None:
+        """Validate that the state contains exactly the required keys."""
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict"
         )
-        in_keys = {
-            "last_grid",
-            "grid",
-            "examples",
-            "initial",
-            "index",
-        }
-        assert set(state.keys()) == in_keys, ValueError(
-            f"State keys must be {in_keys}. Keys found {set(state.keys())}"
+        assert set(state.keys()) == STATE_REQUIRED_KEYS, ValueError(
+            f"State keys must be {STATE_REQUIRED_KEYS}. Keys found {set(state.keys())}"
         )
 
     @torch.jit.export
-    def output_val(self, action: TensorDict):
-        """
-        Validates the output action TensorDict.
-
-        Ensures that the output action is of type TensorDict and contains the
-        required keys: "color_values", "submit", "x_location", and "y_location".
-
-        Args:
-            action (TensorDict): The output action to validate.
-
-        Raises:
-            TypeError: If the output action is not a TensorDict.
-            ValueError: If the action keys do not match the required keys.
-        """
+    def output_val(self, action: TensorDict) -> None:
+        """Validate that the action dict contains exactly the expected heads."""
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
         assert set(action.keys()) == self.action_head_keys, ValueError(
-            "Action keys must be {}. Keys found {}".format(
-                self.action_head_keys, set(action.keys())
-            )
+            f"Action keys must be {self.action_head_keys}. "
+            f"Keys found {set(action.keys())}"
         )
 
     def forward(self, state: TensorDict) -> TensorDict:
-        """
-        Forward pass of the actor network.
+        """Forward pass of the actor network.
 
         Args:
             state (TensorDict): The state of the environment.
 
         Returns:
-            TensorDict: The output distribution of the actor network.
+            ActionDict: The output distribution of the actor network.
 
         Raises:
-            TypeError: If the input state is not a TensorDict.
+            TypeError: If the input state is not a StateDict.
             ValueError: If the state keys do not match the required keys.
             AssertionError: If a NaN is detected in the output.
         """
         state = state.clone()
         # Only present in training
-        state.pop("terminated", None)
-        # Validate input
+        state.pop(StateKeys.TERMINATED.value, None)
         self.input_val(state)
 
-        # Determine current device from module parameters (in case module was moved after init)
+        # Determine current device from module parameters
+        # (in case module was moved after init)
         current_device = next(self.parameters()).device
         # Broadcast the state
         for key, value in state.items():
             value = value.to(current_device)
-            if key == "index":
+            if key == StateKeys.INDEX.value:
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
-            elif key != "terminated":
+            elif key != StateKeys.TERMINATED.value:
                 value = self.scale_arc_grids(value)
 
             if self.config.get("use_checkpointing"):
@@ -200,7 +163,7 @@ class ArcActorNetwork(nn.Module):
             else:
                 state[key] = self.inputs_layers[key](value)
 
-            if key != "examples":
+            if key != StateKeys.EXAMPLES.value:
                 state[key] = state[key].unsqueeze(1)
             assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
 
