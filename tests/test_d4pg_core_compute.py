@@ -193,6 +193,8 @@ def test_compute_losses(core_setup):
 def test_compute_loss_training_updates_and_finite(core_setup):
     core, state, next_state, reward, done, batch_size, _ = core_setup
 
+    core.compute_td_error = True
+
     # Prepare batch with actions from actor
     with torch.no_grad():
         actions = core.actor(state)
@@ -217,10 +219,7 @@ def test_compute_loss_training_updates_and_finite(core_setup):
 
     loss_actor, loss_critic = core.compute_loss(
         batch,
-        compute_td_error=True,
         training=True,
-        update_actor=True,
-        update_critic=True,
     )
 
     # Losses are finite
@@ -253,7 +252,7 @@ def test_compute_loss_training_updates_and_finite(core_setup):
 
 
 def test_compute_loss_eval_no_update(core_setup):
-    core, state, next_state, reward, done, batch_size, _ = core_setup
+    core, state, next_state, reward, done, _, _ = core_setup
 
     # Prepare batch with actions from actor
     with torch.no_grad():
@@ -279,10 +278,7 @@ def test_compute_loss_eval_no_update(core_setup):
 
     loss_actor, loss_critic = core.compute_loss(
         batch,
-        compute_td_error=False,
         training=False,
-        update_actor=False,
-        update_critic=False,
     )
 
     # Losses are finite

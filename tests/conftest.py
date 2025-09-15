@@ -12,11 +12,11 @@ from torchrl.data.replay_buffers import (
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.algorithms.d4pg_trainer import D4PGTrainer
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.trainer.core import Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
 
@@ -135,8 +135,8 @@ def trainer_factory():
             replay_buffer=rb,
             batch_size=bs,
             warmup_buffer_ratio=0.0,
-            target_update_frequency=1,
             on_step=None,
+            on_train_exception=None,
             device="cpu",
         )
     """
@@ -148,18 +148,18 @@ def trainer_factory():
         replay_buffer,
         batch_size: int,
         warmup_buffer_ratio: float = 0.0,
-        target_update_frequency: int = 1,
         on_step=None,
+        on_train_exception=None,
         device: str | torch.device = "cpu",
-    ) -> D4PGTrainer:
-        return D4PGTrainer(
+    ) -> Trainer:
+        return Trainer(
             core=core,
             step_stream_factory=step_stream_factory,
             replay_buffer=replay_buffer,
             batch_size=batch_size,
             warmup_buffer_ratio=warmup_buffer_ratio,
-            target_update_frequency=target_update_frequency,
             on_step=on_step,
+            on_train_exception=on_train_exception,
             device=str(device),
         )
 

@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import Any
 
 import gymnasium as gym
 import torch
@@ -298,6 +299,24 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.last_reward = reward
         return obs, reward, terminated, truncated, info
 
+    def checkpoint(self) -> dict[str, Any]:
+        """Checkpoint the environment.
+
+        Returns:
+            dict[str, Any]: The checkpoint.
+        """
+        return {
+            "reward_storage": self.reward_storage,
+            "last_reward": self.last_reward,
+            "max_penalty": self.max_penalty,
+            "batch_size": self.batch_size,
+            "n_steps": self.n_steps,
+            "gamma": self.gamma,
+            "apply_clamp": self.apply_clamp,
+            "v_min": self.v_min,
+            "v_max": self.v_max,
+        }
+
     def save(self, path: str):
         """Saves the environment to a checkpoint.
 
@@ -311,17 +330,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         try:
             os.makedirs(child_path, exist_ok=True)
             torch.save(
-                {
-                    "reward_storage": self.reward_storage,
-                    "last_reward": self.last_reward,
-                    "max_penalty": self.max_penalty,
-                    "batch_size": self.batch_size,
-                    "n_steps": self.n_steps,
-                    "gamma": self.gamma,
-                    "apply_clamp": self.apply_clamp,
-                    "v_min": self.v_min,
-                    "v_max": self.v_max,
-                },
+                self.checkpoint(),
                 os.path.join(child_path, self.__class__.__name__ + ".ptc"),
             )
         except AttributeError as e:

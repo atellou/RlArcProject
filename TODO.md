@@ -33,10 +33,6 @@ We will not maintain backward compatibility. Update code and tests to the new la
   - [x] Consider consolidating with a shared AMP utility/context if needed
   - [x] Provide a small testing utility to generate device-aware synthetic steps to reduce duplication in AMP tests
 
-- [ ] Reward processing ergonomics (`rlarcworld/environments/reward_processor.py`)
-
-  - [ ] Consider optional `critic` argument to auto-extract `v_min/v_max` for `n_step_reward` when available to reduce plumbing at call sites
-
 ## Test Coverage
 
 - [x] Add/extend unit tests under `tests/` for utils
