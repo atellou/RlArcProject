@@ -114,11 +114,11 @@ class Trainer:
         *,
         core: CoreProto,
         batch_size: int,
-        step_stream_factory: Callable[[int], Iterator[TensorDict]],
+        step_stream_factory: Callable[[], Iterator[tuple[bool, int, TensorDict]]],
         replay_buffer: ReplayBufferProto | None = None,
         warmup_buffer_ratio: float = 0.2,
         on_step: OrderedDict[str, Callable[[OnStepContext], None]] | None = None,
-        on_train_exception: OrderedDict[str, Callable[[OnStepContext], None]]
+        on_train_exception: OrderedDict[str, Callable[[Exception, OnStepContext], None]]
         | None = None,
         device: str | None = None,
     ) -> None:
@@ -127,7 +127,7 @@ class Trainer:
         Args:
             core (CoreProto): The algorithm core to train.
             batch_size (int): The batch size for training.
-            step_stream_factory (Optional[Callable[[int], Iterator[TensorDict]]]):
+            step_stream_factory (Callable[[], Iterator[tuple[bool, int, TensorDict]]]):
                 Factory returning an iterator that yields per-step TensorDicts
                 with keys expected by the core ('state', 'actions', 'reward',
                 'next_state', 'terminated').
@@ -228,11 +228,9 @@ class Trainer:
         """
         try:
             for epoch in range(epochs):
-                step_stream = self.step_stream_factory(epoch)
-
                 loss_actor, loss_critic = torch.tensor(0.0), torch.tensor(0.0)
 
-                for step_idx, step_state in enumerate(step_stream):
+                for done, step_idx, step_state in self.step_stream_factory():
                     iteration = epoch * max_steps_per_epoch + step_idx
 
                     # Store transition and maybe sample batch
@@ -260,9 +258,9 @@ class Trainer:
 
                     # Call step callback
                     if self.on_step and batch is not None:
-                        for callback_name, callback in self.on_step.items():
+                        for callback_name, callback_step in self.on_step.items():
                             logger.debug(f"Calling on_step {callback_name}")
-                            callback(context)
+                            callback_step(context)
 
                     # Early termination
                     if max_steps_per_epoch > 0 and step_idx >= max_steps_per_epoch - 1:
@@ -277,8 +275,11 @@ class Trainer:
                 loss_critic=loss_critic,
                 core=self.core,
             )
-            if self.on_train_exception:
-                for callback_name, callback in self.on_train_exception.items():
+            if self.on_train_exception is not None:
+                for (
+                    callback_name,
+                    callback_exception,
+                ) in self.on_train_exception.items():
                     logger.debug(f"Calling on_train_exception {callback_name}")
-                    callback(context)
+                    callback_exception(e, context)
             raise e

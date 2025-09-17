@@ -4,12 +4,12 @@ This module provides a class to handle environment interactions in a clean way,
 separating environment stepping logic from the training loop.
 """
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
+from typing import Any
 
 import torch
 from gymnasium import Env
 from tensordict import TensorDict
-from torch.utils.data import DataLoader
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.utils.device import AmpScaler
@@ -41,6 +41,9 @@ OnStepFn = Callable[
     StepArgs,
 ]
 
+# Object that the sampler iterator returns
+ResetSample = Any
+
 
 class EnvStepper:
     """Handles environment stepping and episode simulation for RL training.
@@ -55,6 +58,10 @@ class EnvStepper:
         self,
         actor: ArcActorNetwork,
         device: str | torch.device,
+        env: Env,
+        sampler: Iterator[ResetSample],
+        max_steps: int = -1,
+        env_sample_reset: Callable[[Env, ResetSample, int | None], Env] | None = None,
         amp_enabled: bool = True,
         on_step: OnStepFn | None = None,
     ):
@@ -63,11 +70,21 @@ class EnvStepper:
         Args:
             actor: The actor network used to select actions
             device: Device to use for tensors
+            env (Env): The environment to use for training.
+            sampler (Iterator[ResetSample]): Iterator yielding batches of objects
+                to reset the environment with, if env_sample_reset is provided.
+            max_steps (int): Maximum number of steps per episode (-1 for no limit)
+            env_sample_reset (Optional[Callable[[Env, ResetSample, int | None], Env]]):
+                Callable to reset the environment with a batch of objects.
             amp_enabled: Whether to use automatic mixed precision
             on_step: Optional callback function to be called after each step
         """
         self.actor = actor
         self.device = device
+        self.env = env
+        self.max_steps = max_steps
+        self.sampler = sampler
+        self.env_sample_reset = env_sample_reset
         self.amp_enabled = amp_enabled
         self.on_step = on_step
         self.loaded_checkpoint = False
@@ -156,46 +173,57 @@ class EnvStepper:
                 batch_size=[],
             ).to(self.device)
 
-    def create_step_stream(
+    def create_episode_stream(
         self,
-        env,
-        samples: DataLoader,
-        max_steps: int = -1,
-        seed: int | None = None,
-        **kwargs,
-    ) -> Generator[tuple[int, TensorDict], None, None]:
-        """Create a generator that yields (step_num, step_data) tuples.
-
-        Args:
-            env: The environment to interact with
-            samples: DataLoader yielding batches of tasks/examples
-            max_steps: Maximum number of steps per episode (-1 for no limit)
-            seed: Random seed for environment
-            **kwargs: Additional arguments to pass to env.reset()
+    ) -> Generator[tuple[bool, int, TensorDict], None, None]:
+        """Create a generator that yields (done, step_num, step_data) tuples.
 
         Yields:
-            Tuples of (step_number, step_data) where step_data is a TensorDict
+            Tuples of (done, step_number, step_data) where step_data is a TensorDict
             with keys: state, reward, actions, next_state, terminated, truncated
         """
-        # Reset environment with first batch
-        if not self.loaded_checkpoint:
-            first_batch = next(iter(samples))
-            kwargs.update(
-                {"batch": first_batch["task"], "examples": first_batch["examples"]}
-            )
-            env.reset(options=kwargs, seed=seed)
-            self.loaded_checkpoint = True
-
-        # Run episode
         step_number = 0
         done = False
 
-        while not done and (max_steps <= -1 or step_number < max_steps):
-            step_data = self.step(env)
-            yield step_number, step_data
-
+        while not done and (self.max_steps <= -1 or step_number < self.max_steps):
+            step_data = self.step(self.env)
             # Ensure Python bool type for loop control
             term = bool(step_data["terminated"].item())
             trunc = bool(step_data["truncated"].item())
             done = term or trunc
+            yield (
+                done,
+                step_number,
+                step_data,
+            )
             step_number += 1
+
+    def _reset_env(self, sample: Any, seed: int | None = None):
+        """Reset the environment with a sample.
+
+        Args:
+            sample: Sample to reset the environment with
+            seed: Random seed for reproducibility
+        """
+        if self.env_sample_reset is not None:
+            self.env_sample_reset(self.env, sample, seed)
+        else:
+            self.env.reset(seed=seed)
+
+    def create_step_stream_from_samples(
+        self,
+        seed: int | None = None,
+    ) -> Generator[tuple[bool, int, TensorDict], None, None]:
+        """Create a generator that yields step data from samples.
+
+        Args:
+            seed: Random seed for reproducibility
+
+        Yields:
+            Tuples of (done, step_number, step_data) where step_data is a TensorDict
+            with keys: state, reward, actions, next_state, terminated, truncated
+        """
+        for sample in self.sampler:
+            self._reset_env(sample, seed=seed)
+            for done, step_number, step_data in self.create_episode_stream():
+                yield done, step_number, step_data

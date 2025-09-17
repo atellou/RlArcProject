@@ -29,9 +29,10 @@ def test_d4pg_trainer_training_updates_and_loss_ranges(
     core = d4pg_core
     max_steps = 6
 
-    def step_stream_factory(epoch: int):
-        for _ in range(max_steps):
-            yield make_synthetic_step(batch_size, core.actor)
+    def step_stream_factory():
+        for step_idx in range(max_steps):
+            done = step_idx == max_steps - 1
+            yield done, step_idx, make_synthetic_step(batch_size, core.actor)
 
     losses_actor = []
     losses_critic = []
@@ -121,9 +122,10 @@ def test_d4pg_trainer_per_update_priority_called(
     core = d4pg_core
     max_steps = 6
 
-    def step_stream_factory(epoch: int):
-        for _ in range(max_steps):
-            yield make_synthetic_step(batch_size, core.actor)
+    def step_stream_factory():
+        for step_idx in range(max_steps):
+            done = step_idx == max_steps - 1
+            yield done, step_idx, make_synthetic_step(batch_size, core.actor)
 
     capacity = 20
     base_rb = TensorDictReplayBuffer(
@@ -216,9 +218,10 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
 
     max_steps = 10
 
-    def step_stream_factory(epoch: int):
-        for _ in range(max_steps):
-            yield make_synthetic_step(batch_size, core.actor)
+    def step_stream_factory():
+        for step_idx in range(max_steps):
+            done = step_idx == max_steps - 1
+            yield done, step_idx, make_synthetic_step(batch_size, core.actor)
 
     first_training_step = None
     losses_actor, losses_critic = [], []
@@ -274,9 +277,10 @@ def test_d4pg_trainer_real_replay_buffer_and_step_handlers(
 
     max_steps = 7
 
-    def step_stream_factory(epoch: int):
-        for _ in range(max_steps):
-            yield make_synthetic_step(batch_size, core.actor)
+    def step_stream_factory():
+        for step_idx in range(max_steps):
+            done = step_idx == max_steps - 1
+            yield done, step_idx, make_synthetic_step(batch_size, core.actor)
 
     # Track losses and step handler execution
     losses_actor, losses_critic = [], []
@@ -401,11 +405,29 @@ def test_d4pg_trainer_per_warmup_and_priority(
     core = d4pg_core
     max_steps = 8
 
-    def step_stream_factory(epoch: int):
-        for _ in range(max_steps):
-            yield make_synthetic_step(batch_size, core.actor)
+    def step_stream_factory():
+        for step_idx in range(max_steps):
+            done = step_idx == max_steps - 1
+            yield done, step_idx, make_synthetic_step(batch_size, core.actor)
 
-    per_buffer = _make_per_buffer(max_size=10)
+    # Create PER buffer with priority tracking
+    class _PERBuffer:
+        def __init__(self):
+            self.storage = type("S", (), {"max_size": 10, "__len__": lambda self: 10})()
+            self.update_called = False
+            self._last = None
+
+        def extend(self, batch):
+            self._last = batch.squeeze(0)
+            return [0]
+
+        def sample(self, bs):
+            return self._last
+
+        def update_priority(self, indices, priorities):
+            self.update_called = True
+
+    per_buffer = _PERBuffer()
     losses_actor, losses_critic = [], []
 
     def on_step(ctx: OnStepContext):
@@ -448,10 +470,11 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
 
     max_steps = 5
 
-    def step_stream_factory(epoch: int):
+    def step_stream_factory():
         make_step = make_synthetic_step_on_device(device, grid_size, color_values)
-        for _ in range(max_steps):
-            yield make_step(batch_size, core.actor)
+        for step_idx in range(max_steps):
+            done = step_idx == max_steps - 1
+            yield done, step_idx, make_step(batch_size, core.actor)
 
     # Simple buffer to bypass warmup
     class _Buf:
