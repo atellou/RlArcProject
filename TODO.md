@@ -8,12 +8,31 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 ### rlarcworld
 
+- [x] Check D4PG trainer implementation and update to be able to run multiple algorithms.
+- [ ] Implement inference for core algorithms to use on testing or validation environment.
 - [ ] Review checkpoints and create tests.
-- [ ] Check D4PG trainer implementation and update to be able to run multiple algorithms.
 
 ### Experiments
 
+- [ ] Implement TensorBoard logging for experiment callbacks.
 - [ ] Update jobs to a separate structure that allows the resources in rlarcworld to be used in the jobs. Jobs is in reality a space to define the experiments to run.
+  - [x] Use Trainer to train the algorithm.
+    - [ ] Use priority replay buffer.
+  - [ ] Use checkpointing to save the algorithm state.
+    - [ ] Define on Step checkpointing.
+    - [ ] Define on Train checkpointing.
+    - [ ] Define on Exception checkpointing.
+  - [x] Use logging to log the algorithm state.
+  - [x] Use ArcDataset to load the training dataset.
+    - [x] Use ArcSampleTransformer to transform the dataset.
+  - [x] Use ArcBatchGridEnv to create the environment.
+    - [x] Use EnvStepper to create the stepper.
+  - [x] Use ArcActorNetwork and ArcCriticNetwork to create the networks.
+  - [x] Use D4PGCore to create the core.
+  - [ ] Setup Validation procedures.
+    - [ ] Use ArcDataset to load the validation dataset.
+    - [ ] Use ArcBatchGridEnv to create the validation environment.
+    - [ ] Use EnvStepper to create the validation stepper.
 
 ### devops
 
