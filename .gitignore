@@ -162,6 +162,7 @@ cython_debug/
 #.idea/
 
 # Custom
+rlarcworld/algorithms/old.py
 rlarcworld/**/dataset/
 gcs/
 test_checkpoint/**

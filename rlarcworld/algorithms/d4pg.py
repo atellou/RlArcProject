@@ -8,54 +8,8 @@ import torch.optim as optim
 from tensordict import TensorDict
 
 from rlarcworld.algorithms.distributions import categorical_projection
-from rlarcworld.utils.device import enable_cuda
-
-
-class AmpScaler:
-    """Small wrapper that makes AMP usage optional and ergonomic."""
-
-    def __init__(self, amp_enabled: bool, device: str) -> None:
-        """Initialize AMP scaler and autocast context if enabled."""
-        if amp_enabled:
-            self.scaler = torch.amp.GradScaler(device=device)
-            self._cm = torch.amp.autocast(device_type="cuda")
-        else:
-            self.scaler = None
-            self._cm = None
-
-    def __enter__(self):
-        """Enter autocast context if AMP is enabled."""
-        if self._cm is not None:
-            return self._cm.__enter__()
-        return None
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit autocast context if AMP is enabled."""
-        if self._cm is not None:
-            return self._cm.__exit__(exc_type, exc_val, exc_tb)
-        return False
-
-    def scale(self, loss: torch.Tensor) -> torch.Tensor:
-        """Conditionally scale a loss tensor when AMP is enabled."""
-        if self.scaler is not None:
-            return self.scaler.scale(loss)
-        return loss
-
-    def step(self, optimizer: torch.optim.Optimizer) -> None:
-        """Conditionally step optimizer and update scaler."""
-        if self.scaler is not None:
-            self.scaler.step(optimizer)
-            self.scaler.update()
-        else:
-            optimizer.step()
-
-    def unscale(self, optimizer: torch.optim.Optimizer) -> None:
-        """Unscale gradients for a given optimizer when AMP is enabled.
-
-        Call this before gradient clipping to ensure clipping happens on unscaled grads.
-        """
-        if self.scaler is not None:
-            self.scaler.unscale_(optimizer)
+from rlarcworld.trainer.core import OnStepContext
+from rlarcworld.utils.device import AmpScaler, enable_cuda
 
 
 class D4PGCore:
@@ -84,9 +38,11 @@ class D4PGCore:
         gamma: float = 0.99,
         tau: float = 0.005,
         n_steps: int = 1,
+        compute_td_error: bool = False,
         carsm: bool = False,
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
+        target_update_frequency: int = 10,
         config: dict | None = None,
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
@@ -117,6 +73,10 @@ class D4PGCore:
                 0.0.
             amp_enabled (bool, optional): Whether to use automatic mixed
                 precision. Defaults to True.
+            target_update_frequency (int, optional): Frequency of target
+                network updates. Defaults to 10.
+            compute_td_error (bool, optional): Whether to compute TD error.
+                Defaults to False.
         """
         assert entropy_coef >= 0, "Entropy coefficient must be non-negative"
         assert entropy_coef_decay >= 0, "Entropy coefficient decay must be non-negative"
@@ -130,10 +90,12 @@ class D4PGCore:
         self.gamma = gamma
         self.tau = tau
         self.n_steps = n_steps
+        self.compute_td_error = compute_td_error
         self.carsm = carsm
         self.entropy_coef = entropy_coef
         self.entropy_coef_decay = entropy_coef_decay
         self.max_grad_norm = max_grad_norm
+        self.target_update_frequency = target_update_frequency
 
         # Networks
         self.actor = actor.to(self.device)
@@ -361,24 +323,15 @@ class D4PGCore:
         self,
         batch: TensorDict,
         *,
-        compute_td_error: bool = False,
         training: bool = True,
-        update_actor: bool = True,
-        update_critic: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute actor and critic losses for a batch of transitions.
 
         Args:
             batch (TensorDict): Batch containing state, actions, reward,
                 next_state, and terminated.
-            compute_td_error (bool, optional): Whether to compute TD error.
-                Defaults to False.
             training (bool, optional): Whether to compute gradients and update
                 networks. Defaults to True.
-            update_actor (bool, optional): Whether to update the actor.
-                Defaults to True.
-            update_critic (bool, optional): Whether to update the critic.
-                Defaults to True.
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Actor loss and critic loss
@@ -392,11 +345,11 @@ class D4PGCore:
                 batch["state"],
                 batch["actions"],
                 target_probs,
-                compute_td_error,
+                self.compute_td_error,
             )
             loss_critic = sum(loss_critic_td.values()) / max(1, len(loss_critic_td))
 
-            if training and update_critic:
+            if training:
                 self.critic_optimizer.zero_grad()
                 self.amp_scaler.scale(loss_critic).backward()
                 if self.max_grad_norm and self.max_grad_norm > 0:
@@ -419,7 +372,7 @@ class D4PGCore:
 
             loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
 
-            if training and update_actor:
+            if training:
                 self.actor_optimizer.zero_grad()
                 self.amp_scaler.scale(loss_actor).backward()
                 if self.max_grad_norm and self.max_grad_norm > 0:
@@ -429,3 +382,32 @@ class D4PGCore:
                     )
                 self.amp_scaler.step(self.actor_optimizer)
         return loss_actor, loss_critic
+
+    def on_step(self, context: OnStepContext):
+        """Callback function to handle all step-related operations.
+
+        Args:
+            context: Step context containing all relevant information
+        """
+        # Update target networks periodically
+        if context.batch is not None:
+            return
+
+        self.step_schedulers_and_decay()
+        if context.iteration % self.target_update_frequency == 0:
+            self.update_target_networks()
+
+    def checkpoint(self):
+        """Generates a dictionary with checkpointing."""
+        return {
+            "actor": self.actor.state_dict(),
+            "critic": self.critic.state_dict(),
+            "actor_optimizer": self.actor_optimizer.state_dict(),
+            "critic_optimizer": self.critic_optimizer.state_dict(),
+            "actor_scheduler": self.actor_scheduler.state_dict()
+            if self.actor_scheduler is not None
+            else None,
+            "critic_scheduler": self.critic_scheduler.state_dict()
+            if self.critic_scheduler is not None
+            else None,
+        }

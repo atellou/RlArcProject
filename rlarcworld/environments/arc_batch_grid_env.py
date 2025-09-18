@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import gymnasium as gym
 import numpy as np
@@ -466,6 +466,27 @@ class ArcBatchGridEnv(gym.Env):
             self.information,
         )
 
+    def checkpoint(self) -> dict[str, Any]:
+        """Checkpoint the environment.
+
+        Returns:
+            dict[str, Any]: The checkpoint.
+        """
+        return {
+            "observations": self.observations,
+            "information": self.information,
+            "last_grid": self.last_grid,
+            "last_reward": self.last_reward,
+            "time_step": self.time_step,
+            "reward_storage": self.reward_storage,
+            "is_train_episode": self.is_train_episode,
+            "n_steps": self.n_steps,
+            "gamma": self.gamma,
+            "grid_size": self.grid_size,
+            "color_values": self.color_values,
+            "batch_size": self.batch_size,
+        }
+
     def save(self, path: str):
         """Saves the environment to a checkpoint.
 
@@ -476,20 +497,7 @@ class ArcBatchGridEnv(gym.Env):
         try:
             os.makedirs(path, exist_ok=True)
             torch.save(
-                {
-                    "observations": self.observations,
-                    "information": self.information,
-                    "last_grid": self.last_grid,
-                    "last_reward": self.last_reward,
-                    "time_step": self.time_step,
-                    "reward_storage": self.reward_storage,
-                    "is_train_episode": self.is_train_episode,
-                    "n_steps": self.n_steps,
-                    "gamma": self.gamma,
-                    "grid_size": self.grid_size,
-                    "color_values": self.color_values,
-                    "batch_size": self.batch_size,
-                },
+                self.checkpoint(),
                 os.path.join(path, self.__class__.__name__ + ".ptc"),
             )
         except AttributeError as e:
