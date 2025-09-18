@@ -227,11 +227,12 @@ class Trainer:
             max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
         """
         try:
+            iteration = 0
             for epoch in range(epochs):
                 loss_actor, loss_critic = torch.tensor(0.0), torch.tensor(0.0)
 
                 for done, step_idx, step_state in self.step_stream_factory():
-                    iteration = epoch * max_steps_per_epoch + step_idx
+                    iteration += 1
 
                     # Store transition and maybe sample batch
                     batch = self._maybe_store_and_sample(step_state)
