@@ -411,3 +411,20 @@ class D4PGCore:
             if self.critic_scheduler is not None
             else None,
         }
+
+    @property
+    def hyperparameters(self):
+        """Returns the hyperparameters of the algorithm."""
+        return {
+            "actor_lr": self.actor_optimizer.param_groups[0]["lr"],
+            "critic_lr": self.critic_optimizer.param_groups[0]["lr"],
+            "actor_scheduler": self.actor_scheduler,
+            "critic_scheduler": self.critic_scheduler,
+            "gamma": self.gamma,
+            "entropy_coef": self.entropy_coef,
+            "entropy_coef_decay": self.entropy_coef_decay,
+            "target_update_frequency": self.target_update_frequency,
+            "tau": self.tau,
+            "max_grad_norm": self.max_grad_norm,
+            "carsm": self.carsm,
+        }.copy()

@@ -35,6 +35,10 @@ class CoreProto(Protocol):
         """Update the target networks."""
         ...
 
+    def hyperparameters(self) -> dict:
+        """Returns the hyperparameters of the algorithm."""
+        ...
+
 
 class OnStepContext:
     """Context object containing all information about a training step."""
@@ -48,6 +52,7 @@ class OnStepContext:
         loss_actor: torch.Tensor | None,
         loss_critic: torch.Tensor | None,
         core: CoreProto,
+        hyperparameters: dict,
     ):
         """Initialize step context.
 
@@ -59,6 +64,7 @@ class OnStepContext:
             loss_actor: Actor loss (None if no training occurred)
             loss_critic: Critic loss (None if no training occurred)
             core: Algorithm core containing networks and methods
+            hyperparameters: Hyperparameters of the algorithm
         """
         self.epoch = epoch
         self.step_idx = step_idx
@@ -67,6 +73,7 @@ class OnStepContext:
         self.loss_actor = loss_actor
         self.loss_critic = loss_critic
         self.core = core
+        self.hyperparameters = hyperparameters
 
 
 class ReplayBufferProto(Protocol):
@@ -153,6 +160,28 @@ class Trainer:
 
         if self.replay_buffer is None and self.batch_size is None:
             raise ValueError("batch_size must be provided when replay_buffer is None")
+
+    @property
+    def hyperparameters(self):
+        """Returns the hyperparameters of the algorithm."""
+        return {
+            "batch_size": self.batch_size,
+            "replay_buffer": {
+                "alpha": self.replay_buffer.sampler.alpha
+                if self.replay_buffer is not None
+                and hasattr(self.replay_buffer, "sampler")
+                and hasattr(self.replay_buffer.sampler, "alpha")
+                else None,
+                "beta": self.replay_buffer.sampler.beta
+                if self.replay_buffer is not None
+                and hasattr(self.replay_buffer, "sampler")
+                and hasattr(self.replay_buffer.sampler, "beta")
+                else None,
+                "warmup_buffer_ratio": self.warmup_buffer_ratio,
+            },
+            "device": self.device,
+            "core": self.core.hyperparameters,
+        }
 
     # ---------------- Orchestration helpers ----------------
     def _maybe_store_and_sample(self, step_state: TensorDict) -> TensorDict | None:
@@ -255,6 +284,7 @@ class Trainer:
                         loss_actor=loss_actor,
                         loss_critic=loss_critic,
                         core=self.core,
+                        hyperparameters=self.hyperparameters,
                     )
 
                     # Call step callback
@@ -275,6 +305,7 @@ class Trainer:
                 loss_actor=loss_actor,
                 loss_critic=loss_critic,
                 core=self.core,
+                hyperparameters=self.hyperparameters,
             )
             if self.on_train_exception is not None:
                 for (
