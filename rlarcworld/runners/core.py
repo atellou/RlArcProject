@@ -100,6 +100,10 @@ class ReplayBufferProto(Protocol):
         """Underlying storage implementation (buffer-specific)."""
         ...
 
+    def __len__(self) -> int:
+        """Return the number of transitions in the buffer."""
+        ...
+
 
 class Trainer:
     """Decoupled trainer/wrapper for CoreProto                      .
@@ -121,11 +125,17 @@ class Trainer:
         *,
         core: CoreProto,
         batch_size: int,
-        step_stream_factory: Callable[[], Iterator[tuple[bool, int, TensorDict]]],
+        train_step_stream_factory: Callable[[], Iterator[tuple[bool, int, TensorDict]]],
+        validation_step_stream_factory: Callable[
+            [], Iterator[tuple[bool, int, TensorDict]]
+        ]
+        | None = None,
         replay_buffer: ReplayBufferProto | None = None,
         warmup_buffer_ratio: float = 0.2,
-        on_step: OrderedDict[str, Callable[[OnStepContext], None]] | None = None,
-        on_train_exception: OrderedDict[str, Callable[[Exception, OnStepContext], None]]
+        on_train_step: OrderedDict[str, Callable[[OnStepContext], None]] | None = None,
+        on_validation_step: OrderedDict[str, Callable[[OnStepContext], None]]
+        | None = None,
+        on_exception: OrderedDict[str, Callable[[Exception, OnStepContext], None]]
         | None = None,
         device: str | None = None,
     ) -> None:
@@ -134,26 +144,34 @@ class Trainer:
         Args:
             core (CoreProto): The algorithm core to train.
             batch_size (int): The batch size for training.
-            step_stream_factory (Callable[[], Iterator[tuple[bool, int, TensorDict]]]):
+            train_step_stream_factory (Callable[[], Iterator[tuple[bool, int, TensorDict]]]):
+                Factory returning an iterator that yields per-step TensorDicts
+                with keys expected by the core ('state', 'actions', 'reward',
+                'next_state', 'terminated').
+            validation_step_stream_factory (Callable[[], Iterator[tuple[bool, int, TensorDict]]]):
                 Factory returning an iterator that yields per-step TensorDicts
                 with keys expected by the core ('state', 'actions', 'reward',
                 'next_state', 'terminated').
             replay_buffer (Optional[ReplayBufferProto]): A replay buffer to
                 store transitions for experience replay.
             warmup_buffer_ratio (float): Ratio of buffer to fill before training.
-            on_step (Optional[OrderedDict[str, Callable[[OnStepContext], None]]]):
+            on_train_step (Optional[OrderedDict[str, Callable[[OnStepContext], None]]]):
                 Callback for logging/tracing/validation/checkpointing.
-            on_train_exception (Optional[OrderedDict[str, Callable[[Exception, OnStepContext], None]]]):
+            on_validation_step (Optional[OrderedDict[str, Callable[[OnStepContext], None]]]):
+                Callback for logging/tracing/validation/checkpointing.
+            on_exception (Optional[OrderedDict[str, Callable[[Exception, OnStepContext], None]]]):
                 Callback for training exceptions.
             device (Optional[str]): The device to use for training.
         """  # noqa: E501
         self.core = core
-        self.step_stream_factory = step_stream_factory
+        self.train_step_stream_factory = train_step_stream_factory
+        self.validation_step_stream_factory = validation_step_stream_factory
         self.replay_buffer = replay_buffer
         self.batch_size = batch_size
         self.warmup_buffer_ratio = warmup_buffer_ratio
-        self.on_step = on_step
-        self.on_train_exception = on_train_exception
+        self.on_train_step = on_train_step
+        self.on_validation_step = on_validation_step
+        self.on_exception = on_exception
         self.device = (
             device or getattr(core, "device", None) or str(torch.device("cpu"))
         )
@@ -243,34 +261,66 @@ class Trainer:
         return batch[selected]
 
     # ---------------- Public API ----------------
-    def train(
+    def _run(
         self,
+        epochs: int,
+        step_stream_factory: Callable[[], Iterator[tuple[bool, int, TensorDict]]],
         *,
-        epochs: int = 1,
+        on_step: OrderedDict[str, Callable[[OnStepContext], None]] | None = None,
+        training: bool = True,
+        validation_epochs_frequency: int = 1,
+        validation_steps_frequency: int = -1,
         max_steps_per_epoch: int = -1,
     ) -> None:
         """Run a training loop using the provided step stream and hooks.
 
         Args:
             epochs (int): Number of epochs to train for.
+            step_stream_factory (Callable[[], Iterator[tuple[bool, int, TensorDict]]]):
+                Factory returning an iterator that yields per-step TensorDicts
+                with keys expected by the core ('state', 'actions', 'reward',
+                'next_state', 'terminated').
+            on_step (OrderedDict[str, Callable[[OnStepContext], None]] | None):
+                Callback for logging/tracing/validation/checkpointing.
+            training (bool): Whether to run in training mode.
+            validation_epochs_frequency (int): Frequency of validation epochs.
+            validation_steps_frequency (int): Frequency of validation steps.
             max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
         """
+        # Initialize variables for exception safety
+        epoch = -1
+        step_idx = -1
+        iteration = 0
+        batch = None
+        loss_actor = None
+        loss_critic = None
         try:
             iteration = 0
+            if (
+                self.validation_step_stream_factory is not None
+                and epochs > 0
+                and validation_epochs_frequency > 0
+                and epochs % validation_epochs_frequency == 0
+                and training
+            ):
+                self.validate(validation_epochs_frequency)
             for epoch in range(epochs):
                 loss_actor, loss_critic = torch.tensor(0.0), torch.tensor(0.0)
 
-                for done, step_idx, step_state in self.step_stream_factory():
+                for done, step_idx, step_state in step_stream_factory():
                     iteration += 1
 
                     # Store transition and maybe sample batch
-                    batch = self._maybe_store_and_sample(step_state)
+                    if training:
+                        batch = self._maybe_store_and_sample(step_state)
+                    else:
+                        batch = step_state.to(self.device)
 
                     # Update networks if we have a batch
                     if batch is not None:
                         loss_actor, loss_critic = self.core.compute_loss(
                             batch,
-                            training=True,
+                            training=training,
                         )
                     else:
                         loss_actor, loss_critic = None, None
@@ -288,10 +338,23 @@ class Trainer:
                     )
 
                     # Call step callback
-                    if self.on_step and batch is not None:
-                        for callback_name, callback_step in self.on_step.items():
-                            logger.debug(f"Calling on_step {callback_name}")
+                    if on_step and batch is not None:
+                        for callback_name, callback_step in on_step.items():
+                            logger.debug(
+                                "Calling {} on_step {}".format(
+                                    "training" if training else "validation",
+                                    callback_name,
+                                )
+                            )
                             callback_step(context)
+
+                    if (
+                        self.validation_step_stream_factory is not None
+                        and validation_steps_frequency > 0
+                        and iteration % validation_steps_frequency == 0
+                        and training
+                    ):
+                        self.validate(validation_epochs_frequency)
 
                     # Early termination
                     if max_steps_per_epoch > 0 and step_idx >= max_steps_per_epoch - 1:
@@ -307,11 +370,58 @@ class Trainer:
                 core=self.core,
                 hyperparameters=self.hyperparameters,
             )
-            if self.on_train_exception is not None:
+            if self.on_exception is not None:
                 for (
                     callback_name,
                     callback_exception,
-                ) in self.on_train_exception.items():
-                    logger.debug(f"Calling on_train_exception {callback_name}")
+                ) in self.on_exception.items():
+                    logger.debug(
+                        "Calling {} on_exception {}".format(
+                            "training" if training else "validation",
+                            callback_name,
+                        )
+                    )
                     callback_exception(e, context)
             raise e
+
+    def train(
+        self,
+        epochs,
+        validation_epochs_frequency=1,
+        validation_steps_frequency=-1,
+        max_steps_per_epoch=-1,
+    ) -> None:
+        """Run the training loop.
+
+        Args:
+            epochs (int): Number of epochs to train for.
+            validation_epochs_frequency (int): Frequency of validation epochs.
+            validation_steps_frequency (int): Frequency of validation steps.
+            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
+        """
+        self._run(
+            step_stream_factory=self.train_step_stream_factory,
+            on_step=self.on_train_step,
+            training=True,
+            epochs=epochs,
+            validation_epochs_frequency=validation_epochs_frequency,
+            validation_steps_frequency=validation_steps_frequency,
+            max_steps_per_epoch=max_steps_per_epoch,
+        )
+
+    def validate(self, epochs, max_steps_per_epoch=-1) -> None:
+        """Run the validation loop.
+
+        Args:
+            epochs (int): Number of epochs to validate for.
+            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
+        """
+        if self.validation_step_stream_factory is None:
+            raise ValueError("Validation step stream factory is not set")
+        self._run(
+            step_stream_factory=self.validation_step_stream_factory,
+            on_step=self.on_validation_step,
+            training=False,
+            epochs=epochs,
+            max_steps_per_epoch=max_steps_per_epoch,
+        )

@@ -11,7 +11,7 @@ from torchrl.data.replay_buffers import (
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.trainer.core import OnStepContext, Trainer
+from rlarcworld.runners.core import OnStepContext, Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
 """
@@ -71,11 +71,11 @@ def test_d4pg_trainer_training_updates_and_loss_ranges(
 
     trainer = Trainer(
         core=core,
-        step_stream_factory=step_stream_factory,
+        train_step_stream_factory=step_stream_factory,
         replay_buffer=_MiniBuffer(),
         batch_size=batch_size,
         warmup_buffer_ratio=0.0,
-        on_step={"test": on_step},
+        on_train_step={"test": on_step},
         device=str(device),
     )
 
@@ -161,7 +161,7 @@ def test_d4pg_trainer_per_update_priority_called(
 
     trainer = Trainer(
         core=core,
-        step_stream_factory=step_stream_factory,
+        train_step_stream_factory=step_stream_factory,
         replay_buffer=rb,
         batch_size=batch_size,
         warmup_buffer_ratio=0.0,
@@ -237,11 +237,11 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
 
     trainer = Trainer(
         core=core,
-        step_stream_factory=step_stream_factory,
+        train_step_stream_factory=step_stream_factory,
         replay_buffer=rb,
         batch_size=batch_size,
         warmup_buffer_ratio=warmup_ratio,
-        on_step={"test": on_step},
+        on_train_step={"test": on_step},
         device=str(device),
     )
 
@@ -302,11 +302,11 @@ def test_d4pg_trainer_real_replay_buffer_and_step_handlers(
 
     trainer = Trainer(
         core=core,
-        step_stream_factory=step_stream_factory,
+        train_step_stream_factory=step_stream_factory,
         replay_buffer=rb,
         batch_size=batch_size,
         warmup_buffer_ratio=0.0,
-        on_step={
+        on_train_step={
             "logging": logging_handler,
             "target_update": target_update_handler,
         },
@@ -439,12 +439,12 @@ def test_d4pg_trainer_per_warmup_and_priority(
 
     trainer = Trainer(
         core=core,
-        step_stream_factory=step_stream_factory,
+        train_step_stream_factory=step_stream_factory,
         replay_buffer=per_buffer,
         batch_size=batch_size,
         # need >5 samples before training starts (given max_size=10)
         warmup_buffer_ratio=0.5,
-        on_step={"test": on_step},
+        on_train_step={"test": on_step},
         device=str(device),
     )
 
@@ -491,6 +491,9 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
         def update_priority(self, indices, priorities):
             pass
 
+        def __len__(self):
+            return 1
+
     losses_actor, losses_critic = [], []
 
     def on_step(ctx: OnStepContext):
@@ -501,11 +504,11 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
 
     trainer = Trainer(
         core=core,
-        step_stream_factory=step_stream_factory,
+        train_step_stream_factory=step_stream_factory,
         replay_buffer=_Buf(),
         batch_size=batch_size,
         warmup_buffer_ratio=0.0,
-        on_step=OrderedDict({"test": on_step}),
+        on_train_step=OrderedDict({"test": on_step}),
         device=device,
     )
 
@@ -516,3 +519,108 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
     assert len(losses_actor) > 0 and len(losses_critic) > 0
     assert all(torch.isfinite(v) for v in losses_actor)
     assert all(torch.isfinite(v) for v in losses_critic)
+
+
+def test_d4pg_trainer_validation_process(d4pg_core, make_synthetic_step, batch_size):
+    """Test validation process works with separate train/validation streams."""
+    max_steps = 10
+
+    def train_step_stream_factory():
+        for step_idx in range(max_steps):
+            done = step_idx == max_steps - 1
+            yield done, step_idx, make_synthetic_step(batch_size, d4pg_core.actor)
+
+    def validation_step_stream_factory():
+        # Validation uses fewer steps
+        for step_idx in range(5):
+            done = step_idx == 4
+            yield done, step_idx, make_synthetic_step(batch_size, d4pg_core.actor)
+
+    # Simple buffer to bypass warmup
+    class _Buf:
+        def __init__(self):
+            self.storage = type("S", (), {"max_size": 1, "__len__": lambda self: 1})()
+
+        def extend(self, batch):
+            self._last = batch.squeeze(0)
+            return [0]
+
+        def sample(self, bs):
+            return self._last
+
+        def update_priority(self, indices, priorities):
+            pass
+
+        def __len__(self):
+            return 1
+
+    train_losses_actor, train_losses_critic = [], []
+    val_losses_actor, val_losses_critic = [], []
+
+    def on_train_step(ctx: OnStepContext):
+        if ctx.loss_actor is not None:
+            train_losses_actor.append(ctx.loss_actor)
+        if ctx.loss_critic is not None:
+            train_losses_critic.append(ctx.loss_critic)
+
+    def on_validation_step(ctx: OnStepContext):
+        if ctx.loss_actor is not None:
+            val_losses_actor.append(ctx.loss_actor)
+        if ctx.loss_critic is not None:
+            val_losses_critic.append(ctx.loss_critic)
+
+    trainer = Trainer(
+        core=d4pg_core,
+        train_step_stream_factory=train_step_stream_factory,
+        validation_step_stream_factory=validation_step_stream_factory,
+        replay_buffer=_Buf(),
+        batch_size=batch_size,
+        warmup_buffer_ratio=0.0,
+        on_train_step=OrderedDict({"test": on_train_step}),
+        on_validation_step=OrderedDict({"test": on_validation_step}),
+        device=d4pg_core.device,
+    )
+
+    # Run training (with validation_epochs_frequency=0 to disable auto-validation)
+    trainer.train(epochs=1, validation_epochs_frequency=0)
+
+    # Run validation explicitly
+    trainer.validate(epochs=1)
+
+    # Assert both training and validation produced finite losses
+    assert len(train_losses_actor) > 0 and len(train_losses_critic) > 0
+    assert all(torch.isfinite(v) for v in train_losses_actor)
+    assert all(torch.isfinite(v) for v in train_losses_critic)
+
+    assert len(val_losses_actor) > 0 and len(val_losses_critic) > 0
+    assert all(torch.isfinite(v) for v in val_losses_actor)
+    assert all(torch.isfinite(v) for v in val_losses_critic)
+
+    # Validation should have fewer steps than training (5 vs 10)
+    assert len(val_losses_actor) == 5
+    assert len(val_losses_critic) == 5
+    assert len(train_losses_actor) == 10
+    assert len(train_losses_critic) == 10
+
+
+def test_d4pg_trainer_validation_without_factory_raises_error(
+    d4pg_core, make_synthetic_step, batch_size
+):
+    """Test calling validate() without validation_step_stream_factory raises error."""
+
+    def train_step_stream_factory():
+        for step_idx in range(5):
+            done = step_idx == 4
+            yield done, step_idx, make_synthetic_step(batch_size, d4pg_core.actor)
+
+    trainer = Trainer(
+        core=d4pg_core,
+        train_step_stream_factory=train_step_stream_factory,
+        validation_step_stream_factory=None,  # No validation factory
+        batch_size=batch_size,
+        device=d4pg_core.device,
+    )
+
+    # Should raise ValueError when trying to validate
+    with pytest.raises(ValueError, match="Validation step stream factory is not set"):
+        trainer.validate(epochs=1)

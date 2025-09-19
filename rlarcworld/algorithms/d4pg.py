@@ -8,7 +8,7 @@ import torch.optim as optim
 from tensordict import TensorDict
 
 from rlarcworld.algorithms.distributions import categorical_projection
-from rlarcworld.trainer.core import OnStepContext
+from rlarcworld.runners.core import OnStepContext
 from rlarcworld.utils.device import AmpScaler, enable_cuda
 
 

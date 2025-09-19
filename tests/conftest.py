@@ -16,7 +16,7 @@ from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
-from rlarcworld.trainer.core import Trainer
+from rlarcworld.runners.core import Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
 
@@ -131,12 +131,12 @@ def trainer_factory():
     Usage:
         trainer = trainer_factory(
             core=core,
-            step_stream_factory=stream_fn,
+            train_step_stream_factorystream_fn,
             replay_buffer=rb,
             batch_size=bs,
             warmup_buffer_ratio=0.0,
-            on_step=None,
-            on_train_exception=None,
+            on_train_step=None,
+            on_exception=None,
             device="cpu",
         )
     """
@@ -148,18 +148,18 @@ def trainer_factory():
         replay_buffer,
         batch_size: int,
         warmup_buffer_ratio: float = 0.0,
-        on_step=None,
-        on_train_exception=None,
+        on_train_step=None,
+        on_exception=None,
         device: str | torch.device = "cpu",
     ) -> Trainer:
         return Trainer(
             core=core,
-            step_stream_factory=step_stream_factory,
+            train_step_stream_factory=step_stream_factory,
             replay_buffer=replay_buffer,
             batch_size=batch_size,
             warmup_buffer_ratio=warmup_buffer_ratio,
-            on_step=on_step,
-            on_train_exception=on_train_exception,
+            on_train_step=on_train_step,
+            on_exception=on_exception,
             device=str(device),
         )
 
