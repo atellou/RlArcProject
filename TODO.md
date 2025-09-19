@@ -78,10 +78,12 @@ We will not maintain backward compatibility. Update code and tests to the new la
 ## Pytest Migration Plan
 
 - [x] Restructure tests into focused pytest modules (no monolithic test_algorithms)
-
   - [x] `tests/test_d4pg_core_compute.py` – math-only tests for `D4PGCore`
   - [x] `tests/test_d4pg_trainer.py` – trainer loop with `D4PGTrainer` (+ PER warmup, AMP, grad clipping, target updates)
   - [ ] `tests/test_checkpointing.py` – re-scoped checkpoint/state dict validation
+    - [x] `d4pg_core_checkpoing` – re-scoped checkpoint/state dict validation
+    - [ ] `env_stepper_checkpoint` – re-scoped checkpoint/state dict validation
+    - [ ] `arc_environment_checkpoint` – re-scoped checkpoint/state dict validation
   - [x] `tests/test_env_stepper.py` – step dict keys/shapes; AMP vs non-AMP
   - [x] `tests/test_schedulers.py` – `BetaScheduler` behavior
   - [x] `tests/test_logging_utils.py` – logger handler dedupe
@@ -92,18 +94,15 @@ We will not maintain backward compatibility. Update code and tests to the new la
   - [x] `tests/test_networks.py` – Evaluates the networks
 
 - [x] Introduce pytest fixtures in `tests/conftest.py`
-
   - [x] `device`, `grid_size`, `color_values`, `batch_size`
   - [x] `env` and wrapped env, parametrized over `n_steps`
   - [x] `dataset`, `train_loader`, `val_loader`
   - [x] `actor`, `critic` with consistent `v_min`/`v_max`/`num_atoms`
   - [x] `d4pg_core` (parametrize `amp_enabled`)
   - [x] `trainer`
-
   - [x] Add `make_synthetic_step_on_device(device)` helper to avoid CPU/CUDA mismatches in specialized tests (e.g., AMP)
 
-- [ ] Parametrized tests
-
+- [x] Parametrized tests
   - [x] `categorical_projection` (shapes, normalization)
   - [x] `BetaScheduler` (increasing, clamping)
   - [x] AMP/no-AMP code paths where relevant

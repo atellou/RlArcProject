@@ -1,6 +1,8 @@
 """Core components for D4PG training (algorithm-only logic)."""
 
 import copy
+import logging
+from pathlib import Path
 from typing import cast
 
 import torch
@@ -9,7 +11,9 @@ from tensordict import TensorDict
 
 from rlarcworld.algorithms.distributions import categorical_projection
 from rlarcworld.runners.core import OnStepContext
-from rlarcworld.utils.device import AmpScaler, enable_cuda
+from rlarcworld.utils.device import AmpScaler, CudaConfig, enable_cuda
+
+logger = logging.getLogger(__name__)
 
 
 class D4PGCore:
@@ -43,7 +47,7 @@ class D4PGCore:
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
         target_update_frequency: int = 10,
-        config: dict | None = None,
+        config: CudaConfig | None = None,
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
     ) -> None:
@@ -67,7 +71,7 @@ class D4PGCore:
                 0.0.
             entropy_coef_decay (float, optional): Entropy coefficient decay.
                 Defaults to 1.0.
-            config (Optional[Dict], optional): Configuration dictionary.
+            config (Optional[CudaConfig], optional): Configuration dictionary.
                 Defaults to None.
             max_grad_norm (float, optional): Maximum gradient norm. Defaults to
                 0.0.
@@ -397,6 +401,18 @@ class D4PGCore:
         if context.iteration % self.target_update_frequency == 0:
             self.update_target_networks()
 
+    def save_checkpoint(self, path: str | Path) -> None:
+        """Save model checkpoint.
+
+        Args:
+            path: Path to save checkpoint
+        """
+        checkpoint_path = Path(path)
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+        torch.save(self.checkpoint(), checkpoint_path)
+        logger.info(f"Checkpoint saved to {checkpoint_path}")
+
     def checkpoint(self):
         """Generates a dictionary with checkpointing."""
         return {
@@ -410,7 +426,84 @@ class D4PGCore:
             "critic_scheduler": self.critic_scheduler.state_dict()
             if self.critic_scheduler is not None
             else None,
+            "hyperparameters": self.hyperparameters,
         }
+
+    def load(
+        self,
+        checkpoint: dict | Path,
+        *,
+        strict: bool = True,
+        load_optimizers: bool = True,
+        load_schedulers: bool = True,
+        restore_hyperparameters: bool = True,
+    ) -> None:
+        """Load state from a checkpoint dictionary produced by ``checkpoint()``.
+
+        Args:
+            checkpoint: Dictionary with keys from ``checkpoint()``.
+            strict: Whether to strictly enforce that the keys in
+                ``state_dict`` match.
+            load_optimizers: Load optimizer state if present.
+            load_schedulers: Load scheduler state if present and schedulers
+                exist locally.
+            restore_hyperparameters: Restore selected hyperparameters (incl.
+                learning rates).
+        """
+        if isinstance(checkpoint, Path):
+            checkpoint = torch.load(checkpoint)
+        if not isinstance(checkpoint, dict):
+            raise ValueError("Checkpoint must be a dictionary or a Path.")
+        # Load networks
+        if "actor" in checkpoint:
+            self.actor.load_state_dict(checkpoint["actor"], strict=strict)
+        if "critic" in checkpoint:
+            self.critic.load_state_dict(checkpoint["critic"], strict=strict)
+
+        # Refresh targets to match online networks
+        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.critic_target.load_state_dict(self.critic.state_dict())
+
+        # Load optimizers
+        if load_optimizers:
+            actor_opt_sd = checkpoint.get("actor_optimizer")
+            if actor_opt_sd is not None:
+                self.actor_optimizer.load_state_dict(actor_opt_sd)
+            critic_opt_sd = checkpoint.get("critic_optimizer")
+            if critic_opt_sd is not None:
+                self.critic_optimizer.load_state_dict(critic_opt_sd)
+
+        # Load schedulers
+        if load_schedulers:
+            actor_sch_sd = checkpoint.get("actor_scheduler")
+            if actor_sch_sd is not None and self.actor_scheduler is not None:
+                self.actor_scheduler.load_state_dict(actor_sch_sd)
+            critic_sch_sd = checkpoint.get("critic_scheduler")
+            if critic_sch_sd is not None and self.critic_scheduler is not None:
+                self.critic_scheduler.load_state_dict(critic_sch_sd)
+
+        # Restore hyperparameters
+        if restore_hyperparameters:
+            hp = checkpoint.get("hyperparameters") or {}
+            # Learning rates
+            if "actor_lr" in hp:
+                for g in self.actor_optimizer.param_groups:
+                    g["lr"] = float(hp["actor_lr"])
+            if "critic_lr" in hp:
+                for g in self.critic_optimizer.param_groups:
+                    g["lr"] = float(hp["critic_lr"])
+            # Other runtime params
+            self.gamma = hp.get("gamma", self.gamma)
+            self.entropy_coef = hp.get("entropy_coef", self.entropy_coef)
+            self.entropy_coef_decay = hp.get(
+                "entropy_coef_decay", self.entropy_coef_decay
+            )
+            self.target_update_frequency = hp.get(
+                "target_update_frequency", self.target_update_frequency
+            )
+            self.tau = hp.get("tau", self.tau)
+            self.max_grad_norm = hp.get("max_grad_norm", self.max_grad_norm)
+            self.carsm = hp.get("carsm", self.carsm)
 
     @property
     def hyperparameters(self):

@@ -228,7 +228,7 @@ class ArcD4PG:
             gamma=gamma,
             tau=tau,
             n_steps=n_steps,
-            config=dict(self.config),
+            config=self.config,
             amp_enabled=amp_enabled,
             **kwargs,
         )
