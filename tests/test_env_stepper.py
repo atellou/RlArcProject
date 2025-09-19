@@ -45,7 +45,7 @@ def test_env_stepper_one_step(device):
         sampler=simple_sampler(),
         env_sample_reset=env_reset_fn,
         amp_enabled=False,
-        on_train_step=None,
+        on_step=None,
     )
 
     # Reset env with a trivial batch to satisfy interface
@@ -106,7 +106,7 @@ def test_env_stepper_one_step_with_on_step(device):
         sampler=simple_sampler(),
         env_sample_reset=env_reset_fn,
         amp_enabled=False,
-        on_train_step=on_step.get_on_step_rewards(),
+        on_step=on_step.get_on_step_rewards(),
     )
 
     # Reset env with a trivial batch to satisfy interface
@@ -167,7 +167,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         env_sample_reset=env_reset_fn,
         max_steps=3,
         amp_enabled=False,
-        on_train_step=on_step.get_on_step_rewards(),
+        on_step=on_step.get_on_step_rewards(),
     )
 
     # Reset env
@@ -250,7 +250,7 @@ def test_env_stepper_episode_stream(device):
         env_sample_reset=env_reset_fn,
         max_steps=3,
         amp_enabled=False,
-        on_train_step=on_step.get_on_step_rewards(),
+        on_step=on_step.get_on_step_rewards(),
     )
 
     # Reset env
@@ -330,7 +330,7 @@ def test_env_stepper_step_stream_from_samples(device):
         env_sample_reset=env_reset_fn,
         max_steps=2,
         amp_enabled=False,
-        on_train_step=on_step.get_on_step_rewards(),
+        on_step=on_step.get_on_step_rewards(),
     )
 
     # Create step stream from samples and collect steps

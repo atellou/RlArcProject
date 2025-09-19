@@ -13,11 +13,73 @@ from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.stepper import EnvStepper
-from rlarcworld.trainer.core import OnStepContext, Trainer
-from rlarcworld.utils.device import enable_cuda
+from rlarcworld.runners.core import OnStepContext, Trainer
+from rlarcworld.utils.device import CudaConfig, enable_cuda
 from rlarcworld.utils.logging_utils import configure_logger
 
 logger = logging.getLogger(__name__)
+
+
+class ArcStepper:
+    """ArcStepper class to handle environment stepping and episode simulation."""
+
+    def __init__(
+        self,
+        max_steps_per_epoch: int,
+        dataset_path: str,
+        grid_size: int,
+        color_values: int,
+        device: str,
+        actor: ArcActorNetwork,
+        config: CudaConfig,
+    ) -> None:
+        """Creates a stepper for the environment and dataset.
+
+        Args:
+            max_steps_per_epoch (int): Maximum steps per epoch.
+            dataset_path (str): Path to the dataset.
+            grid_size (int): Size of the ARC grid.
+            color_values (int): Number of possible colors.
+            device (str): Device to use.
+            actor (ArcActorNetwork): Actor network.
+            config (dict): Configuration dictionary.
+        """
+        # Initialize dataset and environment
+        logger.info("Setting up dataset and environment...")
+
+        def reset_env(env, sample, seed):
+            args = {"batch": sample["task"], "examples": sample["examples"]}
+            env.reset(options=args, seed=seed)
+
+        transform = ArcSampleTransformer(
+            output_size=(grid_size, grid_size),
+            examples_stack_dim=10,
+            padding_constant_value=-1,
+            zero_based_correction=1,
+        )
+        self.dataset: ArcDataset = ArcDataset(
+            dataset_path, keep_in_memory=False, transform=transform
+        )
+
+        self.environment = ArcBatchGridEnv(
+            grid_size=grid_size,
+            color_values=color_values,
+            device=device,
+        )
+
+        self.stepper = EnvStepper(
+            actor=actor,
+            device=device,
+            env=self.environment,
+            sampler=iter(self.dataset),
+            max_steps=max_steps_per_epoch,
+            env_sample_reset=reset_env,
+            amp_enabled=config.get("amp_enabled", True),
+        )
+
+    def create_step_stream_from_samples(self, **kwargs):
+        """Create a step stream from samples."""
+        return self.stepper.create_step_stream_from_samples(**kwargs)
 
 
 class ArcD4PG:
@@ -32,6 +94,7 @@ class ArcD4PG:
 
     def __init__(
         self,
+        dataset_path: str,
         *,
         # Environment config
         grid_size: int = 30,
@@ -51,13 +114,13 @@ class ArcD4PG:
         v_max: Optional[dict[str, int]] = None,
         # Training config
         max_steps_per_epoch: int = 1000,
+        validation_steps_per_epoch: int = 100,
         warmup_buffer_ratio: float = 0.2,
         # System config
         amp_enabled: bool = True,
         device: Optional[str] = None,
         seed: int = 42,
         # Data config
-        dataset_path: Optional[str] = None,
         **kwargs,
     ):
         """Initialize the ArcD4PG experiment.
@@ -76,6 +139,7 @@ class ArcD4PG:
             v_min: Minimum values for distributional critic
             v_max: Maximum values for distributional critic
             max_steps_per_epoch: Maximum steps per training epoch
+            validation_steps_per_epoch: Number of steps per validation epoch
             warmup_buffer_ratio: Replay buffer warmup ratio
             amp_enabled: Enable automatic mixed precision
             device: Device to use (auto-detected if None)
@@ -103,6 +167,7 @@ class ArcD4PG:
         self.color_values = color_values
         self.batch_size = batch_size
         self.max_steps_per_epoch = max_steps_per_epoch
+        self.validation_steps_per_epoch = validation_steps_per_epoch
 
         # Default distributional RL parameters
         if num_atoms is None:
@@ -131,6 +196,28 @@ class ArcD4PG:
             config=self.config,
         )
 
+        # Create training stepper
+        self.training_stepper = ArcStepper(
+            max_steps_per_epoch=self.max_steps_per_epoch,
+            dataset_path=dataset_path,
+            grid_size=grid_size,
+            color_values=color_values,
+            device=self.device,
+            actor=self.actor,
+            config=self.config,
+        )
+
+        # Create validation stepper
+        self.validation_stepper = ArcStepper(
+            max_steps_per_epoch=self.validation_steps_per_epoch,
+            dataset_path=dataset_path,
+            grid_size=grid_size,
+            color_values=color_values,
+            device=self.device,
+            actor=self.actor,
+            config=self.config,
+        )
+
         # Initialize D4PG core
         logger.info("Initializing D4PG algorithm core...")
         self.d4pg_core = D4PGCore(
@@ -144,43 +231,6 @@ class ArcD4PG:
             config=dict(self.config),
             amp_enabled=amp_enabled,
             **kwargs,
-        )
-
-        # Initialize dataset and environment
-        logger.info("Setting up dataset and environment...")
-        if dataset_path:
-
-            def reset_env(env, sample, seed):
-                args = {"batch": sample["task"], "examples": sample["examples"]}
-                env.reset(options=args, seed=seed)
-
-            transform = ArcSampleTransformer(
-                output_size=(grid_size, grid_size),
-                examples_stack_dim=10,
-                padding_constant_value=-1,
-                zero_based_correction=1,
-            )
-            self.dataset: Optional[ArcDataset] = ArcDataset(
-                dataset_path, keep_in_memory=False, transform=transform
-            )
-        else:
-            # Use default dataset path or create synthetic data
-            self.dataset = None
-
-        self.environment = ArcBatchGridEnv(
-            grid_size=grid_size,
-            color_values=color_values,
-            device=self.device,
-        )
-
-        self.stepper = EnvStepper(
-            actor=self.actor,
-            device=self.device,
-            env=self.environment,
-            sampler=iter(self.dataset) if self.dataset is not None else iter([]),
-            max_steps=self.max_steps_per_epoch,
-            env_sample_reset=reset_env,
-            amp_enabled=self.config.get("amp_enabled", True),
         )
 
         # Initialize trainer with callbacks
@@ -206,11 +256,12 @@ class ArcD4PG:
         self.trainer: Optional[Trainer] = Trainer(
             core=self.d4pg_core,
             batch_size=self.batch_size,
-            step_stream_factory=self.stepper.create_step_stream_from_samples,
+            train_step_stream_factory=self.training_stepper.create_step_stream_from_samples,
+            validation_step_stream_factory=self.validation_stepper.create_step_stream_from_samples,
             replay_buffer=None,  # Using direct sampling for now
             warmup_buffer_ratio=warmup_buffer_ratio,
-            on_step=on_step_callbacks,
-            on_train_exception=on_exception_callbacks,
+            on_train_step=on_step_callbacks,
+            on_exception=on_exception_callbacks,
             device=self.device,
         )
 
@@ -257,67 +308,6 @@ class ArcD4PG:
         except Exception as e:
             logger.error(f"Training failed with error: {e}")
             raise
-
-    def evaluate(self, num_episodes: int = 10) -> dict[str, float]:
-        """Evaluate the trained model.
-
-        Args:
-            num_episodes: Number of episodes to evaluate
-
-        Returns:
-            Dictionary of evaluation metrics
-        """
-        logger.info(f"Evaluating model on {num_episodes} episodes")
-
-        self.actor.eval()
-        self.critic.eval()
-
-        total_rewards = []
-        success_rate = 0
-
-        with torch.no_grad():
-            for episode in range(num_episodes):
-                # Run evaluation episode
-                episode_reward = 0.0
-                step_count = 0
-
-                # Simple evaluation loop - can be enhanced
-                for (
-                    done,
-                    step_idx,
-                    step_data,
-                ) in self.stepper.create_step_stream_from_samples():
-                    if step_count >= 100:  # Max steps per episode
-                        break
-
-                    rewards = step_data.get("reward", {})
-                    if isinstance(rewards, dict):
-                        episode_reward += sum(rewards.values())
-                    else:
-                        episode_reward += float(rewards)
-
-                    step_count += 1
-
-                    # Check if episode terminated successfully
-                    if done:
-                        if episode_reward > 0:
-                            success_rate += 1
-                        break
-
-                total_rewards.append(episode_reward)
-
-        # Reset to training mode
-        self.actor.train()
-        self.critic.train()
-
-        metrics = {
-            "mean_reward": sum(total_rewards) / len(total_rewards),
-            "success_rate": success_rate / num_episodes,
-            "episodes_evaluated": num_episodes,
-        }
-
-        logger.info(f"Evaluation results: {metrics}")
-        return metrics
 
     def save_checkpoint(self, path: str) -> None:
         """Save model checkpoint.

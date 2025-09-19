@@ -9,7 +9,7 @@ We will not maintain backward compatibility. Update code and tests to the new la
 ### rlarcworld
 
 - [x] Check D4PG trainer implementation and update to be able to run multiple algorithms.
-- [ ] Implement inference for core algorithms to use on testing or validation environment.
+- [x] Implement inference for core algorithms to use on testing or validation environment.
 - [ ] Review checkpoints and create tests.
 
 ### Experiments
@@ -29,10 +29,10 @@ We will not maintain backward compatibility. Update code and tests to the new la
     - [x] Use EnvStepper to create the stepper.
   - [x] Use ArcActorNetwork and ArcCriticNetwork to create the networks.
   - [x] Use D4PGCore to create the core.
-  - [ ] Setup Validation procedures.
-    - [ ] Use ArcDataset to load the validation dataset.
-    - [ ] Use ArcBatchGridEnv to create the validation environment.
-    - [ ] Use EnvStepper to create the validation stepper.
+  - [x] Setup Validation procedures.
+    - [x] Use ArcDataset to load the validation dataset.
+    - [x] Use ArcBatchGridEnv to create the validation environment.
+    - [x] Use EnvStepper to create the validation stepper.
 
 ### devops
 
