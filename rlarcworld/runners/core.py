@@ -102,7 +102,7 @@ class ReplayBufferProto(Protocol):
 
 
 class Trainer:
-    """Decoupled trainer/wrapper for D4PGCore.
+    """Decoupled trainer/wrapper for CoreProto                      .
 
     This wrapper is designed to be environment- and logging-agnostic. It
     relies on dependency injection through callables:
