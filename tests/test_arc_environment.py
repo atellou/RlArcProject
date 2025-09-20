@@ -1,14 +1,42 @@
 import logging
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.common.enums import ActionKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 
 logger = logging.getLogger(__name__)
+
+
+def make_batch(batch_size: int, grid: int, colors: int) -> dict:
+    # Simple synthetic data
+    batch_in = torch.randint(0, colors, (batch_size, grid, grid))
+    batch_out = torch.randint(0, colors, (batch_size, grid, grid))
+    examples = torch.randint(0, colors, (batch_size, 10, 2, grid, grid))
+    return {"input": batch_in, "output": batch_out, "examples": examples}
+
+
+def step_once(env: ArcBatchGridEnv) -> None:
+    # Random but valid actions
+    y = torch.randint(0, env.grid_size, (env.batch_size,))
+    x = torch.randint(0, env.grid_size, (env.batch_size,))
+    c = torch.randint(0, env.color_values, (env.batch_size,))
+    s = torch.zeros(env.batch_size, dtype=torch.long)  # no submit
+    actions = TensorDict(
+        {
+            ActionKeys.Y_LOCATION.value: y,
+            ActionKeys.X_LOCATION.value: x,
+            ActionKeys.COLOR_VALUES.value: c,
+            ActionKeys.SUBMIT.value: s,
+        },
+        batch_size=env.batch_size,
+    )
+    env.step(actions)
 
 
 def to_dict_tensors(sample, to_torch: bool = False):
@@ -265,156 +293,118 @@ def test_environment(env: ArcBatchGridEnv):
     episodes_simulation(batch_size, size, color_values, env)
 
 
-def test_arc_save_and_load(tmp_path):
-    color_values = 10
-    batch_size = 32
-    grid_size = 10
-    env = ArcBatchGridEnv(
-        grid_size=grid_size,
-        color_values=color_values,
-        n_steps=10,
-        gamma=0.9,
-        device="cpu",
+@pytest.mark.parametrize("as_dir", [False, True])
+@pytest.mark.parametrize("is_train", [True, False])
+def test_arc_batch_grid_env_checkpoint_roundtrip(
+    tmp_path: Path, as_dir: bool, is_train: bool
+):
+    grid, colors, batch_size = 6, 7, 3
+    env1 = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=3, gamma=0.9)
+
+    batch = make_batch(batch_size, grid, colors)
+    obs1, info1 = env1.reset(
+        options={"batch": batch, "examples": batch["examples"], "is_train": is_train}
     )
-    dummy_batch = TensorDict(
-        {
-            "batch": {
-                "input": torch.randint(
-                    0, color_values - 1, size=(batch_size, grid_size, grid_size)
-                ),
-                "output": torch.randint(
-                    0, color_values, size=(batch_size, grid_size, grid_size)
-                ),
-            },
-            "examples": torch.randint(
-                0,
-                color_values,
-                size=(batch_size, np.random.randint(2, 5), 2, grid_size, grid_size),
-            ),
-        }
-    )
-    env.reset(options=dummy_batch)
-    env.observations = torch.randn(32, 10)
-    env.information = TensorDict({"key": torch.randn(32, 10)})
-    env.last_grid = torch.randn(32, 10)
-    env.last_reward = 1.0
-    env.time_step = 10
-    env.reward_storage = torch.randn(32, 10)
-    env.is_train_episode = True
+    step_once(env1)
 
-    save_dir = tmp_path / "test_checkpoint"
-    env.save(str(save_dir))
+    # Save
+    target_path = tmp_path / ("env_ckpt.pt" if not as_dir else "env_dir")
+    env1.save_checkpoint(target_path)
 
-    loaded_env = ArcBatchGridEnv(
-        grid_size=grid_size, color_values=color_values, n_steps=10, gamma=0.9
-    )
-    loaded_env.load(
-        f"{save_dir}/{loaded_env.__class__.__name__}.ptc", weights_only=False
-    )
+    # Load into fresh env with same constructor args
+    env2 = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=3, gamma=0.9)
+    env2.load(target_path)
 
-    torch.testing.assert_close(env.observations, loaded_env.observations)
-    torch.testing.assert_close(env.information, loaded_env.information)
-    torch.testing.assert_close(env.last_grid, loaded_env.last_grid)
-    torch.testing.assert_close(env.last_reward, loaded_env.last_reward)
-    torch.testing.assert_close(env.time_step, loaded_env.time_step)
-    torch.testing.assert_close(env.reward_storage, loaded_env.reward_storage)
-    torch.testing.assert_close(env.discount_factor, loaded_env.discount_factor)
-    torch.testing.assert_close(env.is_train_episode, loaded_env.is_train_episode)
-    torch.testing.assert_close(env.n_steps, loaded_env.n_steps)
-    torch.testing.assert_close(env.gamma, loaded_env.gamma)
+    # Compare key fields
+    def assert_td_close(a: TensorDict, b: TensorDict):
+        assert set(a.keys()) == set(b.keys())
+        for k in a.keys():
+            torch.testing.assert_close(a[k], b[k])
 
-    torch.testing.assert_close(env.discount_factor, loaded_env.discount_factor)
-    torch.testing.assert_close(env.batch_size, loaded_env.batch_size)
-    torch.testing.assert_close(env.n_steps, loaded_env.n_steps)
-    torch.testing.assert_close(env.gamma, loaded_env.gamma)
+    assert_td_close(env2.observations, env1.observations)
+    assert_td_close(env2.information, env1.information)
+    torch.testing.assert_close(env2.last_grid, env1.last_grid)
+    torch.testing.assert_close(env2.last_reward, env1.last_reward)
+    assert env2.time_step == env1.time_step
+    torch.testing.assert_close(env2.reward_storage, env1.reward_storage)
+    assert env2.is_train_episode == env1.is_train_episode
+    assert env2.n_steps == env1.n_steps
+    assert env2.gamma == env1.gamma
+    assert env2.grid_size == env1.grid_size
+    assert env2.color_values == env1.color_values
+    assert env2.batch_size == env1.batch_size
+
+    # Discount factor recomputed should match definition
+    torch.testing.assert_close(env2.get_discount_factor(), env1.get_discount_factor())
 
 
-def test_arc_wrapper_save_and_load(tmp_path):
-    color_values = 10
-    batch_size = 32
-    grid_size = 10
-    env0 = ArcBatchGridEnv(
-        grid_size=grid_size,
-        color_values=color_values,
-        n_steps=10,
-        gamma=0.9,
-        device="cpu",
-    )
+@pytest.mark.parametrize("as_dir", [False, True])
+@pytest.mark.parametrize("apply_clamp", [False, True])
+def test_reward_wrapper_checkpoint_roundtrip(
+    tmp_path: Path, as_dir: bool, apply_clamp: bool
+):
+    grid, colors, batch_size = 5, 6, 2
+    base = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=4, gamma=0.95)
     env1 = PixelAwareRewardWrapper(
-        env0, n_steps=10, gamma=0.9, apply_clamp=True, v_min=0, v_max=1
-    )
-    dummy_batch = TensorDict(
-        {
-            "batch": {
-                "input": torch.randint(
-                    0, color_values - 1, size=(batch_size, grid_size, grid_size)
-                ),
-                "output": torch.randint(
-                    0, color_values, size=(batch_size, grid_size, grid_size)
-                ),
-            },
-            "examples": torch.randint(
-                0,
-                color_values,
-                size=(batch_size, np.random.randint(2, 5), 2, grid_size, grid_size),
-            ),
-        }
-    )
-    env1.reset(options=dummy_batch)
-    env0.observations = torch.randn(32, 10)
-    env0.information = TensorDict({"key": torch.randn(32, 10)})
-    env0.last_grid = torch.randn(32, 10)
-    env0.last_reward = 1.0
-    env0.time_step = 10
-    env0.reward_storage = torch.randn(32, 10)
-    env0.is_train_episode = True
-
-    env1.last_reward = 1.0
-    env1.reward_storage = torch.randn(32, 10)
-
-    save_dir = tmp_path / "test_checkpoint"
-    env1.save(str(save_dir))
-
-    loaded_env0 = ArcBatchGridEnv(
-        grid_size=grid_size, color_values=color_values, n_steps=10, gamma=0.9
-    )
-    loaded_env1 = PixelAwareRewardWrapper(
-        loaded_env0, n_steps=10, gamma=0.9, apply_clamp=True, v_min=0, v_max=1
-    )
-    loaded_env1.load(
-        parent_path=f"{save_dir}/parent/{loaded_env0.__class__.__name__}.ptc",
-        child_path=f"{save_dir}/child/{loaded_env1.__class__.__name__}.ptc",
-        weights_only=False,
-        device="cpu",
+        base,
+        max_penalty=-1.0,
+        n_steps=4,
+        gamma=0.95,
+        apply_clamp=apply_clamp,
+        v_min=-10 if apply_clamp else None,
+        v_max=10 if apply_clamp else None,
     )
 
-    torch.testing.assert_close(env0.observations, loaded_env0.observations)
-    torch.testing.assert_close(env0.information, loaded_env0.information)
-    torch.testing.assert_close(env0.last_grid, loaded_env0.last_grid)
-    torch.testing.assert_close(env0.last_reward, loaded_env0.last_reward)
-    torch.testing.assert_close(env0.time_step, loaded_env0.time_step)
-    torch.testing.assert_close(env0.reward_storage, loaded_env0.reward_storage)
-    torch.testing.assert_close(env0.discount_factor, loaded_env0.discount_factor)
-    torch.testing.assert_close(env0.is_train_episode, loaded_env0.is_train_episode)
-    torch.testing.assert_close(env0.n_steps, loaded_env0.n_steps)
-    torch.testing.assert_close(env0.gamma, loaded_env0.gamma)
+    batch = make_batch(batch_size, grid, colors)
+    obs1, info1 = env1.reset(options={"batch": batch, "examples": batch["examples"]})
+    step_once(env1.env)  # step base env; wrapper uses it in reward
+    # Simulate wrapper step reward by pushing some reward
+    env1._reward_storage = env1._reward_storage.push(
+        torch.zeros(batch_size, 1).to(env1.device)
+    )
 
-    torch.testing.assert_close(env1.last_reward, loaded_env1.last_reward)
-    torch.testing.assert_close(env1.reward_storage, loaded_env1.reward_storage)
-    torch.testing.assert_close(env1.discount_factor, loaded_env1.discount_factor)
+    # Save
+    target_path = tmp_path / ("wrap_ckpt.pt" if not as_dir else "wrap_dir")
+    env1.save_checkpoint(target_path)
 
-    torch.testing.assert_close(env0.discount_factor, loaded_env0.discount_factor)
-    torch.testing.assert_close(env0.batch_size, loaded_env0.batch_size)
-    torch.testing.assert_close(env0.n_steps, loaded_env0.n_steps)
-    torch.testing.assert_close(env0.gamma, loaded_env0.gamma)
+    # Load into fresh wrapped env
+    base2 = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=4, gamma=0.95)
+    env2 = PixelAwareRewardWrapper(
+        base2,
+        max_penalty=-1.0,
+        n_steps=4,
+        gamma=0.95,
+        apply_clamp=apply_clamp,
+        v_min=-10 if apply_clamp else None,
+        v_max=10 if apply_clamp else None,
+    )
+    env2.load(target_path)
 
-    torch.testing.assert_close(env1.batch_size, loaded_env1.batch_size)
-    torch.testing.assert_close(env1.n_steps, loaded_env1.n_steps)
-    torch.testing.assert_close(env1.gamma, loaded_env1.gamma)
-    torch.testing.assert_close(env1.max_penalty, loaded_env1.max_penalty)
-    torch.testing.assert_close(env1.apply_clamp, loaded_env1.apply_clamp)
-    torch.testing.assert_close(env1.v_min, loaded_env1.v_min)
-    torch.testing.assert_close(env1.v_max, loaded_env1.v_max)
+    # Compare wrapper fields
+    torch.testing.assert_close(env2.reward_storage, env1.reward_storage)
+    torch.testing.assert_close(env2.last_reward, env1.last_reward)
+    assert env2.batch_size == env1.batch_size
+    assert env2.max_penalty == env1.max_penalty
+    assert env2.n_steps == env1.n_steps
+    assert env2.gamma == env1.gamma
+    assert env2.apply_clamp == env1.apply_clamp
+    assert env2.v_min == env1.v_min
+    assert env2.v_max == env1.v_max
+
+    # Compare inner environment state
+    def assert_td_close(a: TensorDict, b: TensorDict):
+        assert set(a.keys()) == set(b.keys())
+        for k in a.keys():
+            torch.testing.assert_close(a[k], b[k])
+
+    assert_td_close(env2.env.observations, env1.env.observations)
+    assert_td_close(env2.env.information, env1.env.information)
+    torch.testing.assert_close(env2.env.last_grid, env1.env.last_grid)
+    torch.testing.assert_close(env2.env.last_reward, env1.env.last_reward)
+    assert env2.env.time_step == env1.env.time_step
+    torch.testing.assert_close(env2.env.reward_storage, env1.env.reward_storage)
+    assert env2.env.is_train_episode == env1.env.is_train_episode
+    assert env2.env.batch_size == env1.env.batch_size
 
 
 def test_wrapper(wrapped_env: PixelAwareRewardWrapper):

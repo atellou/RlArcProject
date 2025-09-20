@@ -407,15 +407,29 @@ class D4PGCore:
         Args:
             path: Path to save checkpoint
         """
-        checkpoint_path = Path(path)
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-
-        torch.save(self.checkpoint(), checkpoint_path)
+        try:
+            path = Path(path)
+            # If path looks like a directory (no suffix) ensure it exists
+            if path.suffix == "":
+                path.mkdir(parents=True, exist_ok=True)
+                checkpoint_path = path / (self.__class__.__name__ + ".ptc")
+                torch.save(self.checkpoint(), checkpoint_path)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint_path = path
+                torch.save(self.checkpoint(), checkpoint_path)
+        except AttributeError as e:
+            logger.error(
+                "Error saving environment, reset should have been called by now: %s",
+                e,
+            )
+            raise
         logger.info(f"Checkpoint saved to {checkpoint_path}")
 
     def checkpoint(self):
         """Generates a dictionary with checkpointing."""
         return {
+            "class": self.__class__,
             "actor": self.actor.state_dict(),
             "critic": self.critic.state_dict(),
             "actor_optimizer": self.actor_optimizer.state_dict(),
@@ -431,12 +445,14 @@ class D4PGCore:
 
     def load(
         self,
-        checkpoint: dict | Path,
+        checkpoint: dict | Path | str,
         *,
         strict: bool = True,
         load_optimizers: bool = True,
         load_schedulers: bool = True,
         restore_hyperparameters: bool = True,
+        weights_only: bool = False,
+        device: str | None = None,
     ) -> None:
         """Load state from a checkpoint dictionary produced by ``checkpoint()``.
 
@@ -449,11 +465,24 @@ class D4PGCore:
                 exist locally.
             restore_hyperparameters: Restore selected hyperparameters (incl.
                 learning rates).
+            weights_only: Whether to load only the weights.
+            device: Device to load the environment on.
         """
-        if isinstance(checkpoint, Path):
-            checkpoint = torch.load(checkpoint)
+        if isinstance(checkpoint, (Path, str)):
+            cp_path = Path(checkpoint)
+            if cp_path.is_dir():
+                cp_path = cp_path / (self.__class__.__name__ + ".ptc")
+            checkpoint = torch.load(
+                cp_path,
+                weights_only=weights_only,
+                map_location=device,
+            )
         if not isinstance(checkpoint, dict):
             raise ValueError("Checkpoint must be a dictionary or a Path.")
+
+        if checkpoint["class"] != self.__class__:
+            raise ValueError("Checkpoint must be from the same class.")
+
         # Load networks
         if "actor" in checkpoint:
             self.actor.load_state_dict(checkpoint["actor"], strict=strict)

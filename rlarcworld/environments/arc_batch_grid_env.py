@@ -1,7 +1,7 @@
 """ARC batched grid environment and action spaces."""
 
 import logging
-import os
+from pathlib import Path
 from typing import Any, Optional, Union
 
 import gymnasium as gym
@@ -244,8 +244,8 @@ class ArcBatchGridEnv(gym.Env):
             torch.zeros((self.batch_size, self.n_steps)),
             queue_size=self.n_steps,
             queue_dim=1,
-        )
-        self.last_reward = torch.zeros(self.batch_size, dtype=int)
+        ).to(self.device)
+        self.last_reward = torch.zeros(self.batch_size, dtype=int).to(self.device)
         self.time_step = 0
 
         # Validate examples
@@ -413,11 +413,14 @@ class ArcBatchGridEnv(gym.Env):
                     actions[ActionKeys.SUBMIT.value].shape,
                 )
             )
+            # Ensure assigned color values live on the same device as observations
+            _grid = self.observations[StateKeys.GRID.value]
+            _colors = actions[ActionKeys.COLOR_VALUES.value].to(_grid.device)
             self.observations[StateKeys.GRID.value][
                 list(range(self.batch_size)),
                 actions[ActionKeys.Y_LOCATION.value],
                 actions[ActionKeys.X_LOCATION.value],
-            ] = actions[ActionKeys.COLOR_VALUES.value]
+            ] = _colors
             self.information[StateKeys.INDEX.value][
                 list(range(self.batch_size)),
                 actions[ActionKeys.Y_LOCATION.value],
@@ -473,6 +476,7 @@ class ArcBatchGridEnv(gym.Env):
             dict[str, Any]: The checkpoint.
         """
         return {
+            "class": self.__class__,
             "observations": self.observations,
             "information": self.information,
             "last_grid": self.last_grid,
@@ -487,19 +491,21 @@ class ArcBatchGridEnv(gym.Env):
             "batch_size": self.batch_size,
         }
 
-    def save(self, path: str):
+    def save_checkpoint(self, path: str | Path) -> None:
         """Saves the environment to a checkpoint.
 
         Args:
-            path (str): The path to save the checkpoint to.
+            path (str | Path): The path to save the checkpoint to.
         """
         logger.debug(f"Saving environment to {path}")
         try:
-            os.makedirs(path, exist_ok=True)
-            torch.save(
-                self.checkpoint(),
-                os.path.join(path, self.__class__.__name__ + ".ptc"),
-            )
+            path = Path(path)
+            if path.suffix == "":
+                path.mkdir(parents=True, exist_ok=True)
+                torch.save(self.checkpoint(), path / (self.__class__.__name__ + ".ptc"))
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(self.checkpoint(), path)
         except AttributeError as e:
             logger.error(
                 ("Error saving environment, reset should have been called by now: %s"),
@@ -510,17 +516,35 @@ class ArcBatchGridEnv(gym.Env):
                 % e
             )
 
-    def load(self, path: str, weights_only: bool = True, device: str | None = None):
+    def load(
+        self,
+        checkpoint: dict[str, Any] | Path | str,
+        weights_only: bool = False,
+        device: str | None = None,
+    ):
         """Loads the environment from a checkpoint.
 
         Args:
-            path (str): The path to the checkpoint.
+            checkpoint (dict[str, Any] | Path | str): The checkpoint to load.
             weights_only (bool, optional): Whether to load only the weights.
-                Defaults to True.
+                Defaults to False.
             device (str, optional): The device to load the environment on.
                 Defaults to None.
         """
-        checkpoint = torch.load(path, weights_only=weights_only, map_location=device)
+        if isinstance(checkpoint, (Path, str)):
+            cp_path = Path(checkpoint)
+            if cp_path.is_dir():
+                cp_path = cp_path / (self.__class__.__name__ + ".ptc")
+            checkpoint = torch.load(
+                cp_path,
+                weights_only=weights_only,
+                map_location=device,
+            )
+        if not isinstance(checkpoint, dict):
+            raise ValueError("Checkpoint must be a dictionary or a Path.")
+
+        if checkpoint["class"] != self.__class__:
+            raise ValueError("Checkpoint must be from the same class.")
         self.observations = checkpoint["observations"]
         self.information = checkpoint["information"]
         self.last_grid = checkpoint["last_grid"]
@@ -535,13 +559,14 @@ class ArcBatchGridEnv(gym.Env):
         assert self.grid_size == checkpoint["grid_size"]
         assert self.color_values == checkpoint["color_values"]
 
+        # Recompute discount factor and ensure all tensors are on env device
         self.discount_factor = self.get_discount_factor()
-        if device is not None:
-            self.observations = self.observations.to(device)
-            self.information = self.information.to(device)
-            self.last_grid = self.last_grid.to(device)
-            self.reward_storage = self.reward_storage.to(device)
-            self.discount_factor = self.discount_factor.to(device)
+        target_device = device or self.device
+        self.observations = self.observations.to(target_device)
+        self.information = self.information.to(target_device)
+        self.last_grid = self.last_grid.to(target_device)
+        self.reward_storage = self.reward_storage.to(target_device)
+        self.discount_factor = self.discount_factor.to(target_device)
 
 
 logger.info("Registering gymnasium environment")

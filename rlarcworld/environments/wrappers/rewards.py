@@ -1,7 +1,7 @@
 """Reward wrapper utilities for ARC environments."""
 
 import logging
-import os
+from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
@@ -306,33 +306,37 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             dict[str, Any]: The checkpoint.
         """
         return {
-            "reward_storage": self.reward_storage,
-            "last_reward": self.last_reward,
-            "max_penalty": self.max_penalty,
-            "batch_size": self.batch_size,
-            "n_steps": self.n_steps,
-            "gamma": self.gamma,
-            "apply_clamp": self.apply_clamp,
-            "v_min": self.v_min,
-            "v_max": self.v_max,
+            "wrapper": {
+                "class": self.__class__,
+                "reward_storage": self.reward_storage,
+                "last_reward": self.last_reward,
+                "max_penalty": self.max_penalty,
+                "batch_size": self.batch_size,
+                "n_steps": self.n_steps,
+                "gamma": self.gamma,
+                "apply_clamp": self.apply_clamp,
+                "v_min": self.v_min,
+                "v_max": self.v_max,
+            },
+            "env": self.env.checkpoint(),
         }
 
-    def save(self, path: str):
+    def save_checkpoint(self, path: str | Path):
         """Saves the environment to a checkpoint.
 
         Args:
-            path (str): The path to save the environment to.
+            path (str | Path): The path to save the environment to.
         """
         logger.debug(f"Saving environment to {path}")
-        parent_path = os.path.join(path, "parent")
-        child_path = os.path.join(path, "child")
-        self.env.save(parent_path)
         try:
-            os.makedirs(child_path, exist_ok=True)
-            torch.save(
-                self.checkpoint(),
-                os.path.join(child_path, self.__class__.__name__ + ".ptc"),
-            )
+            path = Path(path)
+            # If path looks like a directory (no suffix) ensure it exists
+            if path.suffix == "":
+                path.mkdir(parents=True, exist_ok=True)
+                torch.save(self.checkpoint(), path / (self.__class__.__name__ + ".ptc"))
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(self.checkpoint(), path)
         except AttributeError as e:
             logger.error(
                 "Error saving environment, reset should have been called by now: %s",
@@ -342,37 +346,51 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
     def load(
         self,
-        parent_path: str,
-        child_path: str,
+        checkpoint: dict[str, Any] | Path | str,
         weights_only: bool = False,
         device: str | None = None,
     ):
         """Load the environment from a checkpoint.
 
         Args:
-            parent_path (str): Path to the parent environment checkpoint.
-            child_path (str): Path to the child environment checkpoint.
+            checkpoint (dict[str, Any] | Path | str): The checkpoint to load.
             weights_only (bool, optional): Whether to load only the weights.
                 Defaults to False.
             device (str, optional): The device to load the environment on.
                 Defaults to None.
         """
-        self.env.load(parent_path, weights_only=weights_only, device=device)
-        checkpoint = torch.load(
-            child_path, weights_only=weights_only, map_location=device
-        )
-        self.reward_storage = checkpoint["reward_storage"]
-        self.last_reward = checkpoint["last_reward"]
-        self.batch_size = checkpoint["batch_size"]
+        if isinstance(checkpoint, (Path, str)):
+            cp_path = Path(checkpoint)
+            if cp_path.is_dir():
+                cp_path = cp_path / (self.__class__.__name__ + ".ptc")
+            checkpoint = torch.load(
+                cp_path, weights_only=weights_only, map_location=device
+            )
+        if not isinstance(checkpoint, dict):
+            raise ValueError("Checkpoint must be a dictionary or a Path.")
+        if "wrapper" not in checkpoint or "env" not in checkpoint:
+            raise ValueError("Invalid checkpoint structure for reward wrapper.")
+        meta = checkpoint["wrapper"]
+        if meta.get("class") != self.__class__:
+            raise ValueError("Checkpoint must be from the same wrapper class.")
 
-        assert self.max_penalty == checkpoint["max_penalty"]
-        assert self.n_steps == checkpoint["n_steps"]
-        assert self.gamma == checkpoint["gamma"]
-        assert self.apply_clamp == checkpoint["apply_clamp"]
-        assert self.v_min == checkpoint["v_min"]
-        assert self.v_max == checkpoint["v_max"]
+        # Delegate to wrapped env, forwarding device preference
+        self.env.load(checkpoint["env"], weights_only=weights_only, device=device)
 
+        # Restore wrapper state
+        self.reward_storage = meta["reward_storage"]
+        self.last_reward = meta["last_reward"]
+        self.batch_size = meta["batch_size"]
+
+        assert self.max_penalty == meta["max_penalty"]
+        assert self.n_steps == meta["n_steps"]
+        assert self.gamma == meta["gamma"]
+        assert self.apply_clamp == meta["apply_clamp"]
+        assert self.v_min == meta["v_min"]
+        assert self.v_max == meta["v_max"]
+
+        # Recompute discount factor and ensure tensors are on target device
         self.discount_factor = self.get_discount_factor()
-        if device is not None:
-            self.reward_storage = self.reward_storage.to(device)
-            self.discount_factor = self.discount_factor.to(device)
+        target_device = device or self.device
+        self.reward_storage = self.reward_storage.to(target_device)
+        self.discount_factor = self.discount_factor.to(target_device)
