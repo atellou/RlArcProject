@@ -127,6 +127,7 @@ class Trainer:
         *,
         core: CoreProto,
         batch_size: int,
+        min_train_batch_size: int = 2,
         train_step_stream_factory: Callable[[], Iterator[tuple[bool, int, TensorDict]]],
         validation_step_stream_factory: Callable[
             [], Iterator[tuple[bool, int, TensorDict]]
@@ -146,6 +147,7 @@ class Trainer:
         Args:
             core (CoreProto): The algorithm core to train.
             batch_size (int): The batch size for training.
+            min_train_batch_size (int): The minimum batch size for training.
             train_step_stream_factory (Callable[[], Iterator[tuple[bool, int, TensorDict]]]):
                 Factory returning an iterator that yields per-step TensorDicts
                 with keys expected by the core ('state', 'actions', 'reward',
@@ -170,6 +172,7 @@ class Trainer:
         self.validation_step_stream_factory = validation_step_stream_factory
         self.replay_buffer = replay_buffer
         self.batch_size = batch_size
+        self.min_train_batch_size = int(min_train_batch_size)
         self.warmup_buffer_ratio = warmup_buffer_ratio
         self.on_train_step = on_train_step
         self.on_validation_step = on_validation_step
@@ -190,6 +193,7 @@ class Trainer:
         """Returns the hyperparameters of the algorithm."""
         return {
             "batch_size": self.batch_size,
+            "min_train_batch_size": self.min_train_batch_size,
             "replay_buffer": {
                 "alpha": self.replay_buffer.sampler.alpha
                 if self.replay_buffer is not None
@@ -300,6 +304,15 @@ class Trainer:
         batch = None
         loss_actor = None
         loss_critic = None
+        # Track and set module modes for validation
+        prev_actor_mode = getattr(self.core.actor, "training", True)
+        prev_critic_mode = getattr(self.core.critic, "training", True)
+        if not training:
+            try:
+                self.core.actor.eval()
+                self.core.critic.eval()
+            except Exception:
+                pass
         try:
             # continue from stored iteration when resuming
             if (
@@ -324,6 +337,38 @@ class Trainer:
 
                     # Update networks if we have a batch
                     if batch is not None:
+                        # Filter out completed transitions to avoid training on
+                        # states that won't evolve further and can create
+                        # degenerate micro-batches.
+                        try:
+                            batch = self._filter_completed_state(batch)
+                        except Exception:
+                            # If structure is different, proceed without filtering.
+                            pass
+
+                        # Enforce minimum batch size for stable updates
+                        effective_bs = None
+                        try:
+                            # Prefer explicit leading dim from a known tensor
+                            effective_bs = int(batch["state"]["terminated"].shape[0])
+                        except Exception:
+                            try:
+                                effective_bs = int(batch.batch_size[0])
+                            except Exception:
+                                effective_bs = None
+                        if effective_bs is None:
+                            effective_bs = int(self.batch_size)
+
+                        if training and effective_bs < self.min_train_batch_size:
+                            logger.info(
+                                "Skipping rest of epoch %d due to small batch(%d < %d)",
+                                epoch,
+                                effective_bs,
+                                self.min_train_batch_size,
+                            )
+                            # Skip remaining steps in this epoch
+                            break
+
                         loss_actor, loss_critic = self.core.compute_loss(
                             batch,
                             training=training,
@@ -393,6 +438,20 @@ class Trainer:
                     )
                     callback_exception(e, context)
             raise e
+        finally:
+            # Restore previous modes if altered
+            if not training:
+                try:
+                    if prev_actor_mode:
+                        self.core.actor.train(True)
+                    else:
+                        self.core.actor.eval()
+                    if prev_critic_mode:
+                        self.core.critic.train(True)
+                    else:
+                        self.core.critic.eval()
+                except Exception:
+                    pass
 
     # ---------------- Checkpoint API ----------------
     def checkpoint(self) -> dict:
@@ -408,6 +467,7 @@ class Trainer:
                     "iteration": self._iteration,
                     "batch_size": self.batch_size,
                     "warmup_buffer_ratio": self.warmup_buffer_ratio,
+                    "min_train_batch_size": self.min_train_batch_size,
                 },
             },
             self.__class__.__name__,
@@ -427,6 +487,9 @@ class Trainer:
         self.batch_size = int(state.get("batch_size", self.batch_size))
         self.warmup_buffer_ratio = float(
             state.get("warmup_buffer_ratio", self.warmup_buffer_ratio)
+        )
+        self.min_train_batch_size = int(
+            state.get("min_train_batch_size", self.min_train_batch_size)
         )
 
     def train(

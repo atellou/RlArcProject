@@ -5,7 +5,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from experiments.d4pg import ArcD4PG
+from experiments.arc_d4pg import ArcD4PG
 
 
 def main():
@@ -18,6 +18,12 @@ def main():
     )
     parser.add_argument(
         "--batch-size", type=int, default=32, help="Training batch size (default: 32)"
+    )
+    parser.add_argument(
+        "--min-train-batch-size",
+        type=int,
+        default=2,
+        help="Minimum effective batch size to perform a training step (default: 2)",
     )
     parser.add_argument(
         "--max-steps-per-epoch",
@@ -121,11 +127,16 @@ def main():
         logger.info(f"  {key}: {value}")
 
     try:
+        # Resolve dataset path: if None, use repo test data for a quick demo
+        default_ds = Path(__file__).resolve().parents[1] / "tests" / "test_data"
+        dataset_path = args.dataset_path or str(default_ds.resolve())
+
         # Initialize experiment
         experiment = ArcD4PG(
             grid_size=args.grid_size,
             color_values=args.color_values,
             batch_size=args.batch_size,
+            min_train_batch_size=args.min_train_batch_size,
             policy_lr=args.policy_lr,
             critic_lr=args.critic_lr,
             gamma=args.gamma,
@@ -133,7 +144,7 @@ def main():
             amp_enabled=not args.no_amp,
             device=args.device,
             seed=args.seed,
-            dataset_path=args.dataset_path,
+            dataset_path=dataset_path,
         )
 
         # Load checkpoint if specified

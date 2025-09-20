@@ -38,6 +38,20 @@ def test_env_stepper_one_step(device):
     def env_reset_fn(env, sample, seed=None):
         env.reset(options=sample, seed=seed)
 
+    def on_step_fn(
+        env, state, action_probs, reward, observation, terminated, truncated, info
+    ):
+        return (
+            env,
+            state,
+            action_probs,
+            {"reward": reward},
+            observation,
+            terminated,
+            truncated,
+            info,
+        )
+
     stepper = EnvStepper(
         actor=actor,
         device=device,
@@ -45,7 +59,7 @@ def test_env_stepper_one_step(device):
         sampler=simple_sampler(),
         env_sample_reset=env_reset_fn,
         amp_enabled=False,
-        on_step=None,
+        on_step=on_step_fn,
     )
 
     # Reset env with a trivial batch to satisfy interface

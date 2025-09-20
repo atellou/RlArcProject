@@ -10,7 +10,7 @@ We will not maintain backward compatibility. Update code and tests to the new la
 
 - [x] Check D4PG trainer implementation and update to be able to run multiple algorithms.
 - [x] Implement inference for core algorithms to use on testing or validation environment.
-- [ ] Review checkpoints and create tests.
+- [x] Review checkpoints and create tests.
 
 ### Experiments
 

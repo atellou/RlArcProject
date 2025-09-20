@@ -115,8 +115,15 @@ class EnvStepper:
                 state = env.get_state(unsqueeze=1).to(self.device)
 
             # Get action from actor (AMP context is a no-op if disabled/CPU)
-            with self.amp_cm:
-                action_probs = self.actor(state)
+            # Force eval mode temporarily to avoid BatchNorm errors with small batches
+            prev_training = self.actor.training
+            try:
+                self.actor.eval()
+                with self.amp_cm:
+                    action_probs = self.actor(state)
+            finally:
+                if prev_training:
+                    self.actor.train(True)
 
             # Convert to discrete actions for environment (ensure 1D per batch)
             actions = TensorDict(
@@ -153,15 +160,15 @@ class EnvStepper:
             # Get next state
             next_state = env.get_state(unsqueeze=1)
 
-            # Ensure reward is a TensorDict
+            # Ensure reward is a TensorDict matching critic heads
             if isinstance(reward, TensorDict):
                 reward_td = reward.auto_batch_size_()
             elif isinstance(reward, dict):
                 reward_td = TensorDict(reward, batch_size=[]).auto_batch_size_()
             else:
-                reward_td = TensorDict(
-                    {"value": reward}, batch_size=[]
-                ).auto_batch_size_()
+                raise ValueError(
+                    "Reward must be a TensorDict or dict. Got: {}".format(type(reward))
+                )
 
             # Format output
             return TensorDict(
@@ -170,8 +177,12 @@ class EnvStepper:
                     "reward": reward_td,
                     "actions": action_probs.auto_batch_size_(),
                     "next_state": next_state.auto_batch_size_(),
-                    "terminated": torch.tensor([terminated], device=self.device),
-                    "truncated": torch.tensor([truncated], device=self.device),
+                    "terminated": torch.tensor(
+                        [terminated], device=self.device, dtype=torch.float32
+                    ),
+                    "truncated": torch.tensor(
+                        [truncated], device=self.device, dtype=torch.float32
+                    ),
                 },
                 batch_size=[],
             ).to(self.device)

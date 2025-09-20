@@ -10,13 +10,17 @@ from typing import Callable, Optional
 
 import numpy as np
 import torch
+from tensordict._reductions import _make_td
+from torch.serialization import add_safe_globals
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.environments.reward_processor import RewardProcessor
 from rlarcworld.environments.stepper import EnvStepper
+from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.runners.core import OnStepContext, Trainer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
@@ -25,6 +29,7 @@ from rlarcworld.utils.checkpointing import (
 )
 from rlarcworld.utils.device import CudaConfig, enable_cuda
 from rlarcworld.utils.logging_utils import configure_logger
+from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +62,21 @@ class ArcStepper:
         logger.info("Setting up dataset and environment...")
 
         def reset_env(env, sample, seed):
-            args = {"batch": sample["task"], "examples": sample["examples"]}
+            # Accept single-sample outputs from dataset and add batch dim if needed
+            task = sample["task"]
+            examples = sample["examples"]
+            # Ensure 'input' and 'output' have shape (B, H, W)
+            inp = task["input"]
+            out = task["output"]
+            if inp.ndim == 2:
+                inp = inp.unsqueeze(0)
+            if out.ndim == 2:
+                out = out.unsqueeze(0)
+            batched_task = {"input": inp, "output": out}
+            # Ensure examples have shape (B, E, 2, H, W)
+            if examples.ndim == 4:
+                examples = examples.unsqueeze(0)
+            args = {"batch": batched_task, "examples": examples}
             env.reset(options=args, seed=seed)
 
         transform = ArcSampleTransformer(
@@ -70,11 +89,24 @@ class ArcStepper:
             dataset_path, keep_in_memory=False, transform=transform
         )
 
-        self.environment = ArcBatchGridEnv(
+        base_env = ArcBatchGridEnv(
             grid_size=grid_size,
             color_values=color_values,
             device=device,
         )
+        # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
+        self.environment = PixelAwareRewardWrapper(
+            base_env,
+            max_penalty=-1.0,
+            n_steps=base_env.n_steps,
+            gamma=base_env.gamma,
+            apply_clamp=False,
+        )
+
+        # Ensure rewards are structured for the critic heads via on_step processor
+        reward_on_step = RewardProcessor(
+            n_steps=self.environment.n_steps, device=device
+        ).get_on_step_rewards()
 
         self.stepper = EnvStepper(
             actor=actor,
@@ -84,6 +116,7 @@ class ArcStepper:
             max_steps=max_steps_per_epoch,
             env_sample_reset=reset_env,
             amp_enabled=config.get("amp_enabled", True),
+            on_step=reward_on_step,
         )
 
     def create_step_stream_from_samples(self, **kwargs):
@@ -129,6 +162,8 @@ class ArcD4PG:
         amp_enabled: bool = True,
         device: Optional[str] = None,
         seed: int = 42,
+        # Trainer guards
+        min_train_batch_size: int = 2,
         # Data config
         **kwargs,
     ):
@@ -154,6 +189,7 @@ class ArcD4PG:
             device: Device to use (auto-detected if None)
             seed: Random seed
             dataset_path: Path to ARC dataset
+            min_train_batch_size: Minimum batch size for training
             **kwargs: Additional arguments passed to components
         """
         # Set random seed
@@ -177,6 +213,7 @@ class ArcD4PG:
         self.batch_size = batch_size
         self.max_steps_per_epoch = max_steps_per_epoch
         self.validation_steps_per_epoch = validation_steps_per_epoch
+        self.min_train_batch_size = int(min_train_batch_size)
 
         # Default distributional RL parameters
         if num_atoms is None:
@@ -272,6 +309,7 @@ class ArcD4PG:
             on_train_step=on_step_callbacks,
             on_exception=on_exception_callbacks,
             device=self.device,
+            min_train_batch_size=self.min_train_batch_size,
         )
 
     def _log_step(self, context: OnStepContext) -> None:
@@ -327,9 +365,10 @@ class ArcD4PG:
         # Resolve target path (file or directory semantics)
         checkpoint_path = resolve_save_path(path, self.__class__.__name__)
         if not (
-            hasattr(self, "environment")
-            and hasattr(self, "trainer")
-            and hasattr(self, "stepper")
+            hasattr(self, "trainer")
+            and hasattr(self, "training_stepper")
+            and hasattr(self.training_stepper, "environment")
+            and hasattr(self.training_stepper, "stepper")
         ):
             raise ValueError(
                 "Experiment must have environment, trainer, and stepper to checkpoint"
@@ -337,9 +376,9 @@ class ArcD4PG:
 
         # Core, env, trainer, stepper
         core_ckpt = self.d4pg_core.checkpoint()
-        env_ckpt = self.environment.checkpoint()
+        env_ckpt = self.training_stepper.environment.checkpoint()
         trainer_ckpt = self.trainer.checkpoint()
-        stepper_ckpt = self.stepper.checkpoint()
+        stepper_ckpt = self.training_stepper.stepper.checkpoint()
 
         # RNG states
         rng_state = {
@@ -398,6 +437,11 @@ class ArcD4PG:
             path: Path to load checkpoint from
         """
         cp_path = resolve_load_path(path, self.__class__.__name__)
+        # Allowlist project-specific classes for safe unpickling with weights_only
+        try:
+            add_safe_globals([TorchQueue, _make_td])
+        except Exception:
+            pass
         checkpoint = torch.load(cp_path, map_location=self.device)
 
         # Restore core
@@ -407,8 +451,8 @@ class ArcD4PG:
 
         # Restore environment/wrapper
         env_state = checkpoint.get("env")
-        if env_state is not None and hasattr(self, "environment"):
-            self.environment.load(env_state, device=self.device)
+        if env_state is not None and hasattr(self, "training_stepper"):
+            self.training_stepper.environment.load(env_state, device=self.device)
 
         # Restore trainer progress
         trainer_state = checkpoint.get("trainer")
@@ -417,8 +461,8 @@ class ArcD4PG:
 
         # Restore stepper progress (does not restore sampler)
         stepper_state = checkpoint.get("stepper")
-        if stepper_state is not None and hasattr(self, "stepper"):
-            self.stepper.load(stepper_state)
+        if stepper_state is not None and hasattr(self, "training_stepper"):
+            self.training_stepper.stepper.load(stepper_state)
 
         # Restore RNGs
         rng = checkpoint.get("rng", {})
