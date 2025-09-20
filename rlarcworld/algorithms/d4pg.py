@@ -11,6 +11,12 @@ from tensordict import TensorDict
 
 from rlarcworld.algorithms.distributions import categorical_projection
 from rlarcworld.runners.core import OnStepContext
+from rlarcworld.utils.checkpointing import (
+    add_schema_and_class,
+    assert_expected_class,
+    resolve_load_path,
+    resolve_save_path,
+)
 from rlarcworld.utils.device import AmpScaler, CudaConfig, enable_cuda
 
 logger = logging.getLogger(__name__)
@@ -408,16 +414,8 @@ class D4PGCore:
             path: Path to save checkpoint
         """
         try:
-            path = Path(path)
-            # If path looks like a directory (no suffix) ensure it exists
-            if path.suffix == "":
-                path.mkdir(parents=True, exist_ok=True)
-                checkpoint_path = path / (self.__class__.__name__ + ".ptc")
-                torch.save(self.checkpoint(), checkpoint_path)
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                checkpoint_path = path
-                torch.save(self.checkpoint(), checkpoint_path)
+            checkpoint_path = resolve_save_path(path, self.__class__.__name__)
+            torch.save(self.checkpoint(), checkpoint_path)
         except AttributeError as e:
             logger.error(
                 "Error saving environment, reset should have been called by now: %s",
@@ -428,8 +426,7 @@ class D4PGCore:
 
     def checkpoint(self):
         """Generates a dictionary with checkpointing."""
-        return {
-            "class": self.__class__,
+        payload = {
             "actor": self.actor.state_dict(),
             "critic": self.critic.state_dict(),
             "actor_optimizer": self.actor_optimizer.state_dict(),
@@ -442,6 +439,7 @@ class D4PGCore:
             else None,
             "hyperparameters": self.hyperparameters,
         }
+        return add_schema_and_class(payload, self.__class__.__name__)
 
     def load(
         self,
@@ -469,19 +467,16 @@ class D4PGCore:
             device: Device to load the environment on.
         """
         if isinstance(checkpoint, (Path, str)):
-            cp_path = Path(checkpoint)
-            if cp_path.is_dir():
-                cp_path = cp_path / (self.__class__.__name__ + ".ptc")
+            cp_path = resolve_load_path(checkpoint, self.__class__.__name__)
             checkpoint = torch.load(
-                cp_path,
-                weights_only=weights_only,
-                map_location=device,
+                cp_path, weights_only=weights_only, map_location=device
             )
         if not isinstance(checkpoint, dict):
             raise ValueError("Checkpoint must be a dictionary or a Path.")
 
-        if checkpoint["class"] != self.__class__:
-            raise ValueError("Checkpoint must be from the same class.")
+        # If a class marker is present, validate it; otherwise accept
+        if "class" in checkpoint:
+            assert_expected_class(checkpoint["class"], self.__class__.__name__)
 
         # Load networks
         if "actor" in checkpoint:

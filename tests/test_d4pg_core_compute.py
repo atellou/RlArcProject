@@ -169,6 +169,7 @@ def test_checkpoint_and_load(from_path: bool, tmp_path: Path):
 
     # Sanity: expected keys exist
     assert set(ckpt.keys()) == {
+        "schema_version",
         "class",
         "actor",
         "critic",

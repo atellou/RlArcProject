@@ -10,6 +10,12 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys, StateKeys
+from rlarcworld.utils.checkpointing import (
+    add_schema_and_class,
+    assert_expected_class,
+    resolve_load_path,
+    resolve_save_path,
+)
 from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.torch_queue import TorchQueue
 
@@ -475,8 +481,7 @@ class ArcBatchGridEnv(gym.Env):
         Returns:
             dict[str, Any]: The checkpoint.
         """
-        return {
-            "class": self.__class__,
+        payload = {
             "observations": self.observations,
             "information": self.information,
             "last_grid": self.last_grid,
@@ -490,6 +495,7 @@ class ArcBatchGridEnv(gym.Env):
             "color_values": self.color_values,
             "batch_size": self.batch_size,
         }
+        return add_schema_and_class(payload, self.__class__.__name__)
 
     def save_checkpoint(self, path: str | Path) -> None:
         """Saves the environment to a checkpoint.
@@ -499,13 +505,8 @@ class ArcBatchGridEnv(gym.Env):
         """
         logger.debug(f"Saving environment to {path}")
         try:
-            path = Path(path)
-            if path.suffix == "":
-                path.mkdir(parents=True, exist_ok=True)
-                torch.save(self.checkpoint(), path / (self.__class__.__name__ + ".ptc"))
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(self.checkpoint(), path)
+            checkpoint_path = resolve_save_path(path, self.__class__.__name__)
+            torch.save(self.checkpoint(), checkpoint_path)
         except AttributeError as e:
             logger.error(
                 ("Error saving environment, reset should have been called by now: %s"),
@@ -532,9 +533,7 @@ class ArcBatchGridEnv(gym.Env):
                 Defaults to None.
         """
         if isinstance(checkpoint, (Path, str)):
-            cp_path = Path(checkpoint)
-            if cp_path.is_dir():
-                cp_path = cp_path / (self.__class__.__name__ + ".ptc")
+            cp_path = resolve_load_path(checkpoint, self.__class__.__name__)
             checkpoint = torch.load(
                 cp_path,
                 weights_only=weights_only,
@@ -543,8 +542,8 @@ class ArcBatchGridEnv(gym.Env):
         if not isinstance(checkpoint, dict):
             raise ValueError("Checkpoint must be a dictionary or a Path.")
 
-        if checkpoint["class"] != self.__class__:
-            raise ValueError("Checkpoint must be from the same class.")
+        if "class" in checkpoint:
+            assert_expected_class(checkpoint["class"], self.__class__.__name__)
         self.observations = checkpoint["observations"]
         self.information = checkpoint["information"]
         self.last_grid = checkpoint["last_grid"]
