@@ -18,10 +18,8 @@ We will not maintain backward compatibility. Update code and tests to the new la
 - [ ] Update jobs to a separate structure that allows the resources in rlarcworld to be used in the jobs. Jobs is in reality a space to define the experiments to run.
   - [x] Use Trainer to train the algorithm.
     - [ ] Use priority replay buffer.
-  - [ ] Use checkpointing to save the algorithm state.
-    - [ ] Define on Step checkpointing.
-    - [ ] Define on Train checkpointing.
-    - [ ] Define on Exception checkpointing.
+  - [x] Use checkpointing to save the algorithm state.
+  - [x] Define load checkpointing.
   - [x] Use logging to log the algorithm state.
   - [x] Use ArcDataset to load the training dataset.
     - [x] Use ArcSampleTransformer to transform the dataset.
@@ -80,10 +78,12 @@ We will not maintain backward compatibility. Update code and tests to the new la
 - [x] Restructure tests into focused pytest modules (no monolithic test_algorithms)
   - [x] `tests/test_d4pg_core_compute.py` – math-only tests for `D4PGCore`
   - [x] `tests/test_d4pg_trainer.py` – trainer loop with `D4PGTrainer` (+ PER warmup, AMP, grad clipping, target updates)
-  - [ ] `tests/test_checkpointing.py` – re-scoped checkpoint/state dict validation
+  - [x] `tests/test_checkpointing.py` – re-scoped checkpoint/state dict validation
     - [x] `d4pg_core_checkpoing` – re-scoped checkpoint/state dict validation
-    - [ ] `env_stepper_checkpoint` – re-scoped checkpoint/state dict validation
-    - [ ] `arc_environment_checkpoint` – re-scoped checkpoint/state dict validation
+    - [x] `env_stepper_checkpoint` – re-scoped checkpoint/state dict validation
+    - [x] `arc_environment_checkpoint` – re-scoped checkpoint/state dict validation
+    - [x] `pixel_wise_wrapper_checkpoint` – re-scoped checkpoint/state dict validation
+    - [x] `trainer_checkpoint` – re-scoped checkpoint/state dict validation
   - [x] `tests/test_env_stepper.py` – step dict keys/shapes; AMP vs non-AMP
   - [x] `tests/test_schedulers.py` – `BetaScheduler` behavior
   - [x] `tests/test_logging_utils.py` – logger handler dedupe

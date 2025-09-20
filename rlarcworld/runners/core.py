@@ -13,6 +13,8 @@ from typing import Any, Protocol
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.utils.checkpointing import add_schema_and_class
+
 logger = logging.getLogger(__name__)
 
 
@@ -176,6 +178,10 @@ class Trainer:
             device or getattr(core, "device", None) or str(torch.device("cpu"))
         )
 
+        # Internal progress tracking for checkpointing
+        self._epoch: int = 0
+        self._iteration: int = 0
+
         if self.replay_buffer is None and self.batch_size is None:
             raise ValueError("batch_size must be provided when replay_buffer is None")
 
@@ -290,12 +296,12 @@ class Trainer:
         # Initialize variables for exception safety
         epoch = -1
         step_idx = -1
-        iteration = 0
+        iteration = self._iteration
         batch = None
         loss_actor = None
         loss_critic = None
         try:
-            iteration = 0
+            # continue from stored iteration when resuming
             if (
                 self.validation_step_stream_factory is not None
                 and epochs > 0
@@ -304,7 +310,7 @@ class Trainer:
                 and training
             ):
                 self.validate(validation_epochs_frequency)
-            for epoch in range(epochs):
+            for epoch in range(self._epoch, self._epoch + epochs):
                 loss_actor, loss_critic = torch.tensor(0.0), torch.tensor(0.0)
 
                 for done, step_idx, step_state in step_stream_factory():
@@ -359,6 +365,10 @@ class Trainer:
                     # Early termination
                     if max_steps_per_epoch > 0 and step_idx >= max_steps_per_epoch - 1:
                         break
+                # update stored epoch at end of epoch loop iteration
+                self._epoch = epoch + 1
+            # persist iteration counter
+            self._iteration = iteration
         except Exception as e:
             context = OnStepContext(
                 epoch=epoch,
@@ -383,6 +393,41 @@ class Trainer:
                     )
                     callback_exception(e, context)
             raise e
+
+    # ---------------- Checkpoint API ----------------
+    def checkpoint(self) -> dict:
+        """Return a minimal checkpoint for trainer progress.
+
+        This intentionally avoids serializing callbacks. It captures only
+        counters in order to support resuming training.
+        """
+        return add_schema_and_class(
+            {
+                "state": {
+                    "epoch": self._epoch,
+                    "iteration": self._iteration,
+                    "batch_size": self.batch_size,
+                    "warmup_buffer_ratio": self.warmup_buffer_ratio,
+                },
+            },
+            self.__class__.__name__,
+        )
+
+    def load(self, checkpoint: dict) -> None:
+        """Load trainer progress from a checkpoint dict.
+
+        Note: This does not restore callbacks or replay buffer contents.
+        """
+        if not isinstance(checkpoint, dict):
+            raise ValueError("Trainer checkpoint must be a dict")
+        state = checkpoint.get("state", {})
+        self._epoch = int(state.get("epoch", 0))
+        self._iteration = int(state.get("iteration", 0))
+        # Optionally restore basic config
+        self.batch_size = int(state.get("batch_size", self.batch_size))
+        self.warmup_buffer_ratio = float(
+            state.get("warmup_buffer_ratio", self.warmup_buffer_ratio)
+        )
 
     def train(
         self,

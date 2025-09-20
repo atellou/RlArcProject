@@ -8,6 +8,12 @@ import gymnasium as gym
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.utils.checkpointing import (
+    add_schema_and_class,
+    assert_expected_class,
+    resolve_load_path,
+    resolve_save_path,
+)
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
@@ -305,19 +311,19 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             dict[str, Any]: The checkpoint.
         """
+        wrapper_payload = {
+            "reward_storage": self.reward_storage,
+            "last_reward": self.last_reward,
+            "max_penalty": self.max_penalty,
+            "batch_size": self.batch_size,
+            "n_steps": self.n_steps,
+            "gamma": self.gamma,
+            "apply_clamp": self.apply_clamp,
+            "v_min": self.v_min,
+            "v_max": self.v_max,
+        }
         return {
-            "wrapper": {
-                "class": self.__class__,
-                "reward_storage": self.reward_storage,
-                "last_reward": self.last_reward,
-                "max_penalty": self.max_penalty,
-                "batch_size": self.batch_size,
-                "n_steps": self.n_steps,
-                "gamma": self.gamma,
-                "apply_clamp": self.apply_clamp,
-                "v_min": self.v_min,
-                "v_max": self.v_max,
-            },
+            "wrapper": add_schema_and_class(wrapper_payload, self.__class__.__name__),
             "env": self.env.checkpoint(),
         }
 
@@ -329,14 +335,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         """
         logger.debug(f"Saving environment to {path}")
         try:
-            path = Path(path)
-            # If path looks like a directory (no suffix) ensure it exists
-            if path.suffix == "":
-                path.mkdir(parents=True, exist_ok=True)
-                torch.save(self.checkpoint(), path / (self.__class__.__name__ + ".ptc"))
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(self.checkpoint(), path)
+            checkpoint_path = resolve_save_path(path, self.__class__.__name__)
+            torch.save(self.checkpoint(), checkpoint_path)
         except AttributeError as e:
             logger.error(
                 "Error saving environment, reset should have been called by now: %s",
@@ -360,9 +360,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 Defaults to None.
         """
         if isinstance(checkpoint, (Path, str)):
-            cp_path = Path(checkpoint)
-            if cp_path.is_dir():
-                cp_path = cp_path / (self.__class__.__name__ + ".ptc")
+            cp_path = resolve_load_path(checkpoint, self.__class__.__name__)
             checkpoint = torch.load(
                 cp_path, weights_only=weights_only, map_location=device
             )
@@ -371,8 +369,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         if "wrapper" not in checkpoint or "env" not in checkpoint:
             raise ValueError("Invalid checkpoint structure for reward wrapper.")
         meta = checkpoint["wrapper"]
-        if meta.get("class") != self.__class__:
-            raise ValueError("Checkpoint must be from the same wrapper class.")
+        if "class" in meta:
+            assert_expected_class(meta.get("class"), self.__class__.__name__)
 
         # Delegate to wrapped env, forwarding device preference
         self.env.load(checkpoint["env"], weights_only=weights_only, device=device)

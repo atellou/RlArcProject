@@ -1,10 +1,14 @@
 """ArcD4PG class to run an experiment with the D4PG algorithm and ARC environment."""
 
 import logging
+import random
+import sys
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
+import numpy as np
 import torch
 
 from rlarcworld.agent.actor import ArcActorNetwork
@@ -14,6 +18,11 @@ from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.stepper import EnvStepper
 from rlarcworld.runners.core import OnStepContext, Trainer
+from rlarcworld.utils.checkpointing import (
+    add_schema_and_class,
+    resolve_load_path,
+    resolve_save_path,
+)
 from rlarcworld.utils.device import CudaConfig, enable_cuda
 from rlarcworld.utils.logging_utils import configure_logger
 
@@ -253,7 +262,7 @@ class ArcD4PG:
         ] = OrderedDict()
         on_exception_callbacks["log_exception"] = self._log_exception
 
-        self.trainer: Optional[Trainer] = Trainer(
+        self.trainer = Trainer(
             core=self.d4pg_core,
             batch_size=self.batch_size,
             train_step_stream_factory=self.training_stepper.create_step_stream_from_samples,
@@ -309,49 +318,121 @@ class ArcD4PG:
             logger.error(f"Training failed with error: {e}")
             raise
 
-    def save_checkpoint(self, path: str) -> None:
+    def save_checkpoint(self, path: str | Path) -> None:
         """Save model checkpoint.
 
         Args:
             path: Path to save checkpoint
         """
-        checkpoint_path = Path(path)
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        # Resolve target path (file or directory semantics)
+        checkpoint_path = resolve_save_path(path, self.__class__.__name__)
+        if not (
+            hasattr(self, "environment")
+            and hasattr(self, "trainer")
+            and hasattr(self, "stepper")
+        ):
+            raise ValueError(
+                "Experiment must have environment, trainer, and stepper to checkpoint"
+            )
 
-        checkpoint = {
-            "core": self.d4pg_core.checkpoint(),
-            "config": {
-                "grid_size": self.grid_size,
-                "color_values": self.color_values,
-                "batch_size": self.batch_size,
+        # Core, env, trainer, stepper
+        core_ckpt = self.d4pg_core.checkpoint()
+        env_ckpt = self.environment.checkpoint()
+        trainer_ckpt = self.trainer.checkpoint()
+        stepper_ckpt = self.stepper.checkpoint()
+
+        # RNG states
+        rng_state = {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch_cpu": torch.random.get_rng_state(),
+            "torch_cuda": (
+                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            ),
+        }
+
+        # Config snapshot and provenance
+        config = {
+            "grid_size": self.grid_size,
+            "color_values": self.color_values,
+            "batch_size": self.batch_size,
+            "n_steps": getattr(self, "n_steps", None),
+            "gamma": getattr(self, "gamma", None),
+            "tau": getattr(self, "tau", None),
+            "policy_lr": getattr(self, "policy_lr", None),
+            "critic_lr": getattr(self, "critic_lr", None),
+            "device": self.device,
+            "amp_enabled": getattr(self, "amp_enabled", True),
+            "seed": getattr(self, "seed", None),
+            "dataset_path": getattr(self, "dataset_path", None),
+        }
+
+        provenance = {
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "schema": 1,
+            "env": {
+                "torch_version": torch.__version__,
+                "numpy_version": np.__version__,
+                "python_version": sys.version,
             },
         }
+
+        payload = {
+            "core": core_ckpt,
+            "env": env_ckpt,
+            "trainer": trainer_ckpt,
+            "stepper": stepper_ckpt,
+            "rng": rng_state,
+            "config": config,
+            "provenance": provenance,
+        }
+        checkpoint = add_schema_and_class(payload, self.__class__.__name__)
 
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Checkpoint saved to {checkpoint_path}")
 
-    def load_checkpoint(self, path: str) -> None:
+    def load_checkpoint(self, path: str | Path) -> None:
         """Load model checkpoint.
 
         Args:
             path: Path to load checkpoint from
         """
-        checkpoint = torch.load(path, map_location=self.device)
+        cp_path = resolve_load_path(path, self.__class__.__name__)
+        checkpoint = torch.load(cp_path, map_location=self.device)
 
-        # Load core state
-        core_state = checkpoint["core"]
-        self.actor.load_state_dict(core_state["actor"])
-        self.critic.load_state_dict(core_state["critic"])
-        self.d4pg_core.actor_optimizer.load_state_dict(core_state["actor_optimizer"])
-        self.d4pg_core.critic_optimizer.load_state_dict(core_state["critic_optimizer"])
+        # Restore core
+        core_state = checkpoint.get("core")
+        if core_state is not None:
+            self.d4pg_core.load(core_state, device=self.device)
 
-        if (
-            core_state["actor_scheduler"] is not None
-            and self.d4pg_core.actor_scheduler is not None
-        ):
-            self.d4pg_core.actor_scheduler.load_state_dict(
-                core_state["actor_scheduler"]
-            )
+        # Restore environment/wrapper
+        env_state = checkpoint.get("env")
+        if env_state is not None and hasattr(self, "environment"):
+            self.environment.load(env_state, device=self.device)
+
+        # Restore trainer progress
+        trainer_state = checkpoint.get("trainer")
+        if trainer_state is not None and hasattr(self, "trainer"):
+            self.trainer.load(trainer_state)
+
+        # Restore stepper progress (does not restore sampler)
+        stepper_state = checkpoint.get("stepper")
+        if stepper_state is not None and hasattr(self, "stepper"):
+            self.stepper.load(stepper_state)
+
+        # Restore RNGs
+        rng = checkpoint.get("rng", {})
+        try:
+            if rng.get("python") is not None:
+                random.setstate(rng["python"])
+            if rng.get("numpy") is not None:
+                np.random.set_state(rng["numpy"])
+            if rng.get("torch_cpu") is not None:
+                torch.random.set_rng_state(rng["torch_cpu"])
+            if rng.get("torch_cuda") is not None and torch.cuda.is_available():
+                torch.cuda.set_rng_state_all(rng["torch_cuda"])
+        except Exception as e:
+            logger.warning(f"Failed to restore RNG states: {e}")
         if (
             core_state["critic_scheduler"] is not None
             and self.d4pg_core.critic_scheduler is not None
