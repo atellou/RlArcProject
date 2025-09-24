@@ -226,7 +226,13 @@ class Trainer:
             return step_state.to(self.device)
 
         # Replay buffer mode (append transition and sample)
-        batch_size = step_state.batch_size[0]
+        try:
+            batch_size = int(step_state["terminated"].shape[0])
+        except Exception:
+            try:
+                batch_size = int(step_state.batch_size[0])
+            except Exception:
+                batch_size = 1
 
         # Use max priority from buffer if available, else 1.0
         maxp = getattr(
@@ -242,6 +248,9 @@ class Trainer:
         except Exception:
             maxp = 1.0
         priority = torch.full((batch_size,), maxp, device=self.device)
+
+        if len(step_state.batch_size) == 0:
+            step_state = step_state.auto_batch_size_()
 
         # Add to replay buffer without introducing an extra leading time dimension
         indices = self.replay_buffer.extend(step_state)

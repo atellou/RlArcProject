@@ -159,6 +159,17 @@ class TorchQueue(torch.Tensor):
             rest, queue_size=self._queue_size, queue_dim=self._queue_dim
         )
 
+    def __getitem__(self, idx) -> torch.Tensor:
+        """Return a base torch.Tensor, not TorchQueue.
+
+        Args:
+            idx: The index to be used for indexing.
+
+        Returns:
+            torch.Tensor: The indexed tensor.
+        """
+        return torch.Tensor(super().__getitem__(idx))
+
 
 # Register for torch serialization safe globals
 torch.serialization.safe_globals([TorchQueue])

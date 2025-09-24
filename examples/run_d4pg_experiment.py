@@ -92,6 +92,16 @@ def main():
     parser.add_argument(
         "--save-checkpoint", action="store_true", help="Save checkpoint after training"
     )
+    parser.add_argument(
+        "--save-replay-buffer",
+        action="store_true",
+        help="Also save replay buffer alongside checkpoint (if available)",
+    )
+    parser.add_argument(
+        "--load-replay-buffer",
+        action="store_true",
+        help="Also load replay buffer alongside checkpoint (if available)",
+    )
 
     # Evaluation
     parser.add_argument(
@@ -150,7 +160,9 @@ def main():
         # Load checkpoint if specified
         if args.load_checkpoint:
             logger.info(f"Loading checkpoint from {args.load_checkpoint}")
-            experiment.load_checkpoint(args.load_checkpoint)
+            experiment.load_checkpoint(
+                args.load_checkpoint, load_replay_buffer=args.load_replay_buffer
+            )
 
         # Run training
         logger.info("Starting training...")
@@ -160,7 +172,9 @@ def main():
         if args.save_checkpoint:
             checkpoint_path = Path(args.checkpoint_dir) / "d4pg_final.pt"
             logger.info(f"Saving checkpoint to {checkpoint_path}")
-            experiment.save_checkpoint(str(checkpoint_path))
+            experiment.save_checkpoint(
+                str(checkpoint_path), save_replay_buffer=args.save_replay_buffer
+            )
 
         # Run evaluation if requested
         if args.evaluate:

@@ -16,11 +16,30 @@ set -euo pipefail
 : "${DATASET_PATH:=}"
 : "${LOG_LEVEL:=INFO}"
 : "${MIN_TRAIN_BS:=2}"
+: "${SAVE_RB:=0}"
+: "${LOAD_RB:=0}"
 
 # Helper to maybe add dataset flag
 maybe_dataset_flag() {
   if [[ -n "${DATASET_PATH}" ]]; then
     printf -- " --dataset-path %q" "${DATASET_PATH}"
+  else
+    printf -- ""
+  fi
+}
+
+# Helpers to toggle replay buffer flags
+maybe_save_rb_flag() {
+  if [[ "${SAVE_RB}" == "1" || "${SAVE_RB}" == "true" ]]; then
+    printf -- " --save-replay-buffer"
+  else
+    printf -- ""
+  fi
+}
+
+maybe_load_rb_flag() {
+  if [[ "${LOAD_RB}" == "1" || "${LOAD_RB}" == "true" ]]; then
+    printf -- " --load-replay-buffer"
   else
     printf -- ""
   fi
@@ -39,7 +58,8 @@ train_quick() {
     --save-checkpoint \
     --checkpoint-dir "${CHECKPOINT_DIR}" \
     --log-level "${LOG_LEVEL}" \
-    $(maybe_dataset_flag)
+    $(maybe_dataset_flag) \
+    $(maybe_save_rb_flag)
 }
 
 # 2) Load-only verification (no training)
@@ -53,7 +73,8 @@ load_only() {
     --no-amp \
     --load-checkpoint "${CHECKPOINT_DIR}/${CHECKPOINT_FILE}" \
     --log-level "${LOG_LEVEL}" \
-    $(maybe_dataset_flag)
+    $(maybe_dataset_flag) \
+    $(maybe_load_rb_flag)
 }
 
 # 3) Evaluate-only run (from checkpoint)
@@ -69,7 +90,8 @@ eval_only() {
     --load-checkpoint "${CHECKPOINT_DIR}/${CHECKPOINT_FILE}" \
     --evaluate \
     --log-level "${LOG_LEVEL}" \
-    $(maybe_dataset_flag)
+    $(maybe_dataset_flag) \
+    $(maybe_load_rb_flag)
 }
 
 # 4) Medium train (more steps per epoch)

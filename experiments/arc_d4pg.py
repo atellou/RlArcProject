@@ -6,12 +6,17 @@ import sys
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
 from tensordict._reductions import _make_td
 from torch.serialization import add_safe_globals
+from torchrl.data.replay_buffers import (
+    LazyMemmapStorage,
+    PrioritizedSampler,
+    TensorDictReplayBuffer,
+)
 
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
@@ -154,10 +159,14 @@ class ArcD4PG:
         num_atoms: Optional[dict[str, int]] = None,
         v_min: Optional[dict[str, int]] = None,
         v_max: Optional[dict[str, int]] = None,
+        # Replay buffer config
+        replay_buffer_size: int = 100000,
+        alpha: float = 0.6,
+        beta: float = 0.4,
+        warmup_buffer_ratio: float = 0.2,
         # Training config
         max_steps_per_epoch: int = 1000,
         validation_steps_per_epoch: int = 100,
-        warmup_buffer_ratio: float = 0.2,
         # System config
         amp_enabled: bool = True,
         device: Optional[str] = None,
@@ -182,9 +191,12 @@ class ArcD4PG:
             num_atoms: Number of atoms for distributional critic
             v_min: Minimum values for distributional critic
             v_max: Maximum values for distributional critic
+            replay_buffer_size: Replay buffer size
+            alpha: Prioritized replay buffer alpha
+            beta: Prioritized replay buffer beta
+            warmup_buffer_ratio: Replay buffer warmup ratio
             max_steps_per_epoch: Maximum steps per training epoch
             validation_steps_per_epoch: Number of steps per validation epoch
-            warmup_buffer_ratio: Replay buffer warmup ratio
             amp_enabled: Enable automatic mixed precision
             device: Device to use (auto-detected if None)
             seed: Random seed
@@ -280,11 +292,22 @@ class ArcD4PG:
         )
 
         # Initialize trainer with callbacks
-        self._setup_trainer(warmup_buffer_ratio)
+        self._setup_trainer(
+            replay_buffer_size=replay_buffer_size,
+            alpha=alpha,
+            beta=beta,
+            warmup_buffer_ratio=warmup_buffer_ratio,
+        )
 
         logger.info("ArcD4PG experiment initialized successfully")
 
-    def _setup_trainer(self, warmup_buffer_ratio: float) -> None:
+    def _setup_trainer(
+        self,
+        replay_buffer_size: int,
+        alpha: float,
+        beta: float,
+        warmup_buffer_ratio: float,
+    ) -> None:
         """Setup the trainer with appropriate callbacks."""
         # Setup step callbacks
         on_step_callbacks: OrderedDict[str, Callable[[OnStepContext], None]] = (
@@ -299,12 +322,21 @@ class ArcD4PG:
         ] = OrderedDict()
         on_exception_callbacks["log_exception"] = self._log_exception
 
+        # Set up replay buffer
+        sampler = PrioritizedSampler(
+            replay_buffer_size,
+            alpha=alpha,
+            beta=beta,
+        )
+        storage = LazyMemmapStorage(replay_buffer_size)
+        self.replay_buffer = TensorDictReplayBuffer(storage=storage, sampler=sampler)
+
         self.trainer = Trainer(
             core=self.d4pg_core,
             batch_size=self.batch_size,
             train_step_stream_factory=self.training_stepper.create_step_stream_from_samples,
             validation_step_stream_factory=self.validation_stepper.create_step_stream_from_samples,
-            replay_buffer=None,  # Using direct sampling for now
+            replay_buffer=self.replay_buffer,
             warmup_buffer_ratio=warmup_buffer_ratio,
             on_train_step=on_step_callbacks,
             on_exception=on_exception_callbacks,
@@ -356,11 +388,14 @@ class ArcD4PG:
             logger.error(f"Training failed with error: {e}")
             raise
 
-    def save_checkpoint(self, path: str | Path) -> None:
+    def save_checkpoint(
+        self, path: str | Path, *, save_replay_buffer: bool = False
+    ) -> None:
         """Save model checkpoint.
 
         Args:
             path: Path to save checkpoint
+            save_replay_buffer: Whether to save replay buffer
         """
         # Resolve target path (file or directory semantics)
         checkpoint_path = resolve_save_path(path, self.__class__.__name__)
@@ -416,6 +451,40 @@ class ArcD4PG:
             },
         }
 
+        # Optional replay buffer metadata (buffer saved separately for size reasons)
+        rb_meta: dict[str, Any] | None = None
+        if (
+            save_replay_buffer
+            and hasattr(self.trainer, "replay_buffer")
+            and self.trainer.replay_buffer is not None
+        ):
+            try:
+                ckpt_dir = Path(checkpoint_path).parent
+                rb_file = ckpt_dir / "replay_buffer.ptc"
+                # Persist underlying buffer via its API if available
+                if hasattr(self.trainer.replay_buffer, "save"):
+                    self.trainer.replay_buffer.save(str(rb_file))
+                    meta: dict[str, Any] = {"file": str(rb_file.name)}
+                elif hasattr(self.trainer.replay_buffer, "state_dict"):
+                    torch.save(self.trainer.replay_buffer.state_dict(), rb_file)
+                    meta = {"file": str(rb_file.name)}
+                else:
+                    logger.warning(
+                        "Replay buffer does not have a save or state_dict method"
+                    )
+                # Attach sampler metadata if we saved a buffer file
+                if "meta" in locals():
+                    sampler = getattr(self.trainer.replay_buffer, "sampler", None)
+                    if sampler is not None:
+                        meta["sampler"] = {
+                            "alpha": getattr(sampler, "alpha", None),
+                            "beta": getattr(sampler, "beta", None),
+                        }
+                    rb_meta = meta
+            except Exception as e:
+                logger.warning(f"Failed to save replay buffer: {e}")
+                rb_meta = None
+
         payload = {
             "core": core_ckpt,
             "env": env_ckpt,
@@ -424,17 +493,21 @@ class ArcD4PG:
             "rng": rng_state,
             "config": config,
             "provenance": provenance,
+            "replay_buffer": rb_meta,
         }
         checkpoint = add_schema_and_class(payload, self.__class__.__name__)
 
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Checkpoint saved to {checkpoint_path}")
 
-    def load_checkpoint(self, path: str | Path) -> None:
+    def load_checkpoint(
+        self, path: str | Path, *, load_replay_buffer: bool = False
+    ) -> None:
         """Load model checkpoint.
 
         Args:
             path: Path to load checkpoint from
+            load_replay_buffer: Whether to load replay buffer
         """
         cp_path = resolve_load_path(path, self.__class__.__name__)
         # Allowlist project-specific classes for safe unpickling with weights_only
@@ -484,5 +557,34 @@ class ArcD4PG:
             self.d4pg_core.critic_scheduler.load_state_dict(
                 core_state["critic_scheduler"]
             )
+
+        # Restore replay buffer if requested and available
+        if (
+            load_replay_buffer
+            and hasattr(self.trainer, "replay_buffer")
+            and self.trainer.replay_buffer is not None
+        ):
+            rb_meta = checkpoint.get("replay_buffer")
+            if rb_meta and isinstance(rb_meta, dict):
+                rb_file = rb_meta.get("file")
+                if rb_file:
+                    rb_path = Path(cp_path).parent / rb_file
+                    try:
+                        if hasattr(self.trainer.replay_buffer, "load"):
+                            self.trainer.replay_buffer.load(str(rb_path))
+                        elif hasattr(self.trainer.replay_buffer, "load_state_dict"):
+                            state = torch.load(rb_path, map_location=self.device)
+                            self.trainer.replay_buffer.load_state_dict(state)
+                        sampler = getattr(self.trainer.replay_buffer, "sampler", None)
+                        if sampler is not None and isinstance(
+                            rb_meta.get("sampler"), dict
+                        ):
+                            s = rb_meta["sampler"]
+                            if s.get("alpha") is not None:
+                                sampler.alpha = s["alpha"]
+                            if s.get("beta") is not None:
+                                sampler.beta = s["beta"]
+                    except Exception as e:
+                        logger.warning(f"Failed to restore replay buffer: {e}")
 
         logger.info(f"Checkpoint loaded from {path}")
