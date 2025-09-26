@@ -478,11 +478,23 @@ class D4PGCore:
         if "class" in checkpoint:
             assert_expected_class(checkpoint["class"], self.__class__.__name__)
 
+        # If only weights are requested or present, disable other loads
+        if weights_only:
+            load_optimizers = False
+            load_schedulers = False
+            restore_hyperparameters = False
+
         # Load networks
         if "actor" in checkpoint:
-            self.actor.load_state_dict(checkpoint["actor"], strict=strict)
+            try:
+                self.actor.load_state_dict(checkpoint["actor"], strict=strict)
+            except Exception as e:
+                logger.warning("Failed to load actor state_dict: %s", e)
         if "critic" in checkpoint:
-            self.critic.load_state_dict(checkpoint["critic"], strict=strict)
+            try:
+                self.critic.load_state_dict(checkpoint["critic"], strict=strict)
+            except Exception as e:
+                logger.warning("Failed to load critic state_dict: %s", e)
 
         # Refresh targets to match online networks
         self.actor_target.load_state_dict(self.actor.state_dict())
@@ -490,44 +502,59 @@ class D4PGCore:
 
         # Load optimizers
         if load_optimizers:
-            actor_opt_sd = checkpoint.get("actor_optimizer")
-            if actor_opt_sd is not None:
-                self.actor_optimizer.load_state_dict(actor_opt_sd)
-            critic_opt_sd = checkpoint.get("critic_optimizer")
-            if critic_opt_sd is not None:
-                self.critic_optimizer.load_state_dict(critic_opt_sd)
+            try:
+                actor_opt_sd = checkpoint.get("actor_optimizer")
+                if actor_opt_sd is not None:
+                    self.actor_optimizer.load_state_dict(actor_opt_sd)
+            except Exception as e:
+                logger.warning("Failed to load actor optimizer state: %s", e)
+            try:
+                critic_opt_sd = checkpoint.get("critic_optimizer")
+                if critic_opt_sd is not None:
+                    self.critic_optimizer.load_state_dict(critic_opt_sd)
+            except Exception as e:
+                logger.warning("Failed to load critic optimizer state: %s", e)
 
         # Load schedulers
         if load_schedulers:
-            actor_sch_sd = checkpoint.get("actor_scheduler")
-            if actor_sch_sd is not None and self.actor_scheduler is not None:
-                self.actor_scheduler.load_state_dict(actor_sch_sd)
-            critic_sch_sd = checkpoint.get("critic_scheduler")
-            if critic_sch_sd is not None and self.critic_scheduler is not None:
-                self.critic_scheduler.load_state_dict(critic_sch_sd)
+            try:
+                actor_sch_sd = checkpoint.get("actor_scheduler")
+                if actor_sch_sd is not None and self.actor_scheduler is not None:
+                    self.actor_scheduler.load_state_dict(actor_sch_sd)
+            except Exception as e:
+                logger.warning("Failed to load actor scheduler state: %s", e)
+            try:
+                critic_sch_sd = checkpoint.get("critic_scheduler")
+                if critic_sch_sd is not None and self.critic_scheduler is not None:
+                    self.critic_scheduler.load_state_dict(critic_sch_sd)
+            except Exception as e:
+                logger.warning("Failed to load critic scheduler state: %s", e)
 
         # Restore hyperparameters
         if restore_hyperparameters:
-            hp = checkpoint.get("hyperparameters") or {}
-            # Learning rates
-            if "actor_lr" in hp:
-                for g in self.actor_optimizer.param_groups:
-                    g["lr"] = float(hp["actor_lr"])
-            if "critic_lr" in hp:
-                for g in self.critic_optimizer.param_groups:
-                    g["lr"] = float(hp["critic_lr"])
-            # Other runtime params
-            self.gamma = hp.get("gamma", self.gamma)
-            self.entropy_coef = hp.get("entropy_coef", self.entropy_coef)
-            self.entropy_coef_decay = hp.get(
-                "entropy_coef_decay", self.entropy_coef_decay
-            )
-            self.target_update_frequency = hp.get(
-                "target_update_frequency", self.target_update_frequency
-            )
-            self.tau = hp.get("tau", self.tau)
-            self.max_grad_norm = hp.get("max_grad_norm", self.max_grad_norm)
-            self.carsm = hp.get("carsm", self.carsm)
+            try:
+                hp = checkpoint.get("hyperparameters") or {}
+                # Learning rates
+                if "actor_lr" in hp:
+                    for g in self.actor_optimizer.param_groups:
+                        g["lr"] = float(hp["actor_lr"])
+                if "critic_lr" in hp:
+                    for g in self.critic_optimizer.param_groups:
+                        g["lr"] = float(hp["critic_lr"])
+                # Other runtime params
+                self.gamma = hp.get("gamma", self.gamma)
+                self.entropy_coef = hp.get("entropy_coef", self.entropy_coef)
+                self.entropy_coef_decay = hp.get(
+                    "entropy_coef_decay", self.entropy_coef_decay
+                )
+                self.target_update_frequency = hp.get(
+                    "target_update_frequency", self.target_update_frequency
+                )
+                self.tau = hp.get("tau", self.tau)
+                self.max_grad_norm = hp.get("max_grad_norm", self.max_grad_norm)
+                self.carsm = hp.get("carsm", self.carsm)
+            except Exception as e:
+                logger.warning("Failed to restore hyperparameters: %s", e)
 
     @property
     def hyperparameters(self):

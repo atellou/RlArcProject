@@ -175,6 +175,15 @@ def main():
             experiment.save_checkpoint(
                 str(checkpoint_path), save_replay_buffer=args.save_replay_buffer
             )
+            # Test loading the checkpoint we just saved
+            try:
+                logger.info(f"Testing checkpoint load from {checkpoint_path}")
+                experiment.load_checkpoint(
+                    str(checkpoint_path), load_replay_buffer=args.save_replay_buffer
+                )
+                logger.info("Checkpoint load test succeeded")
+            except Exception as e:
+                logger.error(f"Checkpoint load test failed: {e}")
 
         # Run evaluation if requested
         if args.evaluate:
