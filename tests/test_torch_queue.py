@@ -51,6 +51,20 @@ def test_torch_queue_pop():
     assert popped == item[0]
 
 
+def test_torch_queue_indexing():
+    item = torch.randn(10)
+    queue = TorchQueue(item, 10)
+    assert queue.shape[queue.queue_dim] == 10
+    assert queue[-1] == item[-1]
+    assert queue[0] == item[0]
+    assert isinstance(queue[0], torch.Tensor)
+    assert isinstance(queue[-1], torch.Tensor)
+    assert isinstance(queue[5], torch.Tensor)
+    assert not isinstance(queue[0], TorchQueue)
+    assert not isinstance(queue[-1], TorchQueue)
+    assert not isinstance(queue[5], TorchQueue)
+
+
 def test_torch_queue_multiple_push():
     queue = TorchQueue(torch.randn(5), 10)
     for i in range(15):

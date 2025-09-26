@@ -5,7 +5,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from experiments.d4pg import ArcD4PG
+from experiments.arc_d4pg import ArcD4PG
 
 
 def main():
@@ -18,6 +18,12 @@ def main():
     )
     parser.add_argument(
         "--batch-size", type=int, default=32, help="Training batch size (default: 32)"
+    )
+    parser.add_argument(
+        "--min-train-batch-size",
+        type=int,
+        default=2,
+        help="Minimum effective batch size to perform a training step (default: 2)",
     )
     parser.add_argument(
         "--max-steps-per-epoch",
@@ -86,6 +92,16 @@ def main():
     parser.add_argument(
         "--save-checkpoint", action="store_true", help="Save checkpoint after training"
     )
+    parser.add_argument(
+        "--save-replay-buffer",
+        action="store_true",
+        help="Also save replay buffer alongside checkpoint (if available)",
+    )
+    parser.add_argument(
+        "--load-replay-buffer",
+        action="store_true",
+        help="Also load replay buffer alongside checkpoint (if available)",
+    )
 
     # Evaluation
     parser.add_argument(
@@ -121,11 +137,16 @@ def main():
         logger.info(f"  {key}: {value}")
 
     try:
+        # Resolve dataset path: if None, use repo test data for a quick demo
+        default_ds = Path(__file__).resolve().parents[1] / "tests" / "test_data"
+        dataset_path = args.dataset_path or str(default_ds.resolve())
+
         # Initialize experiment
         experiment = ArcD4PG(
             grid_size=args.grid_size,
             color_values=args.color_values,
             batch_size=args.batch_size,
+            min_train_batch_size=args.min_train_batch_size,
             policy_lr=args.policy_lr,
             critic_lr=args.critic_lr,
             gamma=args.gamma,
@@ -133,13 +154,15 @@ def main():
             amp_enabled=not args.no_amp,
             device=args.device,
             seed=args.seed,
-            dataset_path=args.dataset_path,
+            dataset_path=dataset_path,
         )
 
         # Load checkpoint if specified
         if args.load_checkpoint:
             logger.info(f"Loading checkpoint from {args.load_checkpoint}")
-            experiment.load_checkpoint(args.load_checkpoint)
+            experiment.load_checkpoint(
+                args.load_checkpoint, load_replay_buffer=args.load_replay_buffer
+            )
 
         # Run training
         logger.info("Starting training...")
@@ -149,7 +172,18 @@ def main():
         if args.save_checkpoint:
             checkpoint_path = Path(args.checkpoint_dir) / "d4pg_final.pt"
             logger.info(f"Saving checkpoint to {checkpoint_path}")
-            experiment.save_checkpoint(str(checkpoint_path))
+            experiment.save_checkpoint(
+                str(checkpoint_path), save_replay_buffer=args.save_replay_buffer
+            )
+            # Test loading the checkpoint we just saved
+            try:
+                logger.info(f"Testing checkpoint load from {checkpoint_path}")
+                experiment.load_checkpoint(
+                    str(checkpoint_path), load_replay_buffer=args.save_replay_buffer
+                )
+                logger.info("Checkpoint load test succeeded")
+            except Exception as e:
+                logger.error(f"Checkpoint load test failed: {e}")
 
         # Run evaluation if requested
         if args.evaluate:

@@ -163,6 +163,7 @@ cython_debug/
 
 # Custom
 rlarcworld/algorithms/old.py
+rlarcworld/jobs_old/**
 rlarcworld/**/dataset/
 gcs/
 test_checkpoint/**
