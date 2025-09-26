@@ -176,7 +176,10 @@ class ArcD4PG:
         warmup_buffer_ratio: float = 0.2,
         # Training config
         max_steps_per_epoch: int = 1000,
+        validation_epochs: int = 1,
         validation_steps_per_epoch: int = 100,
+        validation_epochs_frequency: int = 1,
+        validation_steps_frequency: int = 100,
         # Checkpoint policies
         periodic_ckpt_interval: int = 1000,
         experiment_path: str | Path | None = None,
@@ -209,7 +212,10 @@ class ArcD4PG:
             beta: Prioritized replay buffer beta
             warmup_buffer_ratio: Replay buffer warmup ratio
             max_steps_per_epoch: Maximum steps per training epoch
+            validation_epochs: Number of epochs to validate for
             validation_steps_per_epoch: Number of steps per validation epoch
+            validation_epochs_frequency: Frequency of validation epochs
+            validation_steps_frequency: Frequency of validation steps
             periodic_ckpt_interval: Periodic checkpoint interval
             experiment_path: Path to experiment directory
             amp_enabled: Enable automatic mixed precision
@@ -241,6 +247,12 @@ class ArcD4PG:
         self.max_steps_per_epoch = max_steps_per_epoch
         self.validation_steps_per_epoch = validation_steps_per_epoch
         self.min_train_batch_size = int(min_train_batch_size)
+
+        # Validation policies
+        self.validation_epochs = validation_epochs
+        self.validation_steps_per_epoch = validation_steps_per_epoch
+        self.validation_epochs_frequency = validation_epochs_frequency
+        self.validation_steps_frequency = validation_steps_frequency
 
         # Checkpoint policies
         self.periodic_ckpt_interval = periodic_ckpt_interval
@@ -474,7 +486,12 @@ class ArcD4PG:
         try:
             assert self.trainer is not None
             self.trainer.train(
-                epochs=epochs, max_steps_per_epoch=self.max_steps_per_epoch
+                epochs=epochs,
+                max_steps_per_epoch=self.max_steps_per_epoch,
+                validation_epochs=self.validation_epochs,
+                validation_steps_per_epoch=self.validation_steps_per_epoch,
+                validation_epochs_frequency=self.validation_epochs_frequency,
+                validation_steps_frequency=self.validation_steps_frequency,
             )
             logger.info("Training completed successfully")
         except Exception as e:

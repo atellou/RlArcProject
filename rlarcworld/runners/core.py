@@ -287,9 +287,11 @@ class Trainer:
         *,
         on_step: OrderedDict[str, Callable[[OnStepContext], None]] | None = None,
         training: bool = True,
+        max_steps_per_epoch: int = -1,
+        validation_epochs: int = 1,
+        validation_steps_per_epoch: int = -1,
         validation_epochs_frequency: int = 1,
         validation_steps_frequency: int = -1,
-        max_steps_per_epoch: int = -1,
     ) -> None:
         """Run a training loop using the provided step stream and hooks.
 
@@ -302,9 +304,12 @@ class Trainer:
             on_step (OrderedDict[str, Callable[[OnStepContext], None]] | None):
                 Callback for logging/tracing/validation/checkpointing.
             training (bool): Whether to run in training mode.
+            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
+            validation_epochs (int): Number of epochs to validate for.
+            validation_steps_per_epoch (int):
+                Max steps per epoch on validation (-1 for no limit).
             validation_epochs_frequency (int): Frequency of validation epochs.
             validation_steps_frequency (int): Frequency of validation steps.
-            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
         """
         # Initialize variables for exception safety
         epoch = -1
@@ -414,7 +419,7 @@ class Trainer:
                         and iteration % validation_steps_frequency == 0
                         and training
                     ):
-                        self.validate(validation_epochs_frequency)
+                        self.validate(validation_epochs, validation_steps_per_epoch)
 
                     # Early termination
                     if max_steps_per_epoch > 0 and step_idx >= max_steps_per_epoch - 1:
@@ -503,30 +508,36 @@ class Trainer:
 
     def train(
         self,
-        epochs,
-        validation_epochs_frequency=1,
-        validation_steps_frequency=-1,
-        max_steps_per_epoch=-1,
+        epochs: int,
+        max_steps_per_epoch: int = -1,
+        validation_epochs: int = 1,
+        validation_steps_per_epoch: int = -1,
+        validation_epochs_frequency: int = 1,
+        validation_steps_frequency: int = -1,
     ) -> None:
         """Run the training loop.
 
         Args:
             epochs (int): Number of epochs to train for.
+            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
+            validation_epochs (int): Number of epochs to validate for.
+            validation_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
             validation_epochs_frequency (int): Frequency of validation epochs.
             validation_steps_frequency (int): Frequency of validation steps.
-            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
         """
         self._run(
             step_stream_factory=self.train_step_stream_factory,
             on_step=self.on_train_step,
             training=True,
             epochs=epochs,
+            max_steps_per_epoch=max_steps_per_epoch,
+            validation_epochs=validation_epochs,
+            validation_steps_per_epoch=validation_steps_per_epoch,
             validation_epochs_frequency=validation_epochs_frequency,
             validation_steps_frequency=validation_steps_frequency,
-            max_steps_per_epoch=max_steps_per_epoch,
         )
 
-    def validate(self, epochs, max_steps_per_epoch=-1) -> None:
+    def validate(self, epochs: int, max_steps_per_epoch: int = -1) -> None:
         """Run the validation loop.
 
         Args:
