@@ -36,6 +36,7 @@ from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.reward_processor import RewardProcessor
 from rlarcworld.environments.stepper import EnvStepper
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.runners.core import OnStepContext, Trainer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
@@ -338,7 +339,33 @@ class ArcD4PG:
             warmup_buffer_ratio=warmup_buffer_ratio,
         )
 
-        logger.info("ArcD4PG experiment initialized successfully")
+    def _get_hparams(self):
+        hparams = {
+            "grid_size": self.grid_size,
+            "color_values": self.color_values,
+            "batch_size": self.batch_size,
+            "max_steps_per_epoch": self.max_steps_per_epoch,
+            "validation_steps_per_epoch": self.validation_steps_per_epoch,
+            "device": self.device,
+        }
+        # trainer hyperparameters dict is nested; flatten selected
+
+        hp = self.trainer.hyperparameters
+        if isinstance(hp, dict):
+            # core hp is a property on trainer, not nested
+            core_hp = hp.get("core", {}) if isinstance(hp.get("core"), dict) else {}
+            hparams.update(
+                {
+                    "t0_actor_lr": core_hp.get("t0_actor_lr", None),
+                    "t0_critic_lr": core_hp.get("t0_critic_lr", None),
+                    "actor_lr": core_hp.get("actor_lr", None),
+                    "critic_lr": core_hp.get("critic_lr", None),
+                    "gamma": core_hp.get("gamma", None),
+                    "tau": core_hp.get("tau", None),
+                    "entropy_coef": core_hp.get("entropy_coef", None),
+                }
+            )
+        return hparams
 
     def _setup_trainer(
         self,
@@ -373,6 +400,24 @@ class ArcD4PG:
             device=self.device,
             min_train_batch_size=self.min_train_batch_size,
         )
+
+        # Attach TensorBoard callbacks (train and validation)
+        try:
+            self.tb_manager, tb_train_cb, tb_val_cb = make_tensorboard_callbacks(
+                self.experiment_path,
+                replay_buffer=self.replay_buffer,
+                warmup_buffer_ratio=warmup_buffer_ratio,
+            )
+            # Extend training callbacks
+            self.trainer.on_train_step = self.trainer.on_train_step or OrderedDict()
+            self.trainer.on_train_step["tensorboard"] = tb_train_cb
+            # Set validation callbacks
+            self.trainer.on_validation_step = (
+                self.trainer.on_validation_step or OrderedDict()
+            )
+            self.trainer.on_validation_step["tensorboard"] = tb_val_cb
+        except Exception as e:
+            logger.warning("TensorBoard not attached: %s", e)
 
     def _on_train_callbacks(self) -> OrderedDict[str, Callable[[OnStepContext], None]]:
         """Log training step information.
@@ -494,6 +539,8 @@ class ArcD4PG:
                 validation_steps_frequency=self.validation_steps_frequency,
             )
             logger.info("Training completed successfully")
+
+            self.tb_manager.log_hparams(self._get_hparams())
         except Exception as e:
             logger.error(f"Training failed with error: {e}")
             failed = True

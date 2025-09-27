@@ -167,6 +167,7 @@ rlarcworld/jobs_old/**
 rlarcworld/**/dataset/
 gcs/
 test_checkpoint/**
+**.tfevents.**
 **.ptc
 **.pt
 **.pth
