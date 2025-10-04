@@ -149,7 +149,28 @@ class TensorBoardWriterManager:
                     f"{phase}/algo/entropy_coef", float(ctx.core.entropy_coef), step
                 )
         except Exception:
-            logger.warning("Failed to log algorithm hyperparams")
+            logger.debug("Failed to log entropy coefficient")
+            pass
+
+        # Reward heads: log per-batch average for each reward key
+        try:
+            batch = getattr(ctx, "batch", None)
+            if batch is not None and (
+                (hasattr(batch, "get") and batch.get("reward") is not None)
+                or (isinstance(batch, dict) and "reward" in batch)
+            ):
+                reward_td = batch["reward"]
+                # Handle dict-like rewards (TensorDict or plain dict)
+                items_iter = reward_td.items() if hasattr(reward_td, "items") else []
+                for key, val in items_iter:
+                    try:
+                        # Compute mean across all dimensions
+                        mean_val = float(val.float().mean().detach().cpu().item())
+                        self.writer.add_scalar(f"{phase}/reward/{key}", mean_val, step)
+                    except Exception:
+                        continue
+        except Exception:
+            logger.debug("Failed to log reward heads")
             pass
 
         # Replay buffer stats (size and warmup progress)
@@ -193,7 +214,7 @@ class TensorBoardWriterManager:
                         f"{phase}/replay/beta", float(sampler.beta), step
                     )
         except Exception:
-            logger.warning("Failed to log replay buffer stats")
+            logger.debug("Failed to log replay buffer stats")
             pass
 
         # Ensure periodic flush for visibility without too much overhead
@@ -201,7 +222,7 @@ class TensorBoardWriterManager:
             if step % 100 == 0:
                 self.writer.flush()
         except Exception:
-            logger.warning("Failed to flush TensorBoard writer")
+            logger.debug("Failed to flush TensorBoard writer")
             pass
 
     def _maybe_log_medium_metrics(self, ctx: OnStepContext, *, phase: str) -> None:
@@ -237,7 +258,7 @@ class TensorBoardWriterManager:
                     entropy /= n_heads
                     self.writer.add_scalar(f"{phase}/policy/entropy", entropy, step)
             except Exception:
-                logger.warning("Failed to log policy entropy")
+                logger.debug("Failed to log policy entropy")
                 pass
             # Critic expected Q per head (mean)
             try:
@@ -258,7 +279,7 @@ class TensorBoardWriterManager:
                             step,
                         )
             except Exception:
-                logger.warning("Failed to log critic expected Q")
+                logger.debug("Failed to log critic expected Q")
                 pass
             # Weight norms (L2) for actor and critic
             try:
@@ -280,10 +301,10 @@ class TensorBoardWriterManager:
                     f"{phase}/critic/weight_l2_norm", critic_norm, step
                 )
             except Exception:
-                logger.warning("Failed to log weight norms")
+                logger.debug("Failed to log weight norms")
                 pass
         except Exception:
-            logger.warning("Failed to log medium metrics")
+            logger.debug("Failed to log medium metrics")
             pass
 
 
