@@ -75,6 +75,8 @@ class ArcBatchGridEnv(gym.Env):
         self,
         grid_size: int,
         color_values: int,
+        *,
+        max_penalty: float = 0.0,
         n_steps: int = 1,
         gamma: float = 1.0,
         device: str | None = None,
@@ -84,6 +86,8 @@ class ArcBatchGridEnv(gym.Env):
         Args:
             grid_size (int): The size of the grid.
             color_values (int): Number of color values in the grid (upper bound).
+            max_penalty (float, optional): Maximum penalty for the reward.
+                Defaults to 0.
             n_steps (int, optional): Number of steps to look ahead. Defaults to 1.
             gamma (float, optional): Discount factor. Defaults to 1.0.
             device (str, optional): Device to use. Defaults to None.
@@ -104,6 +108,12 @@ class ArcBatchGridEnv(gym.Env):
         self.device = device or enable_cuda().get("device")
 
         # N-step attributes
+        assert (
+            isinstance(max_penalty, float) and max_penalty >= 0
+        ), "max_penalty must be a float greater or equal than 0, got {}".format(
+            max_penalty
+        )
+        self.__max_penalty = max_penalty
         self.n_steps = n_steps
         self.gamma = gamma
 
@@ -142,6 +152,11 @@ class ArcBatchGridEnv(gym.Env):
     def __len__(self) -> int:
         """Return number of grids in the current batch."""
         return len(self.observations["grid"])
+
+    @property
+    def max_penalty(self) -> float:
+        """Return the maximum penalty."""
+        return self.__max_penalty
 
     def random_location_generator(self) -> np.ndarray:
         """Generate a random location in the grid.
@@ -309,6 +324,11 @@ class ArcBatchGridEnv(gym.Env):
     ) -> torch.Tensor:
         """Compute the reward for the current grid of the environment.
 
+        Reward structure:
+        - No submission: 0
+        - Successful submission (perfect match): +1
+        - Failed submission (any mismatch): -max_penalty
+
         Args:
             grid_diffs (torch.Tensor): Batch of grids representing the
                 difference between the current grid and target.
@@ -318,13 +338,24 @@ class ArcBatchGridEnv(gym.Env):
         Returns:
             float: The reward for the current grid of the environment.
         """
-        return (
-            torch.sum(torch.abs(grid_diffs), dim=(1, 2)) == 0
-        ).long() * torch.as_tensor(
+        submission_tensor = torch.as_tensor(
             submission,
             device=grid_diffs.device,
             dtype=grid_diffs.dtype,
         )
+
+        # Check if grid perfectly matches target
+        perfect_match = (torch.sum(torch.abs(grid_diffs), dim=(1, 2)) == 0).long()
+
+        # Reward logic:
+        # - If submitted AND perfect: +1
+        # - If submitted AND not perfect: -max_penalty
+        # - If not submitted: 0
+        reward = submission_tensor * (
+            perfect_match - self.__max_penalty * (1 - perfect_match)
+        )
+
+        return reward
 
     def n_step_reward(self) -> torch.Tensor:
         """Computes the reward for the current grid of the environment."""
