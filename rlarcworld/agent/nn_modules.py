@@ -150,7 +150,7 @@ class CnnPreTrainedModule(nn.Module):
                         group_norm.weight.copy_(child.weight)
                         group_norm.bias.copy_(child.bias)
                 setattr(module, name, group_norm)
-                logger.info(
+                logger.debug(
                     f"Replaced BatchNorm2d with GroupNorm "
                     f"(channels={num_channels}, groups={num_groups})"
                 )

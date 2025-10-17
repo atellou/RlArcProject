@@ -44,7 +44,6 @@ from rlarcworld.utils.checkpointing import (
     resolve_save_path,
 )
 from rlarcworld.utils.device import CudaConfig, enable_cuda
-from rlarcworld.utils.logging_utils import configure_logger
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
@@ -239,7 +238,6 @@ class ArcD4PG:
                 "use_checkpointing": False,
             }
         self.device = self.config["device"]
-        configure_logger()
 
         # Store configuration
         self.grid_size = grid_size
@@ -267,6 +265,10 @@ class ArcD4PG:
         else:
             self.experiment_path = Path(experiment_path)
 
+        logger.info(
+            "Experiment outputs will be written to: %s", self.experiment_path.resolve()
+        )
+
         # Default distributional RL parameters
         if num_atoms is None:
             num_atoms = {"pixel_wise": 51, "binary": 51}
@@ -277,13 +279,16 @@ class ArcD4PG:
 
         # Initialize networks
         logger.info("Initializing actor and critic networks...")
+        logger.info("Creating actor network...")
         self.actor = ArcActorNetwork(
             grid_size=grid_size,
             color_values=color_values,
             embedding_size=embedding_size,
             config=self.config,
         )
+        logger.info("Actor network created successfully")
 
+        logger.info("Creating critic network...")
         self.critic = ArcCriticNetwork(
             grid_size=grid_size,
             color_values=color_values,
@@ -293,8 +298,10 @@ class ArcD4PG:
             embedding_size=embedding_size,
             config=self.config,
         )
+        logger.info("Critic network created successfully")
 
         # Create training stepper
+        logger.info("Creating training stepper...")
         self.training_stepper = ArcStepper(
             max_steps_per_epoch=self.max_steps_per_epoch,
             dataset_path=dataset_path,
@@ -304,8 +311,10 @@ class ArcD4PG:
             actor=self.actor,
             config=self.config,
         )
+        logger.info("Training stepper created successfully")
 
         # Create validation stepper
+        logger.info("Creating validation stepper...")
         self.validation_stepper = ArcStepper(
             max_steps_per_epoch=self.validation_steps_per_epoch,
             dataset_path=dataset_path,
@@ -315,6 +324,7 @@ class ArcD4PG:
             actor=self.actor,
             config=self.config,
         )
+        logger.info("Validation stepper created successfully")
 
         # Initialize D4PG core
         logger.info("Initializing D4PG algorithm core...")
@@ -426,8 +436,8 @@ class ArcD4PG:
             Dictionary of callbacks for training steps
         """
         # Track best (lower is better) actor/critic losses for improvement checkpoints
-        self.best_loss_actor: float = float("inf")
-        self.best_loss_critic: float = float("inf")
+        self.best_loss_actor: torch.Tensor = torch.tensor(float("inf"))
+        self.best_loss_critic: torch.Tensor = torch.tensor(float("inf"))
 
         return OrderedDict(
             {
@@ -497,11 +507,11 @@ class ArcD4PG:
         if context.loss_actor is None or context.loss_critic is None:
             return
         improved = False
-        if float(context.loss_actor) < float(self.best_loss_actor):
-            self.best_loss_actor = float(context.loss_actor)
+        if context.loss_actor.item() < self.best_loss_actor:
+            self.best_loss_actor = context.loss_actor.item()
             improved = True
-        if float(context.loss_critic) < float(self.best_loss_critic):
-            self.best_loss_critic = float(context.loss_critic)
+        if context.loss_critic.item() < self.best_loss_critic:
+            self.best_loss_critic = context.loss_critic.item()
             improved = True
         if not improved:
             return
@@ -509,8 +519,8 @@ class ArcD4PG:
             self.experiment_path,
             "checkpoints/best/d4pg_cp-best_i_{:06d}-la_{:.4f}-lc_{:.4f}.pth".format(
                 int(context.iteration),
-                float(context.loss_actor),
-                float(context.loss_critic),
+                context.loss_actor.item(),
+                context.loss_critic.item(),
             ),
         )
         # Core-only save for best improvements

@@ -111,11 +111,11 @@ class TensorBoardWriterManager:
         try:
             if ctx.loss_actor is not None:
                 self.writer.add_scalar(
-                    f"{phase}/loss/actor", float(ctx.loss_actor), step
+                    f"{phase}/loss/actor", float(ctx.loss_actor.detach()), step
                 )
             if ctx.loss_critic is not None:
                 self.writer.add_scalar(
-                    f"{phase}/loss/critic", float(ctx.loss_critic), step
+                    f"{phase}/loss/critic", float(ctx.loss_critic.detach()), step
                 )
         except Exception:
             logger.error("Failed to log loss metrics")
