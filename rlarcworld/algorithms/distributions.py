@@ -34,7 +34,17 @@ def categorical_projection(
     """
     delta_z = (v_max - v_min) / (num_atoms - 1)
 
+    # Ensure proper shapes for broadcasting
+    if rewards.dim() == 1:
+        rewards = rewards.unsqueeze(-1)
+    if terminated.dim() == 1:
+        terminated = terminated.unsqueeze(-1)
+    if z_atoms.dim() == 1:
+        z_atoms = z_atoms.unsqueeze(0)
+
     # Compute the target distribution support
+    # (batch_size, 1) + scalar * (batch_size, 1) * (1, num_atoms)
+    # -> (batch_size, num_atoms)
     tz = rewards + (gamma**n_steps) * (1 - terminated) * z_atoms
     tz = tz.clamp(v_min, v_max)
 
