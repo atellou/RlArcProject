@@ -116,13 +116,47 @@ class CnnPreTrainedModule(nn.Module):
             param.requires_grad = True
         for param in self.embedding_layer.parameters():
             param.requires_grad = True
-        for module in self.base_model.modules():
-            if isinstance(module, nn.BatchNorm2d):
-                for param in module.parameters():
-                    param.requires_grad = True
+
+        # CRITICAL: Replace BatchNorm with GroupNorm for small batch stability
+        # BatchNorm is unstable with small batches (batch_size=4) and causes NaN
+        # GroupNorm is batch-size independent and more stable
+        self._replace_batchnorm_with_groupnorm(self.base_model)
 
         self.add_module("base_model", self.base_model)
         self.add_module("embedding_layer", self.embedding_layer)
+
+    def _replace_batchnorm_with_groupnorm(self, module: nn.Module) -> None:
+        """Replace all BatchNorm2d layers with GroupNorm recursively.
+
+        Args:
+            module: The module to process
+        """
+        for name, child in list(module.named_children()):
+            if isinstance(child, nn.BatchNorm2d):
+                # Replace with GroupNorm (num_groups=8 is a good default)
+                num_channels = child.num_features
+                num_groups = min(8, num_channels)  # Ensure divisible
+                while num_channels % num_groups != 0:
+                    num_groups -= 1
+                group_norm = nn.GroupNorm(
+                    num_groups=num_groups,
+                    num_channels=num_channels,
+                    eps=child.eps,
+                    affine=True,
+                )
+                # Copy affine parameters if they exist
+                if child.affine:
+                    with torch.no_grad():
+                        group_norm.weight.copy_(child.weight)
+                        group_norm.bias.copy_(child.bias)
+                setattr(module, name, group_norm)
+                logger.info(
+                    f"Replaced BatchNorm2d with GroupNorm "
+                    f"(channels={num_channels}, groups={num_groups})"
+                )
+            else:
+                # Recursively process child modules
+                self._replace_batchnorm_with_groupnorm(child)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Compute the output embedding for a given input image.
