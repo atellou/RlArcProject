@@ -122,6 +122,9 @@ class D4PGCore:
         # Optimizers and schedulers
         self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=policy_lr)
         self.critic_optimizer = optim.AdamW(self.critic.parameters(), lr=critic_lr)
+
+        self._t0_actor_lr = policy_lr
+        self._t0_critic_lr = critic_lr
         if lr_scheduler_kwargs is None:
             self.actor_scheduler = None
             self.critic_scheduler = None
@@ -560,10 +563,24 @@ class D4PGCore:
     def hyperparameters(self):
         """Returns the hyperparameters of the algorithm."""
         return {
+            "t0_actor_lr": self._t0_actor_lr,
+            "t0_critic_lr": self._t0_critic_lr,
             "actor_lr": self.actor_optimizer.param_groups[0]["lr"],
             "critic_lr": self.critic_optimizer.param_groups[0]["lr"],
-            "actor_scheduler": self.actor_scheduler,
-            "critic_scheduler": self.critic_scheduler,
+            "actor_scheduler": None
+            if self.actor_scheduler is None
+            else {
+                "type": self.actor_scheduler.__class__.__name__,
+                "gamma": self.actor_scheduler.gamma,
+                "step_size": self.actor_scheduler.step_size,
+            },
+            "critic_scheduler": None
+            if self.critic_scheduler is None
+            else {
+                "type": self.critic_scheduler.__class__.__name__,
+                "gamma": self.critic_scheduler.gamma,
+                "step_size": self.critic_scheduler.step_size,
+            },
             "gamma": self.gamma,
             "entropy_coef": self.entropy_coef,
             "entropy_coef_decay": self.entropy_coef_decay,

@@ -63,9 +63,18 @@ class RewardProcessor:
             str(self.device),
             tuple(reward.shape) if hasattr(reward, "shape") else None,
         )
+
+        # Prepare base rewards with consistent device placement
+        pixel_wise_reward = reward.unsqueeze(-1)
+        binary_reward = env.get_source_env_reward().unsqueeze(-1)
+
+        if self.device is not None:
+            pixel_wise_reward = pixel_wise_reward.to(self.device)
+            binary_reward = binary_reward.to(self.device)
+
         reward_dict: RewardDict = {
-            RewardKeys.PIXEL_WISE.value: reward.unsqueeze(-1),
-            RewardKeys.BINARY.value: env.get_source_env_reward().unsqueeze(-1),
+            RewardKeys.PIXEL_WISE.value: pixel_wise_reward,
+            RewardKeys.BINARY.value: binary_reward,
         }
 
         # Add n-step reward if configured and supported by the environment

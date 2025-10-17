@@ -59,6 +59,12 @@ def main():
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="Discount factor (default: 0.99)"
     )
+    parser.add_argument(
+        "--warmup-buffer-ratio",
+        type=float,
+        default=0.2,
+        help="Replay buffer warmup ratio before training starts (default: 0.2)",
+    )
 
     # System parameters
     parser.add_argument(
@@ -150,6 +156,7 @@ def main():
             policy_lr=args.policy_lr,
             critic_lr=args.critic_lr,
             gamma=args.gamma,
+            warmup_buffer_ratio=args.warmup_buffer_ratio,
             max_steps_per_epoch=args.max_steps_per_epoch,
             amp_enabled=not args.no_amp,
             device=args.device,

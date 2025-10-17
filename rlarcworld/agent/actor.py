@@ -165,7 +165,8 @@ class ArcActorNetwork(nn.Module):
 
             if key != StateKeys.EXAMPLES.value:
                 state[key] = state[key].unsqueeze(1)
-            assert not torch.isnan(state[key]).any(), f"NaN in {key} layer"
+            if torch.isnan(state[key]).any():
+                raise ValueError(f"NaN in {key} layer")
 
         # Concatenate flattned states
         state = torch.cat(
