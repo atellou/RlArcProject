@@ -10,6 +10,7 @@ import torch.optim as optim
 from tensordict import TensorDict
 
 from rlarcworld.algorithms.distributions import categorical_projection
+from rlarcworld.common.enums import RewardKeys
 from rlarcworld.runners.core import OnStepContext
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
@@ -48,7 +49,7 @@ class D4PGCore:
         gamma: float = 0.99,
         tau: float = 0.005,
         n_steps: int = 1,
-        compute_td_error: bool = False,
+        compute_td_error: bool = True,
         carsm: bool = False,
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
@@ -86,7 +87,7 @@ class D4PGCore:
             target_update_frequency (int, optional): Frequency of target
                 network updates. Defaults to 10.
             compute_td_error (bool, optional): Whether to compute TD error.
-                Defaults to False.
+                Defaults to True.
         """
         assert entropy_coef >= 0, "Entropy coefficient must be non-negative"
         assert entropy_coef_decay >= 0, "Entropy coefficient decay must be non-negative"
@@ -178,7 +179,7 @@ class D4PGCore:
                     self.critic_target.v_max[key],
                     self.critic_target.num_atoms[key],
                     apply_softmax=True,
-                    n_steps=self.n_steps if key == "n_reward" else 1,
+                    n_steps=self.n_steps if key == RewardKeys.N_REWARD.value else 1,
                 )
                 for key in next_q_dist.keys()
             }
@@ -337,7 +338,7 @@ class D4PGCore:
         batch: TensorDict,
         *,
         training: bool = True,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, TensorDict]:
         """Compute actor and critic losses for a batch of transitions.
 
         Args:
@@ -347,7 +348,8 @@ class D4PGCore:
                 networks. Defaults to True.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Actor loss and critic loss
+            Tuple[torch.Tensor, torch.Tensor, TensorDict]: Actor loss, critic loss,
+                and TD error.
         """
         with getattr(torch, "enable_grad" if training else "no_grad")():
             target_probs = self.compute_target_distribution(
@@ -394,7 +396,7 @@ class D4PGCore:
                         self.actor.parameters(), self.max_grad_norm, norm_type=2.0
                     )
                 self.amp_scaler.step(self.actor_optimizer)
-        return loss_actor, loss_critic
+        return loss_actor, loss_critic, td_err
 
     def on_step(self, context: OnStepContext):
         """Callback function to handle all step-related operations.

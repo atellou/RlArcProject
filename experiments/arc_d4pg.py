@@ -32,12 +32,13 @@ from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
+from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.reward_processor import RewardProcessor
 from rlarcworld.environments.stepper import EnvStepper
 from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
-from rlarcworld.runners.core import OnStepContext, Trainer
+from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     resolve_load_path,
@@ -391,13 +392,18 @@ class ArcD4PG:
         )
 
         # Set up replay buffer
+        self.replay_buffer_priority_key = "td_error"
         sampler = PrioritizedSampler(
             replay_buffer_size,
             alpha=alpha,
             beta=beta,
         )
         storage = LazyMemmapStorage(replay_buffer_size)
-        self.replay_buffer = TensorDictReplayBuffer(storage=storage, sampler=sampler)
+        self.replay_buffer = TensorDictReplayBuffer(
+            storage=storage,
+            sampler=sampler,
+            priority_key=self.replay_buffer_priority_key,
+        )
 
         self.trainer = Trainer(
             core=self.d4pg_core,
@@ -405,6 +411,7 @@ class ArcD4PG:
             train_step_stream_factory=self.training_stepper.create_step_stream_from_samples,
             validation_step_stream_factory=self.validation_stepper.create_step_stream_from_samples,
             replay_buffer=self.replay_buffer,
+            replay_buffer_update_priority=self._replay_buffer_update_priority,
             warmup_buffer_ratio=warmup_buffer_ratio,
             on_train_step=on_step_callbacks,
             device=self.device,
@@ -428,6 +435,42 @@ class ArcD4PG:
             self.trainer.on_validation_step["tensorboard"] = tb_val_cb
         except Exception as e:
             logger.warning("TensorBoard not attached: %s", e)
+
+    def _replay_buffer_update_priority(
+        self,
+        context: OnStepContext,
+        info: dict[str, torch.Tensor],
+        replay_buffer: ReplayBufferProto,
+    ) -> None:
+        """Update replay buffer priority.
+
+        Args:
+            context: Training context with batch and TD-error
+            info: Metadata from replay buffer sample containing indices
+            replay_buffer: The replay buffer to update
+        """
+        # These checks should not be needed since caller validates, but kept for safety
+        if context.td_error is None or info is None:
+            raise ValueError("Skipping priority update: missing td_error or info")
+
+        td_error = context.td_error
+
+        # Check if info has index metadata (required for update_tensordict_priority)
+        if "index" not in info.keys():
+            raise ValueError(
+                "Info does not have index metadata, cannot update priorities. "
+                "Available keys: %s",
+                list(info.keys()),
+            )
+
+        if td_error.get(RewardKeys.N_REWARD.value) is not None:
+            replay_buffer.update_priority(
+                info["index"], td_error.get(RewardKeys.N_REWARD.value)
+            )
+        else:
+            replay_buffer.update_priority(
+                info["index"], td_error.get(RewardKeys.PIXEL_WISE.value)
+            )
 
     def _on_train_callbacks(self) -> OrderedDict[str, Callable[[OnStepContext], None]]:
         """Log training step information.

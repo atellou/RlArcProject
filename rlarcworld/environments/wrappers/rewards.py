@@ -108,16 +108,15 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             environment's reset method.
         """
         reset = super().reset(seed=seed, options=options)
-        self.batch_size = options["batch"]["input"].shape[0]
+        self.batch_size: int = options["batch"]["input"].shape[0]
         # Reward attributes
-        self.discount_factor = self.get_discount_factor().to(self.device)
         self._reward_storage = TorchQueue(
             torch.zeros((self.batch_size, self.n_steps)),
             queue_size=self.n_steps,
             queue_dim=1,
         )
         self.last_reward = torch.zeros(self.batch_size, dtype=int)
-        self.discount_factor = self.discount_factor.to(self.device)
+        self.discount_factor: torch.Tensor = self.get_discount_factor().to(self.device)
         self._reward_storage = self._reward_storage.to(self.device)
         self.last_reward = self.last_reward.to(self.device)
         return reset
@@ -311,21 +310,30 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             dict[str, Any]: The checkpoint.
         """
-        wrapper_payload = {
-            "reward_storage": self.reward_storage,
-            "last_reward": self.last_reward,
-            "max_penalty": self.max_penalty,
-            "batch_size": self.batch_size,
-            "n_steps": self.n_steps,
-            "gamma": self.gamma,
-            "apply_clamp": self.apply_clamp,
-            "v_min": self.v_min,
-            "v_max": self.v_max,
-        }
-        return {
-            "wrapper": add_schema_and_class(wrapper_payload, self.__class__.__name__),
-            "env": self.env.checkpoint(),
-        }
+        try:
+            wrapper_payload = {
+                "reward_storage": self.reward_storage,
+                "last_reward": self.last_reward,
+                "max_penalty": self.max_penalty,
+                "batch_size": self.batch_size,
+                "n_steps": self.n_steps,
+                "gamma": self.gamma,
+                "apply_clamp": self.apply_clamp,
+                "v_min": self.v_min,
+                "v_max": self.v_max,
+            }
+            return {
+                "wrapper": add_schema_and_class(
+                    wrapper_payload, self.__class__.__name__
+                ),
+                "env": self.env.checkpoint(),
+            }
+        except AttributeError as e:
+            logger.error(
+                "Error checkpointing environment, reset should have been called: %s",
+                e,
+            )
+            raise
 
     def save_checkpoint(self, path: str | Path):
         """Saves the environment to a checkpoint.
@@ -388,7 +396,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         assert self.v_max == meta["v_max"]
 
         # Recompute discount factor and ensure tensors are on target device
-        self.discount_factor = self.get_discount_factor()
         target_device = device or self.device
         self.reward_storage = self.reward_storage.to(target_device)
-        self.discount_factor = self.discount_factor.to(target_device)
+        self.discount_factor = self.get_discount_factor().to(target_device)

@@ -512,21 +512,28 @@ class ArcBatchGridEnv(gym.Env):
         Returns:
             dict[str, Any]: The checkpoint.
         """
-        payload = {
-            "observations": self.observations,
-            "information": self.information,
-            "last_grid": self.last_grid,
-            "last_reward": self.last_reward,
-            "time_step": self.time_step,
-            "reward_storage": self.reward_storage,
-            "is_train_episode": self.is_train_episode,
-            "n_steps": self.n_steps,
-            "gamma": self.gamma,
-            "grid_size": self.grid_size,
-            "color_values": self.color_values,
-            "batch_size": self.batch_size,
-        }
-        return add_schema_and_class(payload, self.__class__.__name__)
+        try:
+            payload = {
+                "observations": self.observations,
+                "information": self.information,
+                "last_grid": self.last_grid,
+                "last_reward": self.last_reward,
+                "time_step": self.time_step,
+                "reward_storage": self.reward_storage,
+                "is_train_episode": self.is_train_episode,
+                "n_steps": self.n_steps,
+                "gamma": self.gamma,
+                "grid_size": self.grid_size,
+                "color_values": self.color_values,
+                "batch_size": self.batch_size,
+            }
+            return add_schema_and_class(payload, self.__class__.__name__)
+        except AttributeError as e:
+            logger.error(
+                "Error checkpointing environment, reset should have been called: %s",
+                e,
+            )
+            raise
 
     def save_checkpoint(self, path: str | Path) -> None:
         """Saves the environment to a checkpoint.

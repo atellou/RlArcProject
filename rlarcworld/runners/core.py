@@ -8,7 +8,7 @@ validation, and checkpointing.
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
-from typing import Any, Protocol
+from typing import Any, Protocol, Tuple
 
 import torch
 from tensordict import TensorDict
@@ -29,8 +29,11 @@ class CoreProto(Protocol):
         batch: TensorDict,
         *,
         training: bool = True,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute the loss for the actor and critic networks."""
+    ) -> tuple[torch.Tensor, torch.Tensor, TensorDict]:
+        """Compute the loss for the actor and critic networks.
+
+        Returns the actor loss, critic loss, and TD error.
+        """
         ...
 
     def update_target_networks(self) -> None:
@@ -53,6 +56,7 @@ class OnStepContext:
         batch: TensorDict | None,
         loss_actor: torch.Tensor | None,
         loss_critic: torch.Tensor | None,
+        td_error: TensorDict | None,
         core: CoreProto,
         hyperparameters: dict,
     ):
@@ -65,6 +69,7 @@ class OnStepContext:
             batch: Training batch (None if no batch available)
             loss_actor: Actor loss (None if no training occurred)
             loss_critic: Critic loss (None if no training occurred)
+            td_error: TD error (None if no training occurred)
             core: Algorithm core containing networks and methods
             hyperparameters: Hyperparameters of the algorithm
         """
@@ -74,6 +79,7 @@ class OnStepContext:
         self.batch = batch
         self.loss_actor = loss_actor
         self.loss_critic = loss_critic
+        self.td_error = td_error
         self.core = core
         self.hyperparameters = hyperparameters
 
@@ -89,7 +95,7 @@ class ReplayBufferProto(Protocol):
         """Append a batch of transitions and return indices/handles."""
         ...
 
-    def sample(self, batch_size: int) -> TensorDict:
+    def sample(self, batch_size: int, return_info: bool = False) -> TensorDict:
         """Sample a batch of transitions as a TensorDict."""
         ...
 
@@ -134,6 +140,10 @@ class Trainer:
         ]
         | None = None,
         replay_buffer: ReplayBufferProto | None = None,
+        replay_buffer_update_priority: Callable[
+            [OnStepContext, dict[str, torch.Tensor], ReplayBufferProto], None
+        ]
+        | None = None,
         warmup_buffer_ratio: float = 0.2,
         on_train_step: OrderedDict[str, Callable[[OnStepContext], None]] | None = None,
         on_validation_step: OrderedDict[str, Callable[[OnStepContext], None]]
@@ -141,6 +151,7 @@ class Trainer:
         on_exception: OrderedDict[str, Callable[[Exception, OnStepContext], None]]
         | None = None,
         device: str | None = None,
+        priority_init_value: float = 1_000_000,
     ) -> None:
         """Initialize the trainer with the provided components.
 
@@ -158,6 +169,8 @@ class Trainer:
                 'next_state', 'terminated').
             replay_buffer (Optional[ReplayBufferProto]): A replay buffer to
                 store transitions for experience replay.
+            replay_buffer_update_priority (Optional[Callable[[OnStepContext, dict[str, torch.Tensor], ReplayBufferProto], None]]):
+                A function to update the priority of the replay buffer.
             warmup_buffer_ratio (float): Ratio of buffer to fill before training.
             on_train_step (Optional[OrderedDict[str, Callable[[OnStepContext], None]]]):
                 Callback for logging/tracing/validation/checkpointing.
@@ -166,11 +179,13 @@ class Trainer:
             on_exception (Optional[OrderedDict[str, Callable[[Exception, OnStepContext], None]]]):
                 Callback for training exceptions.
             device (Optional[str]): The device to use for training.
+            priority_init_value (float): The initial priority value for the replay buffer.
         """  # noqa: E501
         self.core = core
         self.train_step_stream_factory = train_step_stream_factory
         self.validation_step_stream_factory = validation_step_stream_factory
         self.replay_buffer = replay_buffer
+        self.replay_buffer_update_priority = replay_buffer_update_priority
         self.batch_size = batch_size
         self.min_train_batch_size = int(min_train_batch_size)
         self.warmup_buffer_ratio = warmup_buffer_ratio
@@ -180,6 +195,7 @@ class Trainer:
         self.device = (
             device or getattr(core, "device", None) or str(torch.device("cpu"))
         )
+        self.priority_init_value = priority_init_value
 
         # Internal progress tracking for checkpointing
         self._epoch: int = 0
@@ -212,7 +228,9 @@ class Trainer:
         }
 
     # ---------------- Orchestration helpers ----------------
-    def _maybe_store_and_sample(self, step_state: TensorDict) -> TensorDict | None:
+    def _maybe_store_and_sample(
+        self, step_state: TensorDict
+    ) -> Tuple[TensorDict | None, dict[str, torch.Tensor] | None]:
         """Store the transition in the replay buffer and return a batch if ready.
 
         Args:
@@ -223,61 +241,33 @@ class Trainer:
         """
         # Single-step batch mode (no replay): keep (B, ...) shape without extra time dim
         if self.replay_buffer is None:
-            return step_state.to(self.device)
-
-        # Replay buffer mode (append transition and sample)
-        try:
-            batch_size = int(step_state["terminated"].shape[0])
-        except Exception:
-            try:
-                batch_size = int(step_state.batch_size[0])
-            except Exception:
-                batch_size = 1
-
-        # Use max priority from buffer if available, else 1.0
-        maxp = getattr(
-            getattr(self.replay_buffer, "sampler", None), "_max_priority", 1.0
-        )
-        # Normalize to python float for torch.full fill_value
-        try:
-            if isinstance(maxp, torch.Tensor):
-                # some samplers keep a tensor buffer, take max scalar
-                maxp = maxp.max().item()
-            else:
-                maxp = float(maxp)
-        except Exception:
-            maxp = 1.0
-        priority = torch.full((batch_size,), maxp, device=self.device)
+            return step_state.to(self.device), None
 
         if len(step_state.batch_size) == 0:
             step_state = step_state.auto_batch_size_()
 
         # Add to replay buffer without introducing an extra leading time dimension
         indices = self.replay_buffer.extend(step_state)
+        storage_len = len(self.replay_buffer.storage)
+        storage_cap = self.replay_buffer.storage.max_size
 
-        # Update priorities if using prioritized replay
-        try:
-            self.replay_buffer.update_priority(indices, priority)
-        except Exception:
-            # allow non-PER buffers
-            pass
+        if storage_len <= storage_cap * self.warmup_buffer_ratio:
+            priority = torch.full(
+                (self.batch_size,), self.priority_init_value, device=self.device
+            )
+            try:
+                self.replay_buffer.update_priority(indices, priority)
+            except Exception:
+                # allow non-PER buffers
+                pass
 
         # Check if we've collected enough samples to start training
-        if hasattr(self.replay_buffer, "storage") and hasattr(
-            self.replay_buffer.storage, "max_size"
-        ):
-            storage_len = len(self.replay_buffer.storage)
-            storage_cap = self.replay_buffer.storage.max_size
-            if storage_len > storage_cap * self.warmup_buffer_ratio:
-                return self.replay_buffer.sample(self.batch_size).to(self.device)
+        if storage_len > storage_cap * self.warmup_buffer_ratio:
+            # Sample with return_info=True to get index metadata for priority update
+            batch, info = self.replay_buffer.sample(self.batch_size, return_info=True)
+            return batch.to(self.device), info
 
-        return None
-
-    @staticmethod
-    def _filter_completed_state(batch: TensorDict) -> TensorDict:
-        mask = batch["state"]["terminated"] == 0
-        selected = mask.nonzero(as_tuple=True)[0].cpu()
-        return batch[selected]
+        return None, None
 
     # ---------------- Public API ----------------
     def _run(
@@ -318,6 +308,7 @@ class Trainer:
         batch = None
         loss_actor = None
         loss_critic = None
+        td_error = None
         # Track and set module modes for validation
         prev_actor_mode = getattr(self.core.actor, "training", True)
         prev_critic_mode = getattr(self.core.critic, "training", True)
@@ -338,16 +329,20 @@ class Trainer:
             ):
                 self.validate(validation_epochs_frequency)
             for epoch in range(self._epoch, self._epoch + epochs):
-                loss_actor, loss_critic = torch.tensor(0.0), torch.tensor(0.0)
+                loss_actor, loss_critic, td_error = (
+                    torch.tensor(0.0),
+                    torch.tensor(0.0),
+                    None,
+                )
 
                 for done, step_idx, step_state in step_stream_factory():
                     iteration += 1
 
                     # Store transition and maybe sample batch
                     if training:
-                        batch = self._maybe_store_and_sample(step_state)
+                        batch, info = self._maybe_store_and_sample(step_state)
                     else:
-                        batch = step_state.to(self.device)
+                        batch, info = step_state.to(self.device), None
 
                     # Update networks if we have a batch
                     if batch is not None:
@@ -355,7 +350,12 @@ class Trainer:
                         # states that won't evolve further and can create
                         # degenerate micro-batches.
                         try:
-                            batch = self._filter_completed_state(batch)
+                            mask = batch["state"]["terminated"] == 0
+                            selected_indices = mask.nonzero(as_tuple=True)[0]
+                            batch = batch[selected_indices]
+                            # Also filter info indices to match the filtered batch
+                            if info is not None and "index" in info:
+                                info["index"] = info["index"][selected_indices]
                         except Exception:
                             # If structure is different, proceed without filtering.
                             pass
@@ -383,12 +383,12 @@ class Trainer:
                             # Skip remaining steps in this epoch
                             break
 
-                        loss_actor, loss_critic = self.core.compute_loss(
+                        loss_actor, loss_critic, td_error = self.core.compute_loss(
                             batch,
                             training=training,
                         )
                     else:
-                        loss_actor, loss_critic = None, None
+                        loss_actor, loss_critic, td_error = None, None, None
 
                     # Create step context
                     context = OnStepContext(
@@ -398,9 +398,22 @@ class Trainer:
                         batch=batch,
                         loss_actor=loss_actor,
                         loss_critic=loss_critic,
+                        td_error=td_error,
                         core=self.core,
                         hyperparameters=self.hyperparameters,
                     )
+
+                    if (
+                        self.replay_buffer is not None
+                        and self.replay_buffer_update_priority is not None
+                        and batch is not None
+                        and training
+                    ):
+                        if info is None:
+                            raise ValueError("info is None")
+                        self.replay_buffer_update_priority(
+                            context, info, self.replay_buffer
+                        )
 
                     # Call step callback
                     if on_step and batch is not None:
@@ -436,6 +449,7 @@ class Trainer:
                 batch=batch,
                 loss_actor=loss_actor,
                 loss_critic=loss_critic,
+                td_error=td_error,
                 core=self.core,
                 hyperparameters=self.hyperparameters,
             )

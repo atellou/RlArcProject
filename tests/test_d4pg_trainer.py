@@ -63,7 +63,9 @@ def test_d4pg_trainer_training_updates_and_loss_ranges(
             self.storage._len = 1
             return [0]
 
-        def sample(self, bs):
+        def sample(self, bs, return_info=False):
+            if return_info:
+                return self._last, {"index": torch.tensor([0])}
             return self._last
 
         def update_priority(self, indices, priorities):
@@ -159,10 +161,22 @@ def test_d4pg_trainer_per_update_priority_called(
 
     rb = _RecordRB(base_rb)
 
+    def replay_buffer_update_priority(
+        context: OnStepContext,
+        info: dict[str, torch.Tensor],
+        replay_buffer: _RecordRB,
+    ) -> None:
+        if context.td_error is None or info is None:
+            return
+        # Extract first available TD-error from TensorDict
+        td_error_value = next(iter(context.td_error.values()))
+        replay_buffer.update_priority(info["index"], td_error_value)
+
     trainer = Trainer(
         core=core,
         train_step_stream_factory=step_stream_factory,
         replay_buffer=rb,
+        replay_buffer_update_priority=replay_buffer_update_priority,
         batch_size=batch_size,
         warmup_buffer_ratio=0.0,
         device=str(device),
@@ -186,23 +200,6 @@ def test_d4pg_trainer_per_update_priority_called(
     assert any_positive, "No positive priorities were passed to update_priority"
 
 
-def _snapshot_params(module: torch.nn.Module, limit: int = 5):
-    return [
-        p.detach().clone().cpu()
-        for i, p in enumerate(module.parameters())
-        if p.requires_grad and i < limit
-    ]
-
-
-def _params_changed(before, module: torch.nn.Module) -> bool:
-    after = [
-        p.detach().clone().cpu()
-        for i, p in enumerate(module.parameters())
-        if p.requires_grad and i < len(before)
-    ]
-    return any(not torch.allclose(b, a) for b, a in zip(before, after))
-
-
 def test_d4pg_trainer_warmup_with_prioritized_sampler(
     device, d4pg_core, grid_size, color_values, batch_size, make_synthetic_step
 ):
@@ -215,6 +212,17 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
         storage=LazyTensorStorage(capacity),
         sampler=PrioritizedSampler(max_capacity=capacity, alpha=0.6, beta=0.4),
     )
+
+    def replay_buffer_update_priority(
+        context: OnStepContext,
+        info: dict[str, torch.Tensor],
+        replay_buffer: TensorDictReplayBuffer,
+    ) -> None:
+        if context.td_error is None or info is None:
+            return
+        # Extract first available TD-error from TensorDict
+        td_error_value = next(iter(context.td_error.values()))
+        replay_buffer.update_priority(info["index"], td_error_value)
 
     max_steps = 10
 
@@ -239,6 +247,7 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
         core=core,
         train_step_stream_factory=step_stream_factory,
         replay_buffer=rb,
+        replay_buffer_update_priority=replay_buffer_update_priority,
         batch_size=batch_size,
         warmup_buffer_ratio=warmup_ratio,
         on_train_step={"test": on_step},
@@ -328,40 +337,6 @@ def test_d4pg_trainer_real_replay_buffer_and_step_handlers(
     ), f"Critic loss out of range: {losses_critic}"
 
 
-def _make_per_buffer(max_size: int):
-    class _Storage:
-        def __init__(self):
-            self.max_size = max_size
-            self._len = 0
-
-        def __len__(self):
-            return self._len
-
-    class _Sampler:
-        def __init__(self):
-            self._max_priority = 1.0
-
-    class _PERBuffer:
-        def __init__(self):
-            self.storage = _Storage()
-            self.sampler = _Sampler()
-            self._last = None
-            self.update_called = False
-
-        def extend(self, batch):
-            self._last = batch.squeeze(0)
-            self.storage._len += 1
-            return [self.storage._len - 1]
-
-        def sample(self, bs):
-            return self._last
-
-        def update_priority(self, indices, priorities):
-            self.update_called = True
-
-    return _PERBuffer()
-
-
 def _build_simple_core(
     grid_size: int,
     color_values: int,
@@ -421,13 +396,27 @@ def test_d4pg_trainer_per_warmup_and_priority(
             self._last = batch.squeeze(0)
             return [0]
 
-        def sample(self, bs):
+        def sample(self, bs, return_info=False):
+            if return_info:
+                return self._last, {"index": torch.tensor([0])}
             return self._last
 
         def update_priority(self, indices, priorities):
             self.update_called = True
 
     per_buffer = _PERBuffer()
+
+    def replay_buffer_update_priority(
+        context: OnStepContext,
+        info: dict[str, torch.Tensor],
+        replay_buffer: _PERBuffer,
+    ) -> None:
+        if context.td_error is None or info is None:
+            return
+        # Extract first available TD-error from TensorDict
+        td_error_value = next(iter(context.td_error.values()))
+        replay_buffer.update_priority(info["index"], td_error_value)
+
     losses_actor, losses_critic = [], []
 
     def on_step(ctx: OnStepContext):
@@ -441,6 +430,7 @@ def test_d4pg_trainer_per_warmup_and_priority(
         core=core,
         train_step_stream_factory=step_stream_factory,
         replay_buffer=per_buffer,
+        replay_buffer_update_priority=replay_buffer_update_priority,
         batch_size=batch_size,
         # need >5 samples before training starts (given max_size=10)
         warmup_buffer_ratio=0.5,
@@ -485,7 +475,9 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
             self._last = batch.squeeze(0)
             return [0]
 
-        def sample(self, bs):
+        def sample(self, bs, return_info=False):
+            if return_info:
+                return self._last, {"index": torch.tensor([0])}
             return self._last
 
         def update_priority(self, indices, priorities):
@@ -545,7 +537,9 @@ def test_d4pg_trainer_validation_process(d4pg_core, make_synthetic_step, batch_s
             self._last = batch.squeeze(0)
             return [0]
 
-        def sample(self, bs):
+        def sample(self, bs, return_info=False):
+            if return_info:
+                return self._last, {"index": torch.tensor([0])}
             return self._last
 
         def update_priority(self, indices, priorities):

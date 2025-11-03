@@ -111,6 +111,14 @@ def sample_context(mock_core):
         batch_size=[4],
     )
 
+    td_error = TensorDict(
+        {
+            "pixel_wise": torch.tensor([0.5, 0.3, 0.8, 0.2]),
+            "binary": torch.tensor([1.0, 0.0, 1.0, 0.0]),
+        },
+        batch_size=[4],
+    )
+
     return OnStepContext(
         epoch=5,
         step_idx=100,
@@ -118,6 +126,7 @@ def sample_context(mock_core):
         batch=batch,
         loss_actor=torch.tensor(0.25),
         loss_critic=torch.tensor(0.42),
+        td_error=td_error,
         core=mock_core,
         hyperparameters={"gamma": 0.99, "tau": 0.005},
     )
@@ -349,6 +358,7 @@ class TestMinimalMetricsLogging:
             batch=None,
             loss_actor=None,
             loss_critic=None,
+            td_error=None,
             core=mock_core,
             hyperparameters={},
         )
@@ -368,6 +378,7 @@ class TestMinimalMetricsLogging:
             batch=None,
             loss_actor=torch.tensor(0.1),
             loss_critic=torch.tensor(0.2),
+            td_error=None,
             core=mock_core,
             hyperparameters={},
         )
