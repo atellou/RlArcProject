@@ -7,7 +7,7 @@ from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.reward_processor import RewardProcessor
 from rlarcworld.environments.stepper import EnvStepper
-from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)

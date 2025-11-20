@@ -36,7 +36,7 @@ from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.reward_processor import RewardProcessor
 from rlarcworld.environments.stepper import EnvStepper
-from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (

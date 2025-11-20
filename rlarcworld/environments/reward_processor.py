@@ -7,7 +7,7 @@ import torch
 
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.common.types import REWARD_REQUIRED_KEYS, RewardDict
-from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 
 logger = logging.getLogger(__name__)
 

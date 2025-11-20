@@ -8,7 +8,7 @@ from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 
 logger = logging.getLogger(__name__)
 

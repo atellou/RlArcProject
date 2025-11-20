@@ -8,6 +8,7 @@ import gymnasium as gym
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     assert_expected_class,
@@ -29,7 +30,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
     def __init__(
         self,
-        env,
+        env: ArcBatchGridEnv,
         max_penalty: float = -1.0,
         n_steps: int = 1,
         gamma: float = 1.0,
