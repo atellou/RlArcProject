@@ -47,7 +47,7 @@ class CnnPreTrainedModule(nn.Module):
 
     def __init__(
         self,
-        model: str = "efficientnet_b0",
+        model: str = "efficientnet_v2_s",
         model_weights: str | None = "DEFAULT",
         freeze: list[str] | None = None,
         do_not_freeze: list[str] | None = None,
@@ -57,7 +57,7 @@ class CnnPreTrainedModule(nn.Module):
 
         Args:
             model (str, optional): The name of the pre-trained model.
-             Defaults to "efficientnet_b0".
+             Defaults to "efficientnet_v2_s".
             model_weights (str, optional): The weights of the pre-trained model.
              Defaults to "DEFAULT".
             freeze (list[str], optional): List of layers to freeze.
@@ -69,9 +69,12 @@ class CnnPreTrainedModule(nn.Module):
         """
         super().__init__()
         self.base_model = getattr(models, model)(weights=model_weights)
+
+        # Adjust for 1-channel input
+        cnn1_out_channels: int = self.base_model.features[0][0].out_channels
         self.base_model.features[0][0] = nn.Conv2d(
-            1, 32, kernel_size=3, stride=1, padding=1, bias=False
-        )  # Adjust for 1-channel input
+            1, cnn1_out_channels, kernel_size=3, stride=1, padding=1, bias=False
+        )
         self.embedding_layer = nn.Linear(
             self.base_model.classifier[1].in_features,
             embedding_size,
