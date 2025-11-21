@@ -335,7 +335,7 @@ class Trainer:
                     None,
                 )
 
-                for done, step_idx, step_state in step_stream_factory():
+                for _done, step_idx, step_state in step_stream_factory():
                     iteration += 1
 
                     # Store transition and maybe sample batch

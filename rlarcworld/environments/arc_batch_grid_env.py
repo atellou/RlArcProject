@@ -1,6 +1,7 @@
 """ARC batched grid environment and action spaces."""
 
 import logging
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -20,6 +21,17 @@ from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
+
+
+class ArcEnvRunningMode(StrEnum):
+    """Running mode for the ARC environment."""
+
+    TRAIN = "train"
+    INFERENCE = "inference"
+
+    def is_train(self) -> bool:
+        """Check if the current running mode is training."""
+        return self == self.TRAIN
 
 
 class ArcActionSpace:
@@ -127,11 +139,11 @@ class ArcBatchGridEnv(gym.Env):
         # set. Used mainly to add stochasticity.
         self.observation_space = gym.spaces.Dict(
             {
-                "grid": gym.spaces.Sequence(
+                StateKeys.GRID.value: gym.spaces.Sequence(
                     gym.spaces.Box(0, color_values, shape=(grid_size, grid_size)),
                     stack=True,
                 ),
-                "target": gym.spaces.Sequence(
+                StateKeys.TARGET.value: gym.spaces.Sequence(
                     gym.spaces.Box(0, color_values, shape=(grid_size, grid_size)),
                     stack=True,
                 ),
@@ -234,10 +246,42 @@ class ArcBatchGridEnv(gym.Env):
         super().reset(seed=seed)
 
         # The sample for every episode is a batch of ARC Samples
-        self.is_train_episode = options.get("is_train", True)
-        batch = options["batch"]
-        batch_in = batch["input"]
-        batch_out = batch["output"]
+        batch: dict[str, torch.Tensor] = options["batch"]
+        batch_in: torch.Tensor = batch["input"]
+
+        # Require mode to be specified
+        mode = options.get("mode")
+        if mode is None:
+            raise ValueError(
+                f"Mode must be specified in options. Modes: {list(ArcEnvRunningMode)}."
+            )
+
+        try:
+            self.mode = ArcEnvRunningMode(mode)
+        except ValueError:
+            raise ValueError(
+                f"Invalid mode: {mode}. Must be one of {list(ArcEnvRunningMode)}."
+            )
+
+        batch_out: torch.Tensor | None = None
+        if self.mode.is_train():
+            batch_out = batch.get("output")
+            if batch_out is None:
+                raise ValueError(
+                    "In train mode, the batch must contain an 'output' key."
+                )
+            # Check shape
+            assert (
+                len(batch_out.shape) == 3
+                and batch_out.shape[1] == self.grid_size
+                and batch_out.shape[2] == self.grid_size
+            ), (
+                "The batch output (target) shape is not correct. A shape of "
+                "(batch_size, {size}, {size}) is expected".format(size=self.grid_size)
+            )
+        else:
+            logger.warning(f"Running in {self.mode} mode")
+
         assert (
             len(batch_in.shape) == 3
             and batch_in.shape[1] == self.grid_size
@@ -246,14 +290,7 @@ class ArcBatchGridEnv(gym.Env):
             "The batch input shape is not correct. A shape of (batch_size, "
             "{size}, {size}) is expected".format(size=self.grid_size)
         )
-        assert (
-            len(batch_out.shape) == 3
-            and batch_out.shape[1] == self.grid_size
-            and batch_out.shape[2] == self.grid_size
-        ), (
-            "The batch output (target) shape is not correct. A shape of "
-            "(batch_size, {size}, {size}) is expected".format(size=self.grid_size)
-        )
+
         self.batch_size = batch_in.shape[0]
 
         # grid of initial reward
@@ -282,7 +319,7 @@ class ArcBatchGridEnv(gym.Env):
         ).to(self.device)
 
         self.observations = TensorDict(
-            {StateKeys.GRID.value: batch_in.clone(), "target": batch_out.clone()},
+            {StateKeys.GRID.value: batch_in.clone(), StateKeys.TARGET.value: batch_out},
             batch_size=self.batch_size,
         ).to(self.device)
 
@@ -296,26 +333,28 @@ class ArcBatchGridEnv(gym.Env):
         Returns:
             torch.Tensor: The difference between the current grid and the target grid.
         """
+        if not self.mode.is_train():
+            raise ValueError("get_difference called outside of training mode")
         return (
-            self.observations[StateKeys.GRID.value] - self.observations["target"]
+            self.observations[StateKeys.GRID.value]
+            - self.observations[StateKeys.TARGET.value]
         ).to(self.device)
 
-    def episode_terminated(self, submission: list[int]) -> torch.Tensor:
+    def episode_terminated(self, submission: torch.Tensor) -> torch.Tensor:
         """Check if the episode has terminated.
 
         Args:
-            submission (list[int]): Whether the agent indicated a submission to
+            submission (torch.Tensor): Whether the agent indicated a submission to
                 grade.
 
         Returns:
             torch.Tensor: The termination status of the episode.
         """
+        if not self.mode.is_train():
+            raise ValueError("episode_terminated called outside of training mode")
+
         diff = self.get_difference()
-        return (torch.sum(torch.abs(diff), dim=(1, 2)) == 0) * torch.as_tensor(
-            submission,
-            device=diff.device,
-            dtype=diff.dtype,
-        )
+        return (torch.sum(torch.abs(diff), dim=(1, 2)) == 0) * submission
 
     def reward(
         self,
@@ -479,25 +518,30 @@ class ArcBatchGridEnv(gym.Env):
                 )
             )
 
-        reward = self.reward(self.get_difference(), actions[ActionKeys.SUBMIT.value])
-        reward = torch.as_tensor(
-            reward,
-            device=self._reward_storage.device,
-            dtype=self._reward_storage.dtype,
-        )
+        if self.mode.is_train():
+            reward = torch.as_tensor(
+                self.reward(self.get_difference(), actions[ActionKeys.SUBMIT.value]),
+                device=self._reward_storage.device,
+                dtype=self._reward_storage.dtype,
+            )
+        else:
+            reward = torch.zeros(
+                self.batch_size,
+                device=self._reward_storage.device,
+                dtype=self._reward_storage.dtype,
+            )
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(1))
         self.last_reward = reward
 
         # TODO: No truncate version, evaluate time constraints
-        truncated = (
-            False
-            if self.is_train_episode
-            else torch.sum(torch.as_tensor(actions[ActionKeys.SUBMIT.value]))
-            == len(self)
-        )
-        self.information[StateKeys.TERMINATED.value] = self.episode_terminated(
-            actions[ActionKeys.SUBMIT.value]
-        )
+        submit = torch.as_tensor(actions[ActionKeys.SUBMIT.value]).to(self.device)
+        truncated = False if self.mode.is_train() else torch.sum(submit) == len(self)
+        if self.mode.is_train():
+            self.information[StateKeys.TERMINATED.value] = self.episode_terminated(
+                submit
+            )
+        else:
+            self.information[StateKeys.TERMINATED.value] = submit
         return (
             self.observations,
             reward,
@@ -520,7 +564,7 @@ class ArcBatchGridEnv(gym.Env):
                 "last_reward": self.last_reward,
                 "time_step": self.time_step,
                 "reward_storage": self.reward_storage,
-                "is_train_episode": self.is_train_episode,
+                "mode": self.mode.value,
                 "n_steps": self.n_steps,
                 "gamma": self.gamma,
                 "grid_size": self.grid_size,
@@ -588,7 +632,7 @@ class ArcBatchGridEnv(gym.Env):
         self.last_reward = checkpoint["last_reward"]
         self.time_step = checkpoint["time_step"]
         self.reward_storage = checkpoint["reward_storage"]
-        self.is_train_episode = checkpoint["is_train_episode"]
+        self.mode = ArcEnvRunningMode(checkpoint["mode"])
         self.batch_size = checkpoint["batch_size"]
 
         assert self.n_steps == checkpoint["n_steps"]

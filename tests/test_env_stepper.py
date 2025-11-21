@@ -36,7 +36,7 @@ def test_env_stepper_one_step(device):
         }
 
     def env_reset_fn(env, sample, seed=None):
-        env.reset(options=sample, seed=seed)
+        env.reset(options={**sample, "mode": "train"}, seed=seed)
 
     def on_step_fn(
         env, state, action_probs, reward, observation, terminated, truncated, info
@@ -70,6 +70,7 @@ def test_env_stepper_one_step(device):
         options={
             "batch": {"input": batch_in, "output": batch_out},
             "examples": examples,
+            "mode": "train",
         }
     )
 
@@ -109,7 +110,7 @@ def test_env_stepper_one_step_with_on_step(device):
         }
 
     def env_reset_fn(env, sample, seed=None):
-        env.reset(options=sample, seed=seed)
+        env.reset(options={**sample, "mode": "train"}, seed=seed)
 
     # Use on_step callback to process rewards
     on_step = RewardProcessor(n_steps=1, device=device, v_min_n_step=0, v_max_n_step=1)
@@ -131,6 +132,7 @@ def test_env_stepper_one_step_with_on_step(device):
         options={
             "batch": {"input": batch_in, "output": batch_out},
             "examples": examples,
+            "mode": "train",
         }
     )
 
@@ -170,7 +172,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         }
 
     def env_reset_fn(env, sample, seed=None):
-        env.reset(options=sample, seed=seed)
+        env.reset(options={**sample, "mode": "train"}, seed=seed)
 
     on_step = RewardProcessor(n_steps=3, device=device, v_min_n_step=0, v_max_n_step=1)
     stepper = EnvStepper(
@@ -192,6 +194,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         options={
             "batch": {"input": batch_in, "output": batch_out},
             "examples": examples,
+            "mode": "train",
         }
     )
 
@@ -253,7 +256,7 @@ def test_env_stepper_episode_stream(device):
         }
 
     def env_reset_fn(env, sample, seed=None):
-        env.reset(options=sample, seed=seed)
+        env.reset(options={**sample, "mode": "train"}, seed=seed)
 
     on_step = RewardProcessor(n_steps=2, device=device, v_min_n_step=0, v_max_n_step=1)
     stepper = EnvStepper(
@@ -275,6 +278,7 @@ def test_env_stepper_episode_stream(device):
         options={
             "batch": {"input": batch_in, "output": batch_out},
             "examples": examples,
+            "mode": "train",
         }
     )
 
@@ -333,7 +337,7 @@ def test_env_stepper_step_stream_from_samples(device):
             }
 
     def env_reset_fn(env, sample, seed=None):
-        env.reset(options=sample, seed=seed)
+        env.reset(options={**sample, "mode": "train"}, seed=seed)
 
     on_step = RewardProcessor(n_steps=2, device=device, v_min_n_step=0, v_max_n_step=1)
     stepper = EnvStepper(

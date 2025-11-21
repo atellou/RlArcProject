@@ -14,6 +14,7 @@ class StateKeys(StrEnum):
     INITIAL = "initial"
     INDEX = "index"
     TERMINATED = "terminated"
+    TARGET = "target"
 
 
 class ActionKeys(StrEnum):
