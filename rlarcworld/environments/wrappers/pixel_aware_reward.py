@@ -8,6 +8,11 @@ import gymnasium as gym
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.common.enums import ActionKeys, StateKeys
+from rlarcworld.environments.arc_batch_grid_env import (
+    ArcBatchGridEnv,
+    ArcEnvRunningMode,
+)
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     assert_expected_class,
@@ -29,7 +34,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
     def __init__(
         self,
-        env,
+        env: ArcBatchGridEnv,
         max_penalty: float = -1.0,
         n_steps: int = 1,
         gamma: float = 1.0,
@@ -108,6 +113,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             environment's reset method.
         """
         reset = super().reset(seed=seed, options=options)
+        self.mode: ArcEnvRunningMode = self.env.mode
         self.batch_size: int = options["batch"]["input"].shape[0]
         # Reward attributes
         self._reward_storage = TorchQueue(
@@ -115,7 +121,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             queue_size=self.n_steps,
             queue_dim=1,
         )
-        self.last_reward = torch.zeros(self.batch_size, dtype=int)
+        self.last_reward = torch.zeros(self.batch_size, dtype=torch.float32)
         self.discount_factor: torch.Tensor = self.get_discount_factor().to(self.device)
         self._reward_storage = self._reward_storage.to(self.device)
         self.last_reward = self.last_reward.to(self.device)
@@ -171,14 +177,17 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             torch.Tensor: The difference between the current grid and the
             target grid.
         """
+        if not self.mode.is_train():
+            raise ValueError(
+                "get_difference should only be called during training mode"
+            )
         obs = self.get_wrapper_attr("observations")
-        grid_grids = obs["grid"]
-        target_grids = obs["target"]
+        grid_grids = obs[StateKeys.GRID.value]
+        target_grids = obs[StateKeys.TARGET.value]
         if binary:
-            diff = (grid_grids - target_grids) != 0
+            return ((grid_grids - target_grids) != 0).long()
         else:
             return grid_grids - target_grids
-        return diff.long()
 
     def __len__(self) -> int:
         """Return the number of elements in the underlying environment."""
@@ -296,10 +305,17 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             truncated: Whether the episode has been truncated.
             info: Additional information about the environment.
         """
-        self.last_diffs = self.get_difference()
+        if self.mode.is_train():
+            self.last_diffs = self.get_difference()
         obs, _, terminated, truncated, info = self.env.step(actions)
-        self.grid_diffs = self.get_difference()
-        reward = self.reward(self.last_diffs, self.grid_diffs, actions["submit"])
+        if self.mode.is_train():
+            self.grid_diffs = self.get_difference()
+            reward = self.reward(
+                self.last_diffs, self.grid_diffs, actions[ActionKeys.SUBMIT.value]
+            )
+        else:
+            reward = torch.zeros_like(self.last_reward)
+
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(-1))
         self.last_reward = reward
         return obs, reward, terminated, truncated, info

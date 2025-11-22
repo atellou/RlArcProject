@@ -8,7 +8,7 @@ from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -179,23 +179,20 @@ def episodes_simulation(batch_size, size, color_values, env):
     episodes = np.random.randint(2, 3)
     for episode in range(episodes):
         logger.info(f"Episode: {episode}/{episodes}")
-        dummy_batch = TensorDict(
-            {
-                "batch": {
-                    "input": torch.randint(
-                        0, color_values - 1, size=(batch_size, size, size)
-                    ),
-                    "output": torch.randint(
-                        0, color_values, size=(batch_size, size, size)
-                    ),
-                },
-                "examples": torch.randint(
-                    0,
-                    color_values,
-                    size=(batch_size, np.random.randint(2, 5), 2, size, size),
+        dummy_batch = {
+            "batch": {
+                "input": torch.randint(
+                    0, color_values - 1, size=(batch_size, size, size)
                 ),
-            }
-        )
+                "output": torch.randint(0, color_values, size=(batch_size, size, size)),
+            },
+            "examples": torch.randint(
+                0,
+                color_values,
+                size=(batch_size, np.random.randint(2, 5), 2, size, size),
+            ),
+            "mode": "train",
+        }
         env.reset(options=dummy_batch)
         initial_diff_grid = env.get_difference()
         last_diff = torch.sum(initial_diff_grid)
@@ -303,7 +300,7 @@ def test_arc_batch_grid_env_checkpoint_roundtrip(
 
     batch = make_batch(batch_size, grid, colors)
     obs1, info1 = env1.reset(
-        options={"batch": batch, "examples": batch["examples"], "is_train": is_train}
+        options={"batch": batch, "examples": batch["examples"], "mode": "train"}
     )
     step_once(env1)
 
@@ -327,7 +324,7 @@ def test_arc_batch_grid_env_checkpoint_roundtrip(
     torch.testing.assert_close(env2.last_reward, env1.last_reward)
     assert env2.time_step == env1.time_step
     torch.testing.assert_close(env2.reward_storage, env1.reward_storage)
-    assert env2.is_train_episode == env1.is_train_episode
+    assert env2.mode == env1.mode
     assert env2.n_steps == env1.n_steps
     assert env2.gamma == env1.gamma
     assert env2.grid_size == env1.grid_size
@@ -356,7 +353,9 @@ def test_reward_wrapper_checkpoint_roundtrip(
     )
 
     batch = make_batch(batch_size, grid, colors)
-    obs1, info1 = env1.reset(options={"batch": batch, "examples": batch["examples"]})
+    obs1, info1 = env1.reset(
+        options={"batch": batch, "examples": batch["examples"], "mode": "train"}
+    )
     step_once(env1.env)  # step base env; wrapper uses it in reward
     # Simulate wrapper step reward by pushing some reward
     env1._reward_storage = env1._reward_storage.push(
@@ -403,7 +402,7 @@ def test_reward_wrapper_checkpoint_roundtrip(
     torch.testing.assert_close(env2.env.last_reward, env1.env.last_reward)
     assert env2.env.time_step == env1.env.time_step
     torch.testing.assert_close(env2.env.reward_storage, env1.env.reward_storage)
-    assert env2.env.is_train_episode == env1.env.is_train_episode
+    assert env2.env.mode == env1.env.mode
     assert env2.env.batch_size == env1.env.batch_size
 
 
@@ -495,3 +494,33 @@ def test_action_space():
         assert not env.action_space.contains(
             to_dict_tensors([[grid_size - 1, values - 1, 2]])
         )
+
+
+def test_inference_mode():
+    """Test environment behavior in inference mode (no target grid)."""
+    grid_size = 5
+    color_values = 10
+    batch_size = 2
+    env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values)
+
+    # Create a batch without output (target) to simulate inference
+    batch_in = torch.randint(0, color_values, (batch_size, grid_size, grid_size))
+    examples = torch.randint(0, color_values, (batch_size, 10, 2, grid_size, grid_size))
+    batch = {"input": batch_in}
+
+    # Reset the environment in inference mode
+    env.reset(options={"batch": batch, "examples": examples, "mode": "inference"})
+
+    # Verify inference mode flags
+    assert env.mode == "inference", "Environment should be in inference mode"
+
+    # Step once and check rewards
+    step_once(env)
+    assert torch.all(env.last_reward == 0), "Inference step should have zero reward"
+
+    # Attempt to call training-only methods should raise errors
+    with pytest.raises(ValueError):
+        env.get_difference()
+
+    with pytest.raises(ValueError):
+        env.episode_terminated(torch.zeros(batch_size))

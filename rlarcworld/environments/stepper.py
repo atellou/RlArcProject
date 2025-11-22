@@ -62,7 +62,7 @@ class EnvStepper:
         env: Env,
         sampler: Iterator[ResetSample],
         max_steps: int = -1,
-        env_sample_reset: Callable[[Env, ResetSample, int | None], Env] | None = None,
+        env_sample_reset: Callable[..., None] | None = None,
         amp_enabled: bool = True,
         on_step: OnStepFn | None = None,
     ):
@@ -75,11 +75,11 @@ class EnvStepper:
             sampler (Iterator[ResetSample]): Iterator yielding batches of objects
                 to reset the environment with, if env_sample_reset is provided.
             max_steps (int): Maximum number of steps per episode (-1 for no limit)
-            env_sample_reset (Optional[Callable[[Env, ResetSample, int | None], Env]]):
-                Callable to reset the environment with a batch of objects.
+            env_sample_reset (Optional[Callable[..., None]]):
+                Callable to reset the environment with a batch of objects and kwargs.
             amp_enabled: Whether to use automatic mixed precision
             on_step: Optional callback function to be called after each step
-        """
+        """  # noqa: E501
         self.actor = actor
         self.device = device
         self.env = env
@@ -212,33 +212,32 @@ class EnvStepper:
             )
             step_number += 1
 
-    def _reset_env(self, sample: Any, seed: int | None = None):
+    def _reset_env(self, sample, **kwargs) -> None:
         """Reset the environment with a sample.
 
         Args:
             sample: Sample to reset the environment with
-            seed: Random seed for reproducibility
+            **kwargs: Additional arguments passed to reset
         """
         if self.env_sample_reset is not None:
-            self.env_sample_reset(self.env, sample, seed)
+            self.env_sample_reset(self.env, sample, **kwargs)
         else:
-            self.env.reset(seed=seed)
+            self.env.reset(**kwargs)
 
     def create_step_stream_from_samples(
-        self,
-        seed: int | None = None,
+        self, **kwargs
     ) -> Generator[tuple[bool, int, TensorDict], None, None]:
         """Create a generator that yields step data from samples.
 
         Args:
-            seed: Random seed for reproducibility
+            **kwargs: Additional arguments passed to reset
 
         Yields:
             Tuples of (done, step_number, step_data) where step_data is a TensorDict
             with keys: state, reward, actions, next_state, terminated, truncated
         """
         for sample in self.sampler:
-            self._reset_env(sample, seed=seed)
+            self._reset_env(sample, **kwargs)
             for done, step_number, step_data in self.create_episode_stream():
                 yield done, step_number, step_data
             # count one sample processed after finishing its episode

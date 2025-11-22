@@ -33,10 +33,13 @@ from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.common.enums import RewardKeys
-from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.environments.arc_batch_grid_env import (
+    ArcBatchGridEnv,
+    ArcEnvRunningMode,
+)
 from rlarcworld.environments.reward_processor import RewardProcessor
 from rlarcworld.environments.stepper import EnvStepper
-from rlarcworld.environments.wrappers.rewards import PixelAwareRewardWrapper
+from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
@@ -59,6 +62,7 @@ class ArcStepper:
         dataset_path: str,
         grid_size: int,
         color_values: int,
+        env_mode: ArcEnvRunningMode,
         device: str,
         actor: ArcActorNetwork,
         config: CudaConfig,
@@ -70,30 +74,14 @@ class ArcStepper:
             dataset_path (str): Path to the dataset.
             grid_size (int): Size of the ARC grid.
             color_values (int): Number of possible colors.
+            env_mode (ArcEnvRunningMode): Environment running mode.
             device (str): Device to use.
             actor (ArcActorNetwork): Actor network.
             config (dict): Configuration dictionary.
         """
         # Initialize dataset and environment
         logger.info("Setting up dataset and environment...")
-
-        def reset_env(env, sample, seed):
-            # Accept single-sample outputs from dataset and add batch dim if needed
-            task = sample["task"]
-            examples = sample["examples"]
-            # Ensure 'input' and 'output' have shape (B, H, W)
-            inp = task["input"]
-            out = task["output"]
-            if inp.ndim == 2:
-                inp = inp.unsqueeze(0)
-            if out.ndim == 2:
-                out = out.unsqueeze(0)
-            batched_task = {"input": inp, "output": out}
-            # Ensure examples have shape (B, E, 2, H, W)
-            if examples.ndim == 4:
-                examples = examples.unsqueeze(0)
-            args = {"batch": batched_task, "examples": examples}
-            env.reset(options=args, seed=seed)
+        self.env_mode = env_mode
 
         transform = ArcSampleTransformer(
             output_size=(grid_size, grid_size),
@@ -130,10 +118,45 @@ class ArcStepper:
             env=self.environment,
             sampler=iter(self.dataset),
             max_steps=max_steps_per_epoch,
-            env_sample_reset=reset_env,
+            env_sample_reset=self.reset_env,
             amp_enabled=config.get("amp_enabled", True),
             on_step=reward_on_step,
         )
+
+    def reset_env(self, env, sample, **kwargs):
+        """Reset the environment with a sample from the dataset.
+
+        Args:
+            env: The environment to reset.
+            sample: The sample from the dataset.
+            **kwargs: Additional keyword arguments.
+        """
+        options: dict = kwargs.setdefault("options", {"mode": self.env_mode.value})
+        running_mode = options.setdefault("mode", self.env_mode.value)
+        if running_mode != self.env_mode.value:
+            raise ValueError(f"Unsupported running mode: {running_mode}")
+
+        # Accept single-sample outputs from dataset and add batch dim if needed
+        task = sample["task"]
+        examples = sample["examples"]
+        # Ensure 'input' and 'output' have shape (B, H, W)
+        inp = task["input"]
+        if inp.ndim == 2:
+            inp = inp.unsqueeze(0)
+        batched_task = {"input": inp}
+
+        if running_mode == ArcEnvRunningMode.TRAIN.value:
+            out = task["output"]
+            if out.ndim == 2:
+                out = out.unsqueeze(0)
+            batched_task["output"] = out
+
+        # Ensure examples have shape (B, E, 2, H, W)
+        if examples.ndim == 4:
+            examples = examples.unsqueeze(0)
+        args = {"batch": batched_task, "examples": examples}
+        kwargs["options"].update(args)
+        env.reset(**kwargs)
 
     def create_step_stream_from_samples(self, **kwargs):
         """Create a step stream from samples."""
@@ -308,6 +331,7 @@ class ArcD4PG:
             dataset_path=dataset_path,
             grid_size=grid_size,
             color_values=color_values,
+            env_mode=ArcEnvRunningMode.TRAIN,
             device=self.device,
             actor=self.actor,
             config=self.config,
@@ -321,6 +345,7 @@ class ArcD4PG:
             dataset_path=dataset_path,
             grid_size=grid_size,
             color_values=color_values,
+            env_mode=ArcEnvRunningMode.TRAIN,
             device=self.device,
             actor=self.actor,
             config=self.config,
