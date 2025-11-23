@@ -31,7 +31,7 @@ from torchrl.data.replay_buffers import (
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
+from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer, ComposeTransforms
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import (
     ArcBatchGridEnv,
@@ -42,6 +42,7 @@ from rlarcworld.environments.stepper import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
+from rlarcworld.utils.augmentation import ArcAugmentationTransformer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     resolve_load_path,
@@ -83,11 +84,28 @@ class ArcStepper:
         logger.info("Setting up dataset and environment...")
         self.env_mode = env_mode
 
-        transform = ArcSampleTransformer(
-            output_size=(grid_size, grid_size),
-            examples_stack_dim=10,
-            padding_constant_value=-1,
-            zero_based_correction=1,
+        # Create augmentation transformer
+        augmentation = ArcAugmentationTransformer(
+            augmentations=["rotate", "reflect", "permute_colors"],
+            max_examples=None,
+            color_permutation_range=(1, 12),
+            augmentation_probability=0.5,  # Apply augmentations 50% of the time
+            shuffle_probability=0.5,  # Shuffle examples 50% of the time
+        )
+
+        # IMPORTANT: ArcSampleTransformer must come FIRST to convert lists to tensors
+        # and apply the padding and zero-based correction.
+        # Then augmentation can operate on the tensor data.
+        transform = ComposeTransforms(
+            [
+                ArcSampleTransformer(
+                    output_size=(grid_size, grid_size),
+                    examples_stack_dim=10,
+                    padding_constant_value=-1,
+                    zero_based_correction=1,
+                ),
+                augmentation,
+            ]
         )
         self.dataset: ArcDataset = ArcDataset(
             dataset_path, keep_in_memory=False, transform=transform

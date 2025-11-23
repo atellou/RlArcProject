@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from typing import Callable
+from typing import Callable, Dict, List
 
 import numpy as np
 import torch
@@ -151,6 +151,35 @@ class ArcSampleTransformer:
             self.pad_to_size(torch.as_tensor(sample["task"]["output"]))
             + self.zero_based_correction
         )
+        return sample
+
+
+class ComposeTransforms:
+    """Compose multiple transformations together.
+
+    Args:
+        transforms: List of transformation callables to apply in sequence
+    """
+
+    def __init__(self, transforms: List[Callable[[Dict], Dict]]):
+        """Initialize the composition of transforms.
+
+        Args:
+            transforms: List of callables that take and return a sample dict
+        """
+        self.transforms = transforms
+
+    def __call__(self, sample: Dict) -> Dict:
+        """Apply all transforms in sequence.
+
+        Args:
+            sample: Input sample dictionary
+
+        Returns:
+            Transformed sample
+        """
+        for transform in self.transforms:
+            sample = transform(sample)
         return sample
 
 
