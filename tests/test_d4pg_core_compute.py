@@ -92,6 +92,9 @@ def core_setup(request):
                 0, grid_size, (batch_size, 1, grid_size, grid_size), device=device
             ),
             "terminated": torch.zeros((batch_size, 1), device=device, dtype=torch.long),
+            "example_mask": torch.randint(
+                0, 2, (batch_size, 10), device=device, dtype=torch.long
+            ),
         }
     ).to(device)
 

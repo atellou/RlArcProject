@@ -191,6 +191,9 @@ def train_arc_critic_network(batch_size: int):
             dc.pop(key)
             network.input_val(dc)
 
+    input_sample[StateKeys.EXAMPLE_MASK.value] = torch.randint(
+        0, 2, size=(batch_size, 10)
+    )
     action_probs = TensorDict(
         {
             ActionKeys.X_LOCATION.value: torch.softmax(
@@ -311,6 +314,10 @@ def train_arc_actor_network(batch_size: int):
         with pytest.raises(AssertionError):
             dc.pop(key)
             network.input_val(dc)
+
+    input_sample[StateKeys.EXAMPLE_MASK.value] = torch.randint(
+        0, 2, size=(batch_size, 10)
+    )
 
     to_zero = []
     for key in input_sample.keys():

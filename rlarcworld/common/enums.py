@@ -11,6 +11,7 @@ class StateKeys(StrEnum):
     LAST_GRID = "last_grid"
     GRID = "grid"
     EXAMPLES = "examples"
+    EXAMPLE_MASK = "example_mask"
     INITIAL = "initial"
     INDEX = "index"
     TERMINATED = "terminated"

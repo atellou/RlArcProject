@@ -204,15 +204,16 @@ class ArcCriticNetwork(torch.nn.Module):
             AssertionError: If a NaN is detected in the output.
         """
         state = state.clone()
+        current_device = next(self.parameters()).device
+        example_mask = state.pop(StateKeys.EXAMPLE_MASK.value, None)
+        if example_mask is not None:
+            example_mask = example_mask.to(current_device)
         # Only present in training
         state.pop(StateKeys.TERMINATED.value, None)
 
         # Validate input
         self.input_val(state)
         state.update(action)
-
-        # Resolve current device from parameters (in case module was moved after init)
-        current_device = next(self.parameters()).device
 
         # Broadcast the state
         action_keys = torch.cat(
@@ -239,6 +240,12 @@ class ArcCriticNetwork(torch.nn.Module):
 
             if key != StateKeys.EXAMPLES.value:
                 state[key] = state[key].unsqueeze(1)
+
+        # If there is an example mask, apply it to zero out padded examples
+        if example_mask is not None:
+            # mask: [batch_size, num_examples] -> [batch_size, num_examples, 1]
+            mask = example_mask.unsqueeze(-1)
+            state[StateKeys.EXAMPLES.value] = state[StateKeys.EXAMPLES.value] * mask
 
         # Concatenate flattned states
         state = torch.cat(

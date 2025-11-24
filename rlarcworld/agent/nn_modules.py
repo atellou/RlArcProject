@@ -49,6 +49,7 @@ class CnnPreTrainedModule(nn.Module):
         self,
         model: str = "efficientnet_v2_s",
         model_weights: str | None = "DEFAULT",
+        norm_type: str = "group_norm",
         freeze: list[str] | None = None,
         do_not_freeze: list[str] | None = None,
         embedding_size: int = 128,
@@ -60,6 +61,8 @@ class CnnPreTrainedModule(nn.Module):
              Defaults to "efficientnet_v2_s".
             model_weights (str, optional): The weights of the pre-trained model.
              Defaults to "DEFAULT".
+            norm_type (str, optional): The type of normalization to use.
+             Defaults to "group_norm".
             freeze (list[str], optional): List of layers to freeze.
              Defaults to None.
             do_not_freeze (list[str], optional): List of layers to unfreeze.
@@ -123,7 +126,15 @@ class CnnPreTrainedModule(nn.Module):
         # CRITICAL: Replace BatchNorm with GroupNorm for small batch stability
         # BatchNorm is unstable with small batches (batch_size=4) and causes NaN
         # GroupNorm is batch-size independent and more stable
-        self._replace_batchnorm_with_groupnorm(self.base_model)
+        if norm_type == "group_norm":
+            self._replace_batchnorm_with_groupnorm(self.base_model)
+        elif norm_type == "batch_norm":
+            for module in self.base_model.modules():
+                if isinstance(module, nn.BatchNorm2d):
+                    for param in module.parameters():
+                        param.requires_grad = True
+        else:
+            raise ValueError(f"Unknown norm type: {norm_type}")
 
         self.add_module("base_model", self.base_model)
         self.add_module("embedding_layer", self.embedding_layer)
