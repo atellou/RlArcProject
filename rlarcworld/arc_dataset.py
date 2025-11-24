@@ -143,6 +143,11 @@ class ArcSampleTransformer:
                     sample["examples"].shape, pad_size
                 )
             )
+
+        # Create example mask (1=real, 0=padded)
+        sample["example_mask"] = torch.zeros(self.examples_stack_dim)
+        sample["example_mask"][:n_examples] = 1
+
         sample["task"]["input"] = (
             self.pad_to_size(torch.as_tensor(sample["task"]["input"]))
             + self.zero_based_correction
