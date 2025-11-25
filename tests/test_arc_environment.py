@@ -344,7 +344,7 @@ def test_reward_wrapper_checkpoint_roundtrip(
     base = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=4, gamma=0.95)
     env1 = PixelAwareRewardWrapper(
         base,
-        max_penalty=-1.0,
+        max_penalty=1.0,
         n_steps=4,
         gamma=0.95,
         apply_clamp=apply_clamp,
@@ -370,7 +370,7 @@ def test_reward_wrapper_checkpoint_roundtrip(
     base2 = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=4, gamma=0.95)
     env2 = PixelAwareRewardWrapper(
         base2,
-        max_penalty=-1.0,
+        max_penalty=1.0,
         n_steps=4,
         gamma=0.95,
         apply_clamp=apply_clamp,

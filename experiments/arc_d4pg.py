@@ -119,7 +119,7 @@ class ArcStepper:
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
         self.environment = PixelAwareRewardWrapper(
             base_env,
-            max_penalty=-1.0,
+            max_penalty=1.0,
             n_steps=base_env.n_steps,
             gamma=base_env.gamma,
             apply_clamp=False,

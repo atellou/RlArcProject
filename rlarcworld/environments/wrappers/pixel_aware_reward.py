@@ -35,7 +35,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
     def __init__(
         self,
         env: ArcBatchGridEnv,
-        max_penalty: float = -1.0,
+        max_penalty: float = 0.0,
         n_steps: int = 1,
         gamma: float = 1.0,
         apply_clamp: bool = False,
@@ -81,6 +81,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             if isinstance(v_min, int) and isinstance(v_max, int):
                 assert v_min < v_max
 
+        assert (
+            isinstance(max_penalty, float) and max_penalty >= 0
+        ), "max_penalty must be a float greater or equal than 0, got {}".format(
+            max_penalty
+        )
         self.__max_penalty = max_penalty
         self.apply_clamp = apply_clamp
         self.v_min = v_min
@@ -262,7 +267,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         Returns:
             torch.Tensor: The reward for the current grid of the environment.
         """
-        penalization = submission * self.max_penalty
+        penalization = submission * -self.max_penalty
         last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
         grid_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2))
         if not isinstance(penalization, torch.Tensor):
