@@ -6,9 +6,14 @@ import pytest
 import torch
 from tensordict import TensorDict
 
-from rlarcworld.common.enums import ActionKeys
-from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.agent.reward_world_model import RewardWorldModel
+from rlarcworld.common.enums import ActionKeys, RewardKeys
+from rlarcworld.environments.arc_batch_grid_env import (
+    ArcBatchGridEnv,
+    ArcEnvRunningMode,
+)
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
+from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -524,3 +529,263 @@ def test_inference_mode():
 
     with pytest.raises(ValueError):
         env.episode_terminated(torch.zeros(batch_size))
+
+
+def test_reward_world_model_wrapper_basic():
+    """Test basic functionality of RewardWorldModelWrapper."""
+    logger.info("Testing RewardWorldModelWrapper basic functionality")
+
+    grid_size = 10
+    color_values = 11
+    batch_size = 2
+    n_steps = 3
+    step_horizon = 5
+
+    # Create base environment
+    env = ArcBatchGridEnv(
+        grid_size=grid_size,
+        color_values=color_values,
+        n_steps=n_steps,
+    )
+
+    # Create reward world model
+    model = RewardWorldModel(
+        grid_size=grid_size,
+        color_values=color_values,
+        embedding_size=128,
+    )
+
+    # Wrap environment
+    wrapped_env = RewardWorldModelWrapper(
+        env=env,
+        model=model,
+        step_horizon=step_horizon,
+        n_steps=n_steps,
+        gamma=0.99,
+    )
+
+    # Create batch
+    batch = make_batch(batch_size, grid_size, color_values)
+
+    # Reset environment
+    obs, info = wrapped_env.reset(
+        options={
+            "batch": batch,
+            "examples": batch["examples"],
+            "mode": ArcEnvRunningMode.TRAIN,
+        }
+    )
+
+    # Verify initial state
+    assert wrapped_env.batch_size == batch_size
+    assert wrapped_env.remaining_horizon == step_horizon
+    assert wrapped_env._reward_storage is not None
+
+    # Verify reward storage structure
+    assert RewardKeys.BINARY.value in wrapped_env._reward_storage
+    assert RewardKeys.PIXEL_WISE.value in wrapped_env._reward_storage
+
+    # Take a step
+    actions = TensorDict(
+        {
+            ActionKeys.Y_LOCATION.value: torch.randint(0, grid_size, (batch_size,)),
+            ActionKeys.X_LOCATION.value: torch.randint(0, grid_size, (batch_size,)),
+            ActionKeys.COLOR_VALUES.value: torch.randint(
+                0, color_values, (batch_size,)
+            ),
+            ActionKeys.SUBMIT.value: torch.zeros(batch_size, dtype=torch.long),
+        },
+        batch_size=batch_size,
+    )
+
+    obs, reward, terminated, truncated, info = wrapped_env.step(actions)
+
+    # Verify step results
+    assert reward.shape == (batch_size,)
+    assert wrapped_env.remaining_horizon == step_horizon - 1
+
+    # Verify rewards are accessible
+    binary_reward = wrapped_env.binary_model_reward
+    pixel_wise_reward = wrapped_env.pixel_wise_model_reward
+
+    assert binary_reward.shape == (batch_size,)
+    assert pixel_wise_reward.shape == (batch_size,)
+
+    # Verify n-step rewards
+    n_binary = wrapped_env.n_binary_reward
+    n_pixel_wise = wrapped_env.n_pixel_wise_reward
+
+    assert n_binary.shape == (batch_size,)
+    assert n_pixel_wise.shape == (batch_size,)
+
+
+def test_reward_world_model_wrapper_multi_step():
+    """Test RewardWorldModelWrapper with multiple steps and n-step returns."""
+    logger.info("Testing RewardWorldModelWrapper multi-step behavior")
+
+    grid_size = 8
+    color_values = 11
+    batch_size = 3
+    n_steps = 5
+    step_horizon = 10
+    gamma = 0.95
+
+    # Create environment and model
+    env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values, n_steps=1)
+    model = RewardWorldModel(grid_size=grid_size, color_values=color_values)
+
+    wrapped_env = RewardWorldModelWrapper(
+        env=env,
+        model=model,
+        step_horizon=step_horizon,
+        n_steps=n_steps,
+        gamma=gamma,
+    )
+
+    # Reset
+    batch = make_batch(batch_size, grid_size, color_values)
+    wrapped_env.reset(
+        options={
+            "batch": batch,
+            "examples": batch["examples"],
+            "mode": ArcEnvRunningMode.TRAIN,
+        }
+    )
+
+    # Take multiple steps
+    rewards_collected = []
+    for i in range(n_steps):
+        actions = TensorDict(
+            {
+                ActionKeys.Y_LOCATION.value: torch.randint(0, grid_size, (batch_size,)),
+                ActionKeys.X_LOCATION.value: torch.randint(0, grid_size, (batch_size,)),
+                ActionKeys.COLOR_VALUES.value: torch.randint(
+                    0, color_values, (batch_size,)
+                ),
+                ActionKeys.SUBMIT.value: torch.zeros(batch_size, dtype=torch.long),
+            },
+            batch_size=batch_size,
+        )
+
+        obs, reward, terminated, truncated, info = wrapped_env.step(actions)
+        rewards_collected.append(wrapped_env.binary_model_reward.clone())
+
+        assert wrapped_env.remaining_horizon == step_horizon - (i + 1)
+
+    # Verify n-step return computation
+    n_step_return = wrapped_env.n_binary_reward
+
+    # Manually compute expected n-step return
+    expected_return = torch.zeros(batch_size).to(wrapped_env.device)
+    for i, r in enumerate(rewards_collected):
+        expected_return += (gamma**i) * r
+
+    # Should be close (within numerical precision)
+    torch.testing.assert_close(n_step_return, expected_return, rtol=1e-4, atol=1e-4)
+
+
+def test_reward_world_model_wrapper_horizon_truncation():
+    """Test that wrapper correctly truncates episodes at step_horizon."""
+    logger.info("Testing RewardWorldModelWrapper horizon truncation")
+
+    grid_size = 5
+    color_values = 11
+    batch_size = 2
+    step_horizon = 3
+
+    env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values)
+    model = RewardWorldModel(grid_size=grid_size, color_values=color_values)
+
+    wrapped_env = RewardWorldModelWrapper(
+        env=env,
+        model=model,
+        step_horizon=step_horizon,
+        n_steps=1,
+        gamma=1.0,
+    )
+
+    batch = make_batch(batch_size, grid_size, color_values)
+    wrapped_env.reset(
+        options={
+            "batch": batch,
+            "examples": batch["examples"],
+            "mode": ArcEnvRunningMode.TRAIN,
+        }
+    )
+
+    # Take steps until horizon
+    for i in range(step_horizon):
+        actions = TensorDict(
+            {
+                ActionKeys.Y_LOCATION.value: torch.zeros(batch_size, dtype=torch.long),
+                ActionKeys.X_LOCATION.value: torch.zeros(batch_size, dtype=torch.long),
+                ActionKeys.COLOR_VALUES.value: torch.zeros(
+                    batch_size, dtype=torch.long
+                ),
+                ActionKeys.SUBMIT.value: torch.zeros(batch_size, dtype=torch.long),
+            },
+            batch_size=batch_size,
+        )
+
+        obs, reward, terminated, truncated, info = wrapped_env.step(actions)
+
+        if i < step_horizon - 1:
+            assert not truncated, f"Should not truncate before horizon at step {i}"
+        else:
+            assert truncated, f"Should truncate at horizon (step {i})"
+
+
+def test_reward_world_model_wrapper_caching():
+    """Test that reward caching works correctly."""
+    logger.info("Testing RewardWorldModelWrapper reward caching")
+
+    grid_size = 5
+    color_values = 11
+    batch_size = 2
+
+    env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values)
+    model = RewardWorldModel(grid_size=grid_size, color_values=color_values)
+
+    wrapped_env = RewardWorldModelWrapper(
+        env=env,
+        model=model,
+        step_horizon=10,
+        n_steps=1,
+        gamma=1.0,
+    )
+
+    batch = make_batch(batch_size, grid_size, color_values)
+    wrapped_env.reset(
+        options={
+            "batch": batch,
+            "examples": batch["examples"],
+            "mode": ArcEnvRunningMode.TRAIN,
+        }
+    )
+
+    # Take one step
+    actions = TensorDict(
+        {
+            ActionKeys.Y_LOCATION.value: torch.zeros(batch_size, dtype=torch.long),
+            ActionKeys.X_LOCATION.value: torch.zeros(batch_size, dtype=torch.long),
+            ActionKeys.COLOR_VALUES.value: torch.zeros(batch_size, dtype=torch.long),
+            ActionKeys.SUBMIT.value: torch.zeros(batch_size, dtype=torch.long),
+        },
+        batch_size=batch_size,
+    )
+
+    wrapped_env.step(actions)
+
+    # Access rewards multiple times - should use cache
+    reward1 = wrapped_env.binary_model_reward
+    reward2 = wrapped_env.binary_model_reward
+
+    # Should be identical (same object)
+    assert torch.equal(reward1, reward2)
+
+    # Take another step - cache should be invalidated
+    wrapped_env.step(actions)
+    reward3 = wrapped_env.binary_model_reward
+
+    # May or may not be different, but should be computed fresh
+    assert reward3.shape == reward1.shape

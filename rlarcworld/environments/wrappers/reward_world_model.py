@@ -45,30 +45,23 @@ class RewardWorldModelWrapper(gym.Wrapper):
         apply_clamp: bool = False,
         v_min: int | None = None,
         v_max: int | None = None,
+        grid_diff_epsilon: float = 0.01,
     ):
         """Initialize the RewardWorldModelWrapper.
 
         Args:
             env (ArcBatchGridEnv): Environment to wrap.
-            model (torch.nn.Module): Reward world model. It is called with
-                env.get_state() and must return a TensorDict whose keys match
-                RewardKeys (e.g. "binary", "pixel_wise").
-            step_horizon (int, optional): Maximum number of environment steps
-                before truncation. Defaults to 1.
-            n_steps (int, optional): Length of the n-step return window used for
-                discounted reward accumulation. Defaults to 1.
-            gamma (float, optional): Discount factor used in the n-step return
-                computation. Defaults to 1.0.
-            apply_clamp (bool, optional): Whether to clamp the n-step return
-                between v_min and v_max. Defaults to False.
-            v_min (int, optional): Minimum value for clamping the n-step return.
-            v_max (int, optional): Maximum value for clamping the n-step return.
-
-        Raises:
-            AssertionError: If step_horizon is not a positive int, gamma is not a
-                positive float less than or equal to 1.0, apply_clamp is not a bool,
-                int, v_min is not None or an int, or v_min >= v_max when
-                apply_clamp is True.
+            model (torch.nn.Module): The reward world model.
+            step_horizon (int, optional): Maximum number of steps per episode.
+                Defaults to 1.
+            n_steps (int, optional): Number of steps for n-step returns.
+                Defaults to 1.
+            gamma (float, optional): Discount factor. Defaults to 1.0.
+            apply_clamp (bool, optional): Whether to clamp rewards. Defaults to False.
+            v_min (int, optional): Minimum reward value for clamping. Defaults to None.
+            v_max (int, optional): Maximum reward value for clamping. Defaults to None.
+            grid_diff_epsilon (float, optional): Threshold for considering grid_diff
+                as zero. Defaults to 0.01 (1% of pixels).
         """
         super().__init__(env)
         assert (
@@ -87,6 +80,9 @@ class RewardWorldModelWrapper(gym.Wrapper):
             assert v_min is None or isinstance(v_min, int)
             if isinstance(v_min, int) and isinstance(v_max, int):
                 assert v_min < v_max
+        assert (
+            isinstance(grid_diff_epsilon, float) and 0 < grid_diff_epsilon < 1
+        ), "grid_diff_epsilon must be a float in (0, 1)"
 
         self.step_horizon = step_horizon
         self.n_steps = n_steps
@@ -95,6 +91,10 @@ class RewardWorldModelWrapper(gym.Wrapper):
         self.device = self.get_wrapper_attr("device")
         self.apply_clamp = apply_clamp
         self.v_min, self.v_max = v_min, v_max
+        self.max_penalty = self.get_wrapper_attr("max_penalty")
+        self.grid_size = self.get_wrapper_attr("grid_size")
+        self.color_values = self.get_wrapper_attr("color_values")
+        self.grid_diff_epsilon = grid_diff_epsilon
 
     def get_discount_factor(self) -> torch.Tensor:
         """Return the per-step discount factors tensor of shape (B, n_steps)."""
@@ -122,39 +122,63 @@ class RewardWorldModelWrapper(gym.Wrapper):
         reset = super().reset(seed=seed, options=options)
         self.mode: ArcEnvRunningMode = self.env.mode
         self.batch_size: int = options["batch"]["input"].shape[0]
-        # Reward attributes
-        self._reward_storage = TorchQueue(
-            torch.zeros((self.batch_size, self.n_steps)),
-            queue_size=self.n_steps,
-            queue_dim=1,
+        self._remaining_horizon = self.step_horizon
+
+        # Reward attributes - store both reward types for multi-head n-step returns
+        self._reward_storage = TensorDict(
+            {
+                RewardKeys.BINARY.value: TorchQueue(
+                    torch.zeros((self.batch_size, self.n_steps)),
+                    queue_size=self.n_steps,
+                    queue_dim=1,
+                ),
+                RewardKeys.PIXEL_WISE.value: TorchQueue(
+                    torch.zeros((self.batch_size, self.n_steps)),
+                    queue_size=self.n_steps,
+                    queue_dim=1,
+                ),
+            }
         )
+
         self.last_reward = torch.zeros(self.batch_size, dtype=torch.float32)
         self.discount_factor: torch.Tensor = self.get_discount_factor().to(self.device)
         self._reward_storage = self._reward_storage.to(self.device)
         self.last_reward = self.last_reward.to(self.device)
+
+        # Store raw model outputs and submission for lazy evaluation
         self.__model_reward = TensorDict({}, batch_size=[self.batch_size]).to(
             self.device
         )
-        self._remaining_horizon = self.step_horizon
+        self.__submission = torch.zeros(self.batch_size, dtype=torch.long).to(
+            self.device
+        )
+
+        # Cache for computed rewards (lazy evaluation)
+        self.__binary_reward_cache = None
+        self.__pixel_wise_reward_cache = None
+
         return reset
 
     def n_step_reward(
-        self, v_min: float | None = None, v_max: float | None = None
+        self,
+        reward_key: str = RewardKeys.BINARY.value,
+        v_min: float | None = None,
+        v_max: float | None = None,
     ) -> torch.Tensor:
         """Compute the n-step reward for the current grid of the environment.
 
         Args:
-            apply_clamp (bool, optional): Whether to clamp the reward between
-                v_min and v_max. Defaults to False.
-            v_min (int, optional): Minimum value for clamping. Defaults to
-                None.
-            v_max (int, optional): Maximum value for clamping. Defaults to
-                None.
+            reward_key (str, optional): Which reward type to compute n-step return for.
+                Defaults to RewardKeys.BINARY.value.
+            v_min (float, optional): Minimum value for clamping. Defaults to None.
+            v_max (float, optional): Maximum value for clamping. Defaults to None.
 
         Returns:
-            torch.Tensor: The computed reward.
+            torch.Tensor: The computed n-step discounted return.
         """
-        total = torch.sum(self._reward_storage * self.discount_factor, dim=1)
+        total = torch.sum(
+            self._reward_storage[reward_key] * self.discount_factor, dim=1
+        )
         if v_min is not None and v_max is not None:
             total = torch.clamp(total, min=v_min, max=v_max)
         elif self.apply_clamp:
@@ -186,47 +210,101 @@ class RewardWorldModelWrapper(gym.Wrapper):
         return self._reward_storage
 
     @reward_storage.setter
-    def reward_storage(self, value: torch.Tensor) -> None:
+    def reward_storage(self, value: TensorDict) -> None:
         """Sets the reward storage.
 
         Args:
-            value (torch.Tensor): The reward storage.
+            value (TensorDict): The reward storage.
         """
+        if tuple(value.keys()) != (
+            RewardKeys.BINARY.value,
+            RewardKeys.PIXEL_WISE.value,
+        ):
+            raise ValueError(
+                "Reward storage must have the same keys as the current reward storage"
+            )
         self._reward_storage = TorchQueue(value, queue_size=self.n_steps, queue_dim=1)
 
-    def reward(
-        self,
-        reward: torch.Tensor,
-        submission: list[int],
-    ) -> torch.Tensor:
-        """Return the reward of the environment."""
-        submission = torch.as_tensor(submission, device=reward.device)
+    def reward(self) -> torch.Tensor:
+        """Return the reward of the environment.
 
         # Reward logic:
         # - If submitted AND good: +1
         # - If submitted AND bad: -max_penalty
         # - If not submitted: 0
-        return submission * (reward - self.env.max_penalty * (1 - reward))
+        # Using probability directly for smooth planning gradients
+        """
+        # Extract P(correct) from [P(incorrect), P(correct)]
+        improvement = self.__model_reward[RewardKeys.BINARY.value][..., 1]
 
-    @property
-    def model_reward(self):
-        """Model reward."""
-        return self.__model_reward
+        return self.__submission * (improvement - self.max_penalty * (1 - improvement))
+
+    def pixel_wise_reward(self) -> torch.Tensor:
+        """Compute the pixel-wise reward for the current grid of the environment.
+
+        The model predicts:
+        - binary: P(correct) in [0, 1]
+        - pixel_wise: percentage of wrong pixels in [0, 1]
+
+        We interpret pixel_wise as normalized grid_diff (grid_diff / grid_size²).
+        """
+        submission = self.__submission
+        # Model outputs percentage of wrong pixels [0, 1]
+        grid_diff_percentage = self.__model_reward[RewardKeys.PIXEL_WISE.value]
+        # Extract P(correct) from [P(incorrect), P(correct)]
+        improvement = self.__model_reward[RewardKeys.BINARY.value][..., 1]
+
+        # Penalization scaled by percentage of wrong pixels
+        penalization = submission * -self.max_penalty
+        if not isinstance(penalization, torch.Tensor):
+            penalization = torch.tensor(
+                penalization,
+                device=grid_diff_percentage.device,
+                dtype=grid_diff_percentage.dtype,
+            ).to(self.device)
+
+        # Apply percentage-based penalization (matches PixelAwareRewardWrapper logic)
+        penalization = (
+            grid_diff_percentage > self.grid_diff_epsilon
+        ).long() * penalization
+        penalization = grid_diff_percentage * penalization
+
+        # The minus one is to avoid the reward to be positive (maximum reward is 0)
+        # improvement is P(correct) in [0,1], grid_diff_percentage is in [0,1]
+        # Use epsilon threshold for "perfect" grid check
+        is_perfect = (grid_diff_percentage <= self.grid_diff_epsilon).long()
+        has_errors = (grid_diff_percentage > self.grid_diff_epsilon).long()
+
+        reward = (improvement - 1) * has_errors + penalization + is_perfect * submission
+
+        if self.apply_clamp:
+            return torch.clamp(reward, min=self.v_min, max=self.v_max)
+        else:
+            return reward
 
     @property
     def binary_model_reward(self):
-        """Binary model reward."""
-        return self.__model_reward[RewardKeys.BINARY.value]
+        """Binary model reward (lazy evaluation with caching)."""
+        if self.__binary_reward_cache is None:
+            self.__binary_reward_cache = self.reward()
+        return self.__binary_reward_cache
 
     @property
     def pixel_wise_model_reward(self):
-        """Pixel-wise model reward."""
-        return self.__model_reward[RewardKeys.PIXEL_WISE.value]
+        """Pixel-wise model reward (lazy evaluation with caching)."""
+        if self.__pixel_wise_reward_cache is None:
+            self.__pixel_wise_reward_cache = self.pixel_wise_reward()
+        return self.__pixel_wise_reward_cache
 
     @property
-    def n_model_reward(self):
-        """N-step model reward."""
-        return self.n_step_reward()
+    def n_binary_reward(self):
+        """N-step binary reward."""
+        return self.n_step_reward(reward_key=RewardKeys.BINARY.value)
+
+    @property
+    def n_pixel_wise_reward(self):
+        """N-step pixel-wise reward."""
+        return self.n_step_reward(reward_key=RewardKeys.PIXEL_WISE.value)
 
     @property
     def remaining_horizon(self):
@@ -257,19 +335,31 @@ class RewardWorldModelWrapper(gym.Wrapper):
         """
         obs, _, terminated, truncated, info = self.env.step(actions)
         self._remaining_horizon -= 1
-        state = self.get_state()
-        model_reward = self.model(state)
-        submission = obs[ActionKeys.SUBMIT.value]
-        self.__model_reward = model_reward
-        self._reward_storage = self._reward_storage.push(
-            self.binary_model_reward.unsqueeze(-1)
+        state = self.get_state(unsqueeze=1)
+
+        # Store raw model output and submission for lazy evaluation
+        self.__model_reward = self.model(state).to(self.device)
+        self.__submission = torch.as_tensor(
+            actions[ActionKeys.SUBMIT.value], device=self.device
         )
+
+        # Invalidate caches (new step = new rewards)
+        self.__binary_reward_cache = None
+        self.__pixel_wise_reward_cache = None
+
+        # Push both reward types to storage
+        self._reward_storage[RewardKeys.BINARY.value] = self._reward_storage[
+            RewardKeys.BINARY.value
+        ].push(self.binary_model_reward.unsqueeze(-1))
+        self._reward_storage[RewardKeys.PIXEL_WISE.value] = self._reward_storage[
+            RewardKeys.PIXEL_WISE.value
+        ].push(self.pixel_wise_model_reward.unsqueeze(-1))
 
         truncated = truncated or self._remaining_horizon == 0
 
         return (
             obs,
-            self.reward(self.binary_model_reward, submission),
+            self.binary_model_reward,
             terminated,
             truncated,
             info,

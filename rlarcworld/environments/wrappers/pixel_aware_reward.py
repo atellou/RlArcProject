@@ -93,6 +93,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.n_steps = n_steps
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
+        self.grid_size = self.get_wrapper_attr("grid_size")
+        self.color_values = self.get_wrapper_attr("color_values")
 
     def get_discount_factor(self) -> torch.Tensor:
         """Return the per-step discount factors tensor of shape (B, n_steps)."""
@@ -275,7 +277,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 penalization, device=grid_diffs.device, dtype=grid_diffs.dtype
             ).to(self.device)
         penalization = (grid_diff > 0).long() * penalization
-        penalization = grid_diff * penalization
+        penalization = (grid_diff / self.grid_size**2) * penalization
         improvement = last_diffs - grid_diff
         # The minus one is to avoid the reward to be positive (maximum reward is 0)
         reward = (
