@@ -35,7 +35,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
     def __init__(
         self,
         env: ArcBatchGridEnv,
-        max_penalty: float = -1.0,
+        max_penalty: float = 0.0,
         n_steps: int = 1,
         gamma: float = 1.0,
         apply_clamp: bool = False,
@@ -81,6 +81,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             if isinstance(v_min, int) and isinstance(v_max, int):
                 assert v_min < v_max
 
+        assert (
+            isinstance(max_penalty, float) and max_penalty >= 0
+        ), "max_penalty must be a float greater or equal than 0, got {}".format(
+            max_penalty
+        )
         self.__max_penalty = max_penalty
         self.apply_clamp = apply_clamp
         self.v_min = v_min
@@ -88,6 +93,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.n_steps = n_steps
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
+        self.grid_size = self.get_wrapper_attr("grid_size")
+        self.color_values = self.get_wrapper_attr("color_values")
 
     def get_discount_factor(self) -> torch.Tensor:
         """Return the per-step discount factors tensor of shape (B, n_steps)."""
@@ -227,7 +234,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self,
         last_diffs: torch.Tensor,
         grid_diffs: torch.Tensor,
-        submission: list[int],
+        submission: list[int] | torch.Tensor,
     ) -> torch.Tensor:
         """Return reward based on actions and grids.
 
@@ -256,21 +263,23 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 and the target grid.
             grid_diffs (torch.Tensor): The difference between the current grid
                 and the target grid.
-            submission (List[int]): Indicates whether the agent indicated a
-                submission to grade.
+            submission (List[int] | torch.Tensor): Indicates whether the agent
+                indicated a submission to grade.
 
         Returns:
             torch.Tensor: The reward for the current grid of the environment.
         """
-        penalization = submission * self.max_penalty
+        # Ensure submission is a tensor on the correct device
+        if not isinstance(submission, torch.Tensor):
+            submission = torch.tensor(submission, device=grid_diffs.device)
+        else:
+            submission = submission.to(grid_diffs.device)
+
+        penalization = submission * -self.max_penalty
         last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
         grid_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2))
-        if not isinstance(penalization, torch.Tensor):
-            penalization = torch.tensor(
-                penalization, device=grid_diffs.device, dtype=grid_diffs.dtype
-            ).to(self.device)
         penalization = (grid_diff > 0).long() * penalization
-        penalization = grid_diff * penalization
+        penalization = (grid_diff / self.grid_size**2) * penalization
         improvement = last_diffs - grid_diff
         # The minus one is to avoid the reward to be positive (maximum reward is 0)
         reward = (

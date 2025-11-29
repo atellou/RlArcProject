@@ -2,6 +2,7 @@ import logging
 
 import pytest
 import torch
+import torch.nn.functional as F
 from tensordict import TensorDict
 
 from rlarcworld.agent.actor import ArcActorNetwork
@@ -12,7 +13,12 @@ from rlarcworld.agent.nn_modules import (
     CrossAttentionClassifier,
     MultiHeadAttention,
 )
-from rlarcworld.common.enums import ActionKeys, RewardKeys, StateKeys
+from rlarcworld.agent.reward_world_model import RewardWorldModel
+from rlarcworld.common.enums import (
+    ActionKeys,
+    RewardKeys,
+    StateKeys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -373,5 +379,143 @@ def train_arc_actor_network(batch_size: int):
             assert not torch.all(param.grad.abs().sum() == 0) or torch.all(
                 input_sample.get(key, torch.tensor(0)) == 0
             ), f"Gradient of zero for ArcActorNetwork for: {name}"
+    optimizer.step()
+    return loss
+
+
+def test_train_reward_world_model(batch_size: int):
+    """Validate the reward world model is trainable by observing loss variability."""
+    losses = [train_reward_world_model(batch_size) for _ in range(10)]
+    variability = sum(
+        [not torch.isclose(losses[i], losses[i + 1]) for i in range(len(losses) - 1)]
+    ) / max(1, (len(losses) - 1))
+    assert variability >= 0.5
+
+
+# ---------------- Reward World Model Helpers ----------------
+
+
+def train_reward_world_model(batch_size: int):
+    """Train reward world model for one step and return loss."""
+    size = 30
+    color_values = 11
+    logger.info(
+        "Testing RewardWorldModel with batch size: %s, size: %s and color values: %s",
+        batch_size,
+        size,
+        color_values,
+    )
+
+    network = RewardWorldModel(
+        grid_size=size,
+        color_values=color_values,
+        embedding_size=128,
+    )
+
+    # Create input state
+    input_sample = TensorDict(
+        {
+            StateKeys.LAST_GRID.value: torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
+            StateKeys.GRID.value: torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
+            StateKeys.EXAMPLES.value: torch.randint(
+                0, color_values, size=(batch_size, 10, 2, size, size)
+            ),
+            StateKeys.INITIAL.value: torch.randint(
+                0, color_values, size=(batch_size, 1, size, size)
+            ),
+            StateKeys.INDEX.value: torch.randint(
+                0, size, size=(batch_size, 1, size, size)
+            ),
+        }
+    )
+
+    # Test input validation
+    network.input_val(input_sample)
+    for key in input_sample.keys():
+        dc = input_sample.clone()
+        with pytest.raises(AssertionError):
+            dc.pop(key)
+            network.input_val(dc)
+
+    # Add optional example mask
+    input_sample[StateKeys.EXAMPLE_MASK.value] = torch.randint(
+        0, 2, size=(batch_size, 10)
+    )
+
+    # Forward pass
+    optimizer = torch.optim.RMSprop(network.parameters())
+    criterion = torch.nn.MSELoss()
+
+    output = network(input_sample)
+
+    # Validate output structure
+    network.output_val(output)
+    assert RewardKeys.BINARY.value in output
+    assert RewardKeys.PIXEL_WISE.value in output
+
+    # Check output shapes and ranges
+    assert output[RewardKeys.BINARY.value].shape == (
+        batch_size,
+        2,
+    )  # [P(incorrect), P(correct)]
+    assert output[RewardKeys.PIXEL_WISE.value].shape == (batch_size,)
+
+    # Binary should be probability distribution (from softmax)
+    assert torch.all(output[RewardKeys.BINARY.value] >= 0)
+    assert torch.all(output[RewardKeys.BINARY.value] <= 1)
+    # Should sum to 1 across classes
+    assert torch.allclose(
+        output[RewardKeys.BINARY.value].sum(dim=-1),
+        torch.ones(batch_size, device=network.device),
+        atol=1e-6,
+    )
+
+    # Pixel-wise should be percentage in [0, 1] (from sigmoid)
+    # Represents percentage of wrong pixels (grid_diff / grid_size²)
+    assert torch.all(output[RewardKeys.PIXEL_WISE.value] >= 0)
+    assert torch.all(output[RewardKeys.PIXEL_WISE.value] <= 1)
+
+    # Create synthetic targets
+    target = TensorDict(
+        {
+            RewardKeys.BINARY.value: torch.randint(
+                0, 2, size=(batch_size,)
+            ),  # Class indices
+            RewardKeys.PIXEL_WISE.value: torch.rand(batch_size),  # Percentage in [0, 1]
+        }
+    ).to(network.device)
+
+    # Compute loss
+    # Binary: cross-entropy (classification)
+    binary_loss = F.cross_entropy(
+        output[RewardKeys.BINARY.value], target[RewardKeys.BINARY.value]
+    )
+    # Pixel-wise: MSE (regression)
+    pixel_wise_loss = criterion(
+        output[RewardKeys.PIXEL_WISE.value], target[RewardKeys.PIXEL_WISE.value]
+    )
+    loss = binary_loss + pixel_wise_loss
+
+    assert not torch.isnan(loss), "Loss is NaN for RewardWorldModel"
+
+    # Backpropagation
+    optimizer.zero_grad()
+    loss.backward()
+
+    # Check gradients flow
+    to_zero: list[str] = []  # Keys that might have zero gradients due to masking
+    for name, param in network.named_parameters():
+        input_key = name.split(".")[1] if "." in name else name
+        if "base_model" not in name and param.grad is None:
+            raise ValueError(f"Gradient not flowing in RewardWorldModel for: {name}")
+        elif "base_model" not in name and input_key not in to_zero:
+            assert not torch.all(param.grad.abs().sum() == 0) or torch.all(
+                input_sample.get(input_key, torch.tensor(0)) == 0
+            ), f"Gradient of zero for RewardWorldModel for: {name}"
+
     optimizer.step()
     return loss

@@ -155,7 +155,7 @@ class ArcActorNetwork(nn.Module):
             if key == StateKeys.INDEX.value:
                 max_value = torch.max(value)
                 value = value.float() if max_value == 0 else value / max_value
-            elif key != StateKeys.TERMINATED.value:
+            else:
                 value = self.scale_arc_grids(value)
 
             if self.config.get("use_checkpointing"):
