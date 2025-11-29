@@ -234,7 +234,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self,
         last_diffs: torch.Tensor,
         grid_diffs: torch.Tensor,
-        submission: list[int],
+        submission: list[int] | torch.Tensor,
     ) -> torch.Tensor:
         """Return reward based on actions and grids.
 
@@ -263,19 +263,21 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 and the target grid.
             grid_diffs (torch.Tensor): The difference between the current grid
                 and the target grid.
-            submission (List[int]): Indicates whether the agent indicated a
-                submission to grade.
+            submission (List[int] | torch.Tensor): Indicates whether the agent
+                indicated a submission to grade.
 
         Returns:
             torch.Tensor: The reward for the current grid of the environment.
         """
+        # Ensure submission is a tensor on the correct device
+        if not isinstance(submission, torch.Tensor):
+            submission = torch.tensor(submission, device=grid_diffs.device)
+        else:
+            submission = submission.to(grid_diffs.device)
+
         penalization = submission * -self.max_penalty
         last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
         grid_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2))
-        if not isinstance(penalization, torch.Tensor):
-            penalization = torch.tensor(
-                penalization, device=grid_diffs.device, dtype=grid_diffs.dtype
-            ).to(self.device)
         penalization = (grid_diff > 0).long() * penalization
         penalization = (grid_diff / self.grid_size**2) * penalization
         improvement = last_diffs - grid_diff

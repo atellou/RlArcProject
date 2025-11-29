@@ -46,6 +46,8 @@ class RewardWorldModelWrapper(gym.Wrapper):
         v_min: int | None = None,
         v_max: int | None = None,
         grid_diff_epsilon: float = 0.01,
+        smooth_transition: bool = True,
+        transition_steepness: float = 100.0,
     ):
         """Initialize the RewardWorldModelWrapper.
 
@@ -62,6 +64,10 @@ class RewardWorldModelWrapper(gym.Wrapper):
             v_max (int, optional): Maximum reward value for clamping. Defaults to None.
             grid_diff_epsilon (float, optional): Threshold for considering grid_diff
                 as zero. Defaults to 0.01 (1% of pixels).
+            smooth_transition (bool, optional): If True, use smooth sigmoid transition
+                instead of hard threshold. Defaults to True.
+            transition_steepness (float, optional): Controls sharpness of smooth
+                transition. Higher values make transition sharper. Defaults to 100.0.
         """
         super().__init__(env)
         assert (
@@ -83,6 +89,10 @@ class RewardWorldModelWrapper(gym.Wrapper):
         assert (
             isinstance(grid_diff_epsilon, float) and 0 < grid_diff_epsilon < 1
         ), "grid_diff_epsilon must be a float in (0, 1)"
+        assert isinstance(smooth_transition, bool), "smooth_transition must be a bool"
+        assert (
+            isinstance(transition_steepness, float) and transition_steepness > 0
+        ), "transition_steepness must be a positive float"
 
         self.step_horizon = step_horizon
         self.n_steps = n_steps
@@ -95,6 +105,8 @@ class RewardWorldModelWrapper(gym.Wrapper):
         self.grid_size = self.get_wrapper_attr("grid_size")
         self.color_values = self.get_wrapper_attr("color_values")
         self.grid_diff_epsilon = grid_diff_epsilon
+        self.smooth_transition = smooth_transition
+        self.transition_steepness = transition_steepness
 
     def get_discount_factor(self) -> torch.Tensor:
         """Return the per-step discount factors tensor of shape (B, n_steps)."""
@@ -263,19 +275,29 @@ class RewardWorldModelWrapper(gym.Wrapper):
                 dtype=grid_diff_percentage.dtype,
             ).to(self.device)
 
-        # Apply percentage-based penalization (matches PixelAwareRewardWrapper logic)
-        penalization = (
-            grid_diff_percentage > self.grid_diff_epsilon
-        ).long() * penalization
+        # Compute rewards for imperfect and perfect grids
         penalization = grid_diff_percentage * penalization
+        imperfect_reward = (improvement - 1) + penalization
+        perfect_reward = submission
 
-        # The minus one is to avoid the reward to be positive (maximum reward is 0)
-        # improvement is P(correct) in [0,1], grid_diff_percentage is in [0,1]
-        # Use epsilon threshold for "perfect" grid check
-        is_perfect = (grid_diff_percentage <= self.grid_diff_epsilon).long()
-        has_errors = (grid_diff_percentage > self.grid_diff_epsilon).long()
-
-        reward = (improvement - 1) * has_errors + penalization + is_perfect * submission
+        if self.smooth_transition:
+            # Smooth sigmoid transition between imperfect and perfect rewards
+            # Higher steepness → sharper transition (closer to hard threshold)
+            smooth_is_perfect = torch.sigmoid(
+                -self.transition_steepness
+                * (grid_diff_percentage - self.grid_diff_epsilon)
+            )
+            reward = (
+                smooth_is_perfect * perfect_reward
+                + (1 - smooth_is_perfect) * imperfect_reward
+            )
+        else:
+            # Original hard threshold
+            is_perfect = (grid_diff_percentage <= self.grid_diff_epsilon).long()
+            has_errors = (grid_diff_percentage > self.grid_diff_epsilon).long()
+            reward = (
+                (improvement - 1) * has_errors + penalization + is_perfect * submission
+            )
 
         if self.apply_clamp:
             return torch.clamp(reward, min=self.v_min, max=self.v_max)

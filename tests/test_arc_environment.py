@@ -744,10 +744,19 @@ def test_reward_world_model_wrapper_caching():
     batch_size = 2
 
     env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values)
+    env2 = PixelAwareRewardWrapper(
+        env,
+        max_penalty=1.0,
+        n_steps=4,
+        gamma=0.95,
+        apply_clamp=False,
+        v_min=None,
+        v_max=None,
+    )
     model = RewardWorldModel(grid_size=grid_size, color_values=color_values)
 
     wrapped_env = RewardWorldModelWrapper(
-        env=env,
+        env=env2,
         model=model,
         step_horizon=10,
         n_steps=1,
