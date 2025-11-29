@@ -31,154 +31,22 @@ from torchrl.data.replay_buffers import (
 from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer, ComposeTransforms
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import (
-    ArcBatchGridEnv,
     ArcEnvRunningMode,
 )
-from rlarcworld.environments.reward_processor import RewardProcessor
-from rlarcworld.environments.stepper import EnvStepper
-from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
+from rlarcworld.environments.steppers.arc_stepper import ArcStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
-from rlarcworld.utils.augmentation import ArcAugmentationTransformer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     resolve_load_path,
     resolve_save_path,
 )
-from rlarcworld.utils.device import CudaConfig, enable_cuda
+from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
-
-
-class ArcStepper:
-    """ArcStepper class to handle environment stepping and episode simulation."""
-
-    def __init__(
-        self,
-        max_steps_per_epoch: int,
-        dataset_path: str,
-        grid_size: int,
-        color_values: int,
-        env_mode: ArcEnvRunningMode,
-        device: str,
-        actor: ArcActorNetwork,
-        config: CudaConfig,
-    ) -> None:
-        """Creates a stepper for the environment and dataset.
-
-        Args:
-            max_steps_per_epoch (int): Maximum steps per epoch.
-            dataset_path (str): Path to the dataset.
-            grid_size (int): Size of the ARC grid.
-            color_values (int): Number of possible colors.
-            env_mode (ArcEnvRunningMode): Environment running mode.
-            device (str): Device to use.
-            actor (ArcActorNetwork): Actor network.
-            config (dict): Configuration dictionary.
-        """
-        # Initialize dataset and environment
-        logger.info("Setting up dataset and environment...")
-        self.env_mode = env_mode
-
-        # Create augmentation transformer
-        augmentation = ArcAugmentationTransformer(
-            augmentations=["rotate", "reflect", "permute_colors"],
-            max_examples=None,
-            color_permutation_range=(1, 12),
-            augmentation_probability=0.5,  # Apply augmentations 50% of the time
-            shuffle_probability=0.5,  # Shuffle examples 50% of the time
-        )
-
-        # IMPORTANT: ArcSampleTransformer must come FIRST to convert lists to tensors
-        # and apply the padding and zero-based correction.
-        # Then augmentation can operate on the tensor data.
-        transform = ComposeTransforms(
-            [
-                ArcSampleTransformer(
-                    output_size=(grid_size, grid_size),
-                    examples_stack_dim=10,
-                    padding_constant_value=-1,
-                    zero_based_correction=1,
-                ),
-                augmentation,
-            ]
-        )
-        self.dataset: ArcDataset = ArcDataset(
-            dataset_path, keep_in_memory=False, transform=transform
-        )
-
-        base_env = ArcBatchGridEnv(
-            grid_size=grid_size,
-            color_values=color_values,
-            device=device,
-        )
-        # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
-        self.environment = PixelAwareRewardWrapper(
-            base_env,
-            max_penalty=1.0,
-            n_steps=base_env.n_steps,
-            gamma=base_env.gamma,
-            apply_clamp=False,
-        )
-
-        # Ensure rewards are structured for the critic heads via on_step processor
-        reward_on_step = RewardProcessor(
-            n_steps=self.environment.n_steps, device=device
-        ).get_on_step_rewards()
-
-        self.stepper = EnvStepper(
-            actor=actor,
-            device=device,
-            env=self.environment,
-            sampler=iter(self.dataset),
-            max_steps=max_steps_per_epoch,
-            env_sample_reset=self.reset_env,
-            amp_enabled=config.get("amp_enabled", True),
-            on_step=reward_on_step,
-        )
-
-    def reset_env(self, env, sample, **kwargs):
-        """Reset the environment with a sample from the dataset.
-
-        Args:
-            env: The environment to reset.
-            sample: The sample from the dataset.
-            **kwargs: Additional keyword arguments.
-        """
-        options: dict = kwargs.setdefault("options", {"mode": self.env_mode.value})
-        running_mode = options.setdefault("mode", self.env_mode.value)
-        if running_mode != self.env_mode.value:
-            raise ValueError(f"Unsupported running mode: {running_mode}")
-
-        # Accept single-sample outputs from dataset and add batch dim if needed
-        task = sample["task"]
-        examples = sample["examples"]
-        # Ensure 'input' and 'output' have shape (B, H, W)
-        inp = task["input"]
-        if inp.ndim == 2:
-            inp = inp.unsqueeze(0)
-        batched_task = {"input": inp}
-
-        if running_mode == ArcEnvRunningMode.TRAIN.value:
-            out = task["output"]
-            if out.ndim == 2:
-                out = out.unsqueeze(0)
-            batched_task["output"] = out
-
-        # Ensure examples have shape (B, E, 2, H, W)
-        if examples.ndim == 4:
-            examples = examples.unsqueeze(0)
-        args = {"batch": batched_task, "examples": examples}
-        kwargs["options"].update(args)
-        env.reset(**kwargs)
-
-    def create_step_stream_from_samples(self, **kwargs):
-        """Create a step stream from samples."""
-        return self.stepper.create_step_stream_from_samples(**kwargs)
 
 
 class ArcD4PG:
@@ -350,9 +218,9 @@ class ArcD4PG:
             grid_size=grid_size,
             color_values=color_values,
             env_mode=ArcEnvRunningMode.TRAIN,
-            device=self.device,
             actor=self.actor,
             config=self.config,
+            n_steps=n_steps,
         )
         logger.info("Training stepper created successfully")
 
@@ -364,7 +232,6 @@ class ArcD4PG:
             grid_size=grid_size,
             color_values=color_values,
             env_mode=ArcEnvRunningMode.TRAIN,
-            device=self.device,
             actor=self.actor,
             config=self.config,
         )
@@ -685,7 +552,7 @@ class ArcD4PG:
             hasattr(self, "trainer")
             and hasattr(self, "training_stepper")
             and hasattr(self.training_stepper, "environment")
-            and hasattr(self.training_stepper, "stepper")
+            and hasattr(self.training_stepper, "core")
         ):
             raise ValueError(
                 "Experiment must have environment, trainer, and stepper to checkpoint"
@@ -698,7 +565,7 @@ class ArcD4PG:
         )
         trainer_ckpt = self.trainer.checkpoint() if include_trainer else None
         stepper_ckpt = (
-            self.training_stepper.stepper.checkpoint() if include_stepper else None
+            self.training_stepper.core.checkpoint() if include_stepper else None
         )
 
         # RNG states
@@ -854,7 +721,7 @@ class ArcD4PG:
         # Restore stepper progress (does not restore sampler)
         stepper_state = checkpoint.get("stepper")
         if stepper_state is not None and hasattr(self, "training_stepper"):
-            self.training_stepper.stepper.load(stepper_state)
+            self.training_stepper.core.load(stepper_state)
             restored_stepper = True
 
         # Restore RNGs

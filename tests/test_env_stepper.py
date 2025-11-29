@@ -4,9 +4,10 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.agent.actor import ArcActorNetwork
+from rlarcworld.common.enums import ArcEnvRunningMode
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.environments.reward_processor import RewardProcessor
-from rlarcworld.environments.stepper import EnvStepper
+from rlarcworld.environments.steppers.arc_stepper import ArcStepper
+from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.utils.logging_utils import configure_logger
 
@@ -113,7 +114,23 @@ def test_env_stepper_one_step_with_on_step(device):
         env.reset(options={**sample, "mode": "train"}, seed=seed)
 
     # Use on_step callback to process rewards
-    on_step = RewardProcessor(n_steps=1, device=device, v_min_n_step=0, v_max_n_step=1)
+    def process_rewards(
+        env, state, action_probs, reward, observation, terminated, truncated, info
+    ):
+        reward = TensorDict(
+            {"pixel_wise": reward, "binary": env.get_source_env_reward()}
+        )
+        return (
+            env,
+            state,
+            action_probs,
+            reward,
+            observation,
+            terminated,
+            truncated,
+            info,
+        )
+
     stepper = EnvStepper(
         actor=actor,
         device=device,
@@ -121,7 +138,7 @@ def test_env_stepper_one_step_with_on_step(device):
         sampler=simple_sampler(),
         env_sample_reset=env_reset_fn,
         amp_enabled=False,
-        on_step=on_step.get_on_step_rewards(),
+        on_step=process_rewards,
     )
 
     # Reset env with a trivial batch to satisfy interface
@@ -174,16 +191,17 @@ def test_env_stepper_multiple_steps_with_on_step(device):
     def env_reset_fn(env, sample, seed=None):
         env.reset(options={**sample, "mode": "train"}, seed=seed)
 
-    on_step = RewardProcessor(n_steps=3, device=device, v_min_n_step=0, v_max_n_step=1)
-    stepper = EnvStepper(
+    stepper = ArcStepper(
+        max_steps_per_epoch=2,
+        dataset_path="tests/test_data/",
+        grid_size=grid_size,
+        color_values=color_values,
+        env_mode=ArcEnvRunningMode.TRAIN,
         actor=actor,
-        device=device,
-        env=env,
-        sampler=simple_sampler(),
-        env_sample_reset=env_reset_fn,
-        max_steps=3,
-        amp_enabled=False,
-        on_step=on_step.get_on_step_rewards(),
+        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
+        n_steps=2,
+        v_min_n_step=0,
+        v_max_n_step=1,
     )
 
     # Reset env
@@ -201,7 +219,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
     # Take multiple steps
     steps = []
     for _ in range(3):
-        step = stepper.step(env)
+        step = stepper.core.step(env)
         steps.append(step)
         # Check if we should break early
         if step["terminated"].item() or step["truncated"].item():
@@ -258,7 +276,23 @@ def test_env_stepper_episode_stream(device):
     def env_reset_fn(env, sample, seed=None):
         env.reset(options={**sample, "mode": "train"}, seed=seed)
 
-    on_step = RewardProcessor(n_steps=2, device=device, v_min_n_step=0, v_max_n_step=1)
+    def on_step(
+        env, state, action_probs, reward, observation, terminated, truncated, info
+    ):
+        reward = TensorDict(
+            {"pixel_wise": reward, "binary": env.get_source_env_reward()}
+        )
+        return (
+            env,
+            state,
+            action_probs,
+            reward,
+            observation,
+            terminated,
+            truncated,
+            info,
+        )
+
     stepper = EnvStepper(
         actor=actor,
         device=device,
@@ -267,7 +301,7 @@ def test_env_stepper_episode_stream(device):
         env_sample_reset=env_reset_fn,
         max_steps=3,
         amp_enabled=False,
-        on_step=on_step.get_on_step_rewards(),
+        on_step=on_step,
     )
 
     # Reset env
@@ -312,11 +346,6 @@ def test_env_stepper_episode_stream(device):
 def test_env_stepper_step_stream_from_samples(device):
     """Test the step stream from samples functionality."""
     grid_size, color_values = 8, 5
-    # Wrap env with n_steps=2 to exercise n-step paths in stream
-    env = PixelAwareRewardWrapper(
-        ArcBatchGridEnv(grid_size, color_values, n_steps=2, device=device),
-        n_steps=2,
-    )
 
     actor = ArcActorNetwork(
         grid_size=grid_size,
@@ -325,30 +354,17 @@ def test_env_stepper_step_stream_from_samples(device):
     )
     actor.eval()
 
-    # Create a sampler that yields multiple samples
-    def multi_sampler():
-        for _ in range(2):  # Two episodes
-            batch_in = torch.randint(0, color_values, (1, grid_size, grid_size))
-            batch_out = torch.randint(0, color_values, (1, grid_size, grid_size))
-            examples = torch.randint(0, color_values, (1, 4, 2, grid_size, grid_size))
-            yield {
-                "batch": {"input": batch_in, "output": batch_out},
-                "examples": examples,
-            }
-
-    def env_reset_fn(env, sample, seed=None):
-        env.reset(options={**sample, "mode": "train"}, seed=seed)
-
-    on_step = RewardProcessor(n_steps=2, device=device, v_min_n_step=0, v_max_n_step=1)
-    stepper = EnvStepper(
+    stepper = ArcStepper(
+        max_steps_per_epoch=2,
+        dataset_path="tests/test_data/",
+        grid_size=grid_size,
+        color_values=color_values,
+        env_mode=ArcEnvRunningMode.TRAIN,
         actor=actor,
-        device=device,
-        env=env,
-        sampler=multi_sampler(),
-        env_sample_reset=env_reset_fn,
-        max_steps=2,
-        amp_enabled=False,
-        on_step=on_step.get_on_step_rewards(),
+        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
+        n_steps=2,
+        v_min_n_step=0,
+        v_max_n_step=1,
     )
 
     # Create step stream from samples and collect steps

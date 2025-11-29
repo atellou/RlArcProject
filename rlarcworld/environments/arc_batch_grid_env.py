@@ -1,7 +1,6 @@
 """ARC batched grid environment and action spaces."""
 
 import logging
-from enum import StrEnum
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -10,7 +9,7 @@ import numpy as np
 import torch
 from tensordict import TensorDict
 
-from rlarcworld.common.enums import ActionKeys, StateKeys
+from rlarcworld.common.enums import ActionKeys, ArcEnvRunningMode, StateKeys
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     assert_expected_class,
@@ -21,17 +20,6 @@ from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
-
-
-class ArcEnvRunningMode(StrEnum):
-    """Running mode for the ARC environment."""
-
-    TRAIN = "train"
-    INFERENCE = "inference"
-
-    def is_train(self) -> bool:
-        """Check if the current running mode is training."""
-        return self == self.TRAIN
 
 
 class ArcActionSpace:

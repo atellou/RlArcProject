@@ -33,3 +33,14 @@ class RewardKeys(StrEnum):
     PIXEL_WISE = "pixel_wise"
     BINARY = "binary"
     N_REWARD = "n_reward"
+
+
+class ArcEnvRunningMode(StrEnum):
+    """Running mode for the ARC environment."""
+
+    TRAIN = "train"
+    INFERENCE = "inference"
+
+    def is_train(self) -> bool:
+        """Check if the current running mode is training."""
+        return self == self.TRAIN
