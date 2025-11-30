@@ -13,13 +13,13 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
-from rlarcworld.agent.nn_modules import (
+from rlarcworld.common.enums import StateKeys
+from rlarcworld.common.types import STATE_REQUIRED_KEYS, RewardKeys
+from rlarcworld.nn_modules import (
     CnnAttention,
     CnnPreTrainedModule,
     CrossAttentionClassifier,
 )
-from rlarcworld.common.enums import StateKeys
-from rlarcworld.common.types import STATE_REQUIRED_KEYS, RewardKeys
 from rlarcworld.utils.device import enable_cuda
 
 logger = logging.getLogger(__name__)

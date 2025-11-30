@@ -8,9 +8,9 @@ from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
 )
 
-from rlarcworld.agent.actor import ArcActorNetwork
-from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
+from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.runners.core import OnStepContext, Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 

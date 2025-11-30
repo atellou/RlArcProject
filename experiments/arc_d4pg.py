@@ -28,8 +28,6 @@ from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
 )
 
-from rlarcworld.agent.actor import ArcActorNetwork
-from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import (
@@ -37,6 +35,8 @@ from rlarcworld.environments.arc_batch_grid_env import (
 )
 from rlarcworld.environments.steppers.arc_stepper import ArcStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
+from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,

@@ -3,12 +3,12 @@ import os
 import torch
 from tensordict import TensorDict
 
-from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.common.enums import ArcEnvRunningMode
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.arc_stepper import ArcStepper
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
+from rlarcworld.models.actor import ArcActorNetwork
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)

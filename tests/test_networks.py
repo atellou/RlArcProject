@@ -5,19 +5,19 @@ import torch
 import torch.nn.functional as F
 from tensordict import TensorDict
 
-from rlarcworld.agent.actor import ArcActorNetwork
-from rlarcworld.agent.critic import ArcCriticNetwork
-from rlarcworld.agent.nn_modules import (
-    CnnAttention,
-    CnnPreTrainedModule,
-    CrossAttentionClassifier,
-    MultiHeadAttention,
-)
-from rlarcworld.agent.reward_world_model import RewardWorldModel
 from rlarcworld.common.enums import (
     ActionKeys,
     RewardKeys,
     StateKeys,
+)
+from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.models.reward_world_model import RewardWorldModel
+from rlarcworld.nn_modules import (
+    CnnAttention,
+    CnnPreTrainedModule,
+    CrossAttentionClassifier,
+    MultiHeadAttention,
 )
 
 logger = logging.getLogger(__name__)
