@@ -75,12 +75,12 @@ def enable_cuda(
 class AmpScaler:
     """Small wrapper that makes AMP usage optional and ergonomic.
 
-    Can be used as a context manager to enter autocast, and exposes scaler helpers
+    Can be used as a ctx manager to enter autocast, and exposes scaler helpers
     for training when AMP is enabled. If AMP is disabled, all methods are no-ops.
     """
 
     def __init__(self, amp_enabled: bool, device: str | torch.device) -> None:
-        """Initialize AMP scaler and autocast context if enabled.
+        """Initialize AMP scaler and autocast ctx if enabled.
 
         Args:
             amp_enabled: Whether AMP should be enabled.
@@ -98,13 +98,13 @@ class AmpScaler:
             self._cm = None
 
     def __enter__(self):
-        """Enter autocast context if AMP is enabled."""
+        """Enter autocast ctx if AMP is enabled."""
         if self._cm is not None:
             return self._cm.__enter__()
         return None
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit autocast context if AMP is enabled."""
+        """Exit autocast ctx if AMP is enabled."""
         if self._cm is not None:
             return self._cm.__exit__(exc_type, exc_val, exc_tb)
         return False

@@ -96,10 +96,10 @@ class TensorBoardWriterManager:
 
     # -------------------- Internal helpers --------------------
     def _log_minimal_metrics(self, ctx: OnStepContext, *, phase: str) -> None:
-        """Log cheap, robust metrics that rely only on context/core public API.
+        """Log cheap, robust metrics that rely only on ctx/core public API.
 
         Args:
-            ctx: Training step context.
+            ctx: Training step ctx.
             phase: Phase of the training step.
         """
         step = int(getattr(ctx, "iteration", 0))

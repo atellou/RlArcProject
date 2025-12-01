@@ -89,7 +89,7 @@ class EnvStepper:
         self.amp_enabled = amp_enabled
         self.on_step = on_step
         self.loaded_checkpoint = False
-        # Shared AMP context manager (no-op on CPU or when disabled)
+        # Shared AMP ctx manager (no-op on CPU or when disabled)
         self.amp_cm = AmpScaler(amp_enabled=self.amp_enabled, device=self.device)
         # Progress tracking for checkpointing
         self._samples_processed: int = 0
@@ -114,7 +114,7 @@ class EnvStepper:
             if state is None:
                 state = env.get_state(unsqueeze=1).to(self.device)
 
-            # Get action from actor (AMP context is a no-op if disabled/CPU)
+            # Get action from actor (AMP ctx is a no-op if disabled/CPU)
             # Force eval mode temporarily to avoid BatchNorm errors with small batches
             prev_training = self.actor.training
             try:

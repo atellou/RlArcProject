@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class OnStepContext:
-    """Context object containing all information about a training step."""
+    """ctx object containing all information about a training step."""
 
     def __init__(
         self,
@@ -34,7 +34,7 @@ class OnStepContext:
         core: ActorCriticCoreProto,
         hyperparameters: dict,
     ):
-        """Initialize step context.
+        """Initialize step ctx.
 
         Args:
             epoch: Current epoch number
@@ -335,8 +335,8 @@ class Trainer:
                     else:
                         loss_actor, loss_critic, td_error = None, None, None
 
-                    # Create step context
-                    context = OnStepContext(
+                    # Create step ctx
+                    ctx = OnStepContext(
                         epoch=epoch,
                         step_idx=step_idx,
                         iteration=iteration,
@@ -357,7 +357,7 @@ class Trainer:
                         if info is None:
                             raise ValueError("info is None")
                         self.replay_buffer_update_priority(
-                            context, info, self.replay_buffer
+                            ctx, info, self.replay_buffer
                         )
 
                     # Call step callback
@@ -369,7 +369,7 @@ class Trainer:
                                     callback_name,
                                 )
                             )
-                            callback_step(context)
+                            callback_step(ctx)
 
                     if (
                         self.validation_step_stream_factory is not None
@@ -387,7 +387,7 @@ class Trainer:
             # persist iteration counter
             self._iteration = iteration
         except Exception as e:
-            context = OnStepContext(
+            ctx = OnStepContext(
                 epoch=epoch,
                 step_idx=step_idx,
                 iteration=iteration,
@@ -409,7 +409,7 @@ class Trainer:
                             callback_name,
                         )
                     )
-                    callback_exception(e, context)
+                    callback_exception(e, ctx)
             raise e
         finally:
             # Restore previous modes if altered

@@ -386,7 +386,7 @@ class ArcWorldModelStepper:
 
     # ==================== Callback Integration ====================
 
-    def training_callback(self, context: OnStepContext):
+    def training_callback(self, ctx: OnStepContext):
         """Callback for integration with Trainer.
 
         This callback:
@@ -394,35 +394,35 @@ class ArcWorldModelStepper:
         2. Runs imagination rollouts for policy training every imagination_frequency
 
         Args:
-            context: OnStepContext containing training information
+            ctx: OnStepContext containing training information
         """
-        if context.batch is None:
+        if ctx.batch is None:
             return
 
         # 1. Update world model with true rewards
-        if context.iteration % self.model_update_frequency == 0:
+        if ctx.iteration % self.model_update_frequency == 0:
             loss_dict = self.update_model(
-                state=context.batch["state"],
-                true_reward=context.batch["reward"],
+                state=ctx.batch["state"],
+                true_reward=ctx.batch["reward"],
             )
             logger.debug(
-                f"World model updated. Iteration {context.iteration}, loss: {loss_dict}"
+                f"World model updated. Iteration {ctx.iteration}, loss: {loss_dict}"
             )
 
         # 2. Run imagination rollouts
-        if context.iteration % self.imagination_frequency == 0:
+        if ctx.iteration % self.imagination_frequency == 0:
             for _ in range(self.imagination_ratio):
-                starting_state = context.batch["state"]
+                starting_state = ctx.batch["state"]
 
                 # Run imagination and train
                 self._imagine_and_train(
-                    core=context.core,
+                    core=ctx.core,
                     sample=starting_state,
                     training=True,
                 )
 
             logger.debug(
-                f"Imagination rollouts at iteration {context.iteration}, "
+                f"Imagination rollouts at iteration {ctx.iteration}, "
                 f"total imaginations: {self._imagination_count}"
             )
 

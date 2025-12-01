@@ -396,22 +396,22 @@ class ArcD4PG:
 
     def _replay_buffer_update_priority(
         self,
-        context: OnStepContext,
+        ctx: OnStepContext,
         info: dict[str, torch.Tensor],
         replay_buffer: ReplayBufferProto,
     ) -> None:
         """Update replay buffer priority.
 
         Args:
-            context: Training context with batch and TD-error
+            ctx: Training ctx with batch and TD-error
             info: Metadata from replay buffer sample containing indices
             replay_buffer: The replay buffer to update
         """
         # These checks should not be needed since caller validates, but kept for safety
-        if context.td_error is None or info is None:
+        if ctx.td_error is None or info is None:
             raise ValueError("Skipping priority update: missing td_error or info")
 
-        td_error = context.td_error
+        td_error = ctx.td_error
 
         # Check if info has index metadata (required for update_tensordict_priority)
         if "index" not in info.keys():
@@ -457,18 +457,18 @@ class ArcD4PG:
 
         return callbacks
 
-    def _log_step(self, context: OnStepContext):
+    def _log_step(self, ctx: OnStepContext):
         """Log training step information.
 
         Args:
-            context: Step context containing training information
+            ctx: Step ctx containing training information
         """
-        if context.iteration % 100 == 0 and context.loss_actor is not None:
+        if ctx.iteration % 100 == 0 and ctx.loss_actor is not None:
             msg = (
-                f"Epoch {context.epoch}, Step {context.step_idx}, "
-                f"Iteration {context.iteration}: "
-                f"Actor Loss: {context.loss_actor:.4f}, "
-                f"Critic Loss: {context.loss_critic:.4f}"
+                f"Epoch {ctx.epoch}, Step {ctx.step_idx}, "
+                f"Iteration {ctx.iteration}: "
+                f"Actor Loss: {ctx.loss_actor:.4f}, "
+                f"Critic Loss: {ctx.loss_critic:.4f}"
             )
             # Add world model metrics if enabled
             if isinstance(self.world_model_stepper, ArcWorldModelStepper):
@@ -479,25 +479,22 @@ class ArcD4PG:
                 msg += f", Imaginations: {self.world_model_stepper.imagination_count}"
             logger.info(msg)
 
-    def _periodic_checkpoint(self, context: OnStepContext):
+    def _periodic_checkpoint(self, ctx: OnStepContext):
         """Periodic lightweight checkpoint: core + trainer + config + provenance.
 
         This runs frequently (every self.periodic_ckpt_interval steps) and avoids
         saving large components such as environment, stepper and replay buffer.
 
         Args:
-            context: Step context containing training information
+            ctx: Step ctx containing training information
         """
         if self.periodic_ckpt_interval <= 0:
             return
-        if (
-            context.iteration <= 0
-            or context.iteration % self.periodic_ckpt_interval != 0
-        ):
+        if ctx.iteration <= 0 or ctx.iteration % self.periodic_ckpt_interval != 0:
             return
         fname = os.path.join(
             self.experiment_path,
-            "checkpoints/periodic/d4pg_cp-per_i_{:06d}.pth".format(context.iteration),
+            "checkpoints/periodic/d4pg_cp-per_i_{:06d}.pth".format(ctx.iteration),
         )
         # Save minimal components for fast, small checkpoint files
         self.save_checkpoint(
@@ -512,32 +509,32 @@ class ArcD4PG:
             save_replay_buffer=False,
         )
 
-    def _improvement_checkpoint(self, context: OnStepContext):
+    def _improvement_checkpoint(self, ctx: OnStepContext):
         """Save core-only checkpoint when losses improve.
 
         Lower losses are better. We checkpoint the core networks and optimizers
         only, to capture the best model so far with minimal size.
 
         Args:
-            context: Step context containing training information
+            ctx: Step ctx containing training information
         """
-        if context.loss_actor is None or context.loss_critic is None:
+        if ctx.loss_actor is None or ctx.loss_critic is None:
             return
         improved = False
-        if context.loss_actor.item() < self.best_loss_actor:
-            self.best_loss_actor = context.loss_actor.item()
+        if ctx.loss_actor.item() < self.best_loss_actor:
+            self.best_loss_actor = ctx.loss_actor.item()
             improved = True
-        if context.loss_critic.item() < self.best_loss_critic:
-            self.best_loss_critic = context.loss_critic.item()
+        if ctx.loss_critic.item() < self.best_loss_critic:
+            self.best_loss_critic = ctx.loss_critic.item()
             improved = True
         if not improved:
             return
         fname = os.path.join(
             self.experiment_path,
             "checkpoints/best/d4pg_cp-best_i_{:06d}-la_{:.4f}-lc_{:.4f}.pth".format(
-                int(context.iteration),
-                context.loss_actor.item(),
-                context.loss_critic.item(),
+                int(ctx.iteration),
+                ctx.loss_actor.item(),
+                ctx.loss_critic.item(),
             ),
         )
         # Core-only save for best improvements
