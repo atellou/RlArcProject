@@ -9,13 +9,13 @@ from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
 )
 
-from rlarcworld.agent.actor import ArcActorNetwork
-from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
+from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.runners.core import Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 

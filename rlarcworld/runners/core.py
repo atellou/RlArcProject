@@ -8,45 +8,19 @@ validation, and checkpointing.
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
-from typing import Any, Protocol, Tuple
+from typing import Tuple
 
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.common.protocols import ActorCriticCoreProto, ReplayBufferProto
 from rlarcworld.utils.checkpointing import add_schema_and_class
 
 logger = logging.getLogger(__name__)
 
 
-class CoreProto(Protocol):
-    """Minimal protocol a learning core must implement to work with the trainer."""
-
-    actor: torch.nn.Module
-    critic: torch.nn.Module
-
-    def compute_loss(
-        self,
-        batch: TensorDict,
-        *,
-        training: bool = True,
-    ) -> tuple[torch.Tensor, torch.Tensor, TensorDict]:
-        """Compute the loss for the actor and critic networks.
-
-        Returns the actor loss, critic loss, and TD error.
-        """
-        ...
-
-    def update_target_networks(self) -> None:
-        """Update the target networks."""
-        ...
-
-    def hyperparameters(self) -> dict:
-        """Returns the hyperparameters of the algorithm."""
-        ...
-
-
 class OnStepContext:
-    """Context object containing all information about a training step."""
+    """ctx object containing all information about a training step."""
 
     def __init__(
         self,
@@ -57,10 +31,10 @@ class OnStepContext:
         loss_actor: torch.Tensor | None,
         loss_critic: torch.Tensor | None,
         td_error: TensorDict | None,
-        core: CoreProto,
+        core: ActorCriticCoreProto,
         hyperparameters: dict,
     ):
-        """Initialize step context.
+        """Initialize step ctx.
 
         Args:
             epoch: Current epoch number
@@ -84,35 +58,6 @@ class OnStepContext:
         self.hyperparameters = hyperparameters
 
 
-class ReplayBufferProto(Protocol):
-    """A minimal protocol for prioritized or uniform replay buffers.
-
-    The implementing buffer may be prioritized or uniform and should expose
-    extend/sample/update_priority and an optional ``storage`` attribute.
-    """
-
-    def extend(self, batch: torch.Tensor) -> Any:
-        """Append a batch of transitions and return indices/handles."""
-        ...
-
-    def sample(self, batch_size: int, return_info: bool = False) -> TensorDict:
-        """Sample a batch of transitions as a TensorDict."""
-        ...
-
-    def update_priority(self, indices: Any, priorities: torch.Tensor) -> None:
-        """Update sampling priorities for the given indices."""
-        ...
-
-    @property
-    def storage(self) -> Any:  # noqa: D401 - property described in class doc
-        """Underlying storage implementation (buffer-specific)."""
-        ...
-
-    def __len__(self) -> int:
-        """Return the number of transitions in the buffer."""
-        ...
-
-
 class Trainer:
     """Decoupled trainer/wrapper for CoreProto                      .
 
@@ -131,7 +76,7 @@ class Trainer:
     def __init__(
         self,
         *,
-        core: CoreProto,
+        core: ActorCriticCoreProto,
         batch_size: int,
         min_train_batch_size: int = 2,
         train_step_stream_factory: Callable[[], Iterator[tuple[bool, int, TensorDict]]],
@@ -390,8 +335,8 @@ class Trainer:
                     else:
                         loss_actor, loss_critic, td_error = None, None, None
 
-                    # Create step context
-                    context = OnStepContext(
+                    # Create step ctx
+                    ctx = OnStepContext(
                         epoch=epoch,
                         step_idx=step_idx,
                         iteration=iteration,
@@ -412,7 +357,7 @@ class Trainer:
                         if info is None:
                             raise ValueError("info is None")
                         self.replay_buffer_update_priority(
-                            context, info, self.replay_buffer
+                            ctx, info, self.replay_buffer
                         )
 
                     # Call step callback
@@ -424,7 +369,7 @@ class Trainer:
                                     callback_name,
                                 )
                             )
-                            callback_step(context)
+                            callback_step(ctx)
 
                     if (
                         self.validation_step_stream_factory is not None
@@ -442,7 +387,7 @@ class Trainer:
             # persist iteration counter
             self._iteration = iteration
         except Exception as e:
-            context = OnStepContext(
+            ctx = OnStepContext(
                 epoch=epoch,
                 step_idx=step_idx,
                 iteration=iteration,
@@ -464,7 +409,7 @@ class Trainer:
                             callback_name,
                         )
                     )
-                    callback_exception(e, context)
+                    callback_exception(e, ctx)
             raise e
         finally:
             # Restore previous modes if altered

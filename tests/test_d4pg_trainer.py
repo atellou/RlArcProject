@@ -8,9 +8,9 @@ from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
 )
 
-from rlarcworld.agent.actor import ArcActorNetwork
-from rlarcworld.agent.critic import ArcCriticNetwork
 from rlarcworld.algorithms.d4pg import D4PGCore
+from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.runners.core import OnStepContext, Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
@@ -162,14 +162,14 @@ def test_d4pg_trainer_per_update_priority_called(
     rb = _RecordRB(base_rb)
 
     def replay_buffer_update_priority(
-        context: OnStepContext,
+        ctx: OnStepContext,
         info: dict[str, torch.Tensor],
         replay_buffer: _RecordRB,
     ) -> None:
-        if context.td_error is None or info is None:
+        if ctx.td_error is None or info is None:
             return
         # Extract first available TD-error from TensorDict
-        td_error_value = next(iter(context.td_error.values()))
+        td_error_value = next(iter(ctx.td_error.values()))
         replay_buffer.update_priority(info["index"], td_error_value)
 
     trainer = Trainer(
@@ -214,14 +214,14 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
     )
 
     def replay_buffer_update_priority(
-        context: OnStepContext,
+        ctx: OnStepContext,
         info: dict[str, torch.Tensor],
         replay_buffer: TensorDictReplayBuffer,
     ) -> None:
-        if context.td_error is None or info is None:
+        if ctx.td_error is None or info is None:
             return
         # Extract first available TD-error from TensorDict
-        td_error_value = next(iter(context.td_error.values()))
+        td_error_value = next(iter(ctx.td_error.values()))
         replay_buffer.update_priority(info["index"], td_error_value)
 
     max_steps = 10
@@ -407,14 +407,14 @@ def test_d4pg_trainer_per_warmup_and_priority(
     per_buffer = _PERBuffer()
 
     def replay_buffer_update_priority(
-        context: OnStepContext,
+        ctx: OnStepContext,
         info: dict[str, torch.Tensor],
         replay_buffer: _PERBuffer,
     ) -> None:
-        if context.td_error is None or info is None:
+        if ctx.td_error is None or info is None:
             return
         # Extract first available TD-error from TensorDict
-        td_error_value = next(iter(context.td_error.values()))
+        td_error_value = next(iter(ctx.td_error.values()))
         replay_buffer.update_priority(info["index"], td_error_value)
 
     losses_actor, losses_critic = [], []

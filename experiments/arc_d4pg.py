@@ -28,157 +28,40 @@ from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
 )
 
-from rlarcworld.agent.actor import ArcActorNetwork
-from rlarcworld.agent.critic import ArcCriticNetwork
+# Re-export config classes for convenient imports
+from experiments.configs import (  # noqa: F401
+    ArcD4PGConfig,
+    CheckpointConfig,
+    D4PGConfig,
+    DistributionalConfig,
+    EnvConfig,
+    NetworkConfig,
+    ReplayBufferConfig,
+    SystemConfig,
+    TrainingConfig,
+    WorldModelConfig,
+)
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer, ComposeTransforms
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import (
-    ArcBatchGridEnv,
     ArcEnvRunningMode,
 )
-from rlarcworld.environments.reward_processor import RewardProcessor
-from rlarcworld.environments.stepper import EnvStepper
-from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
+from rlarcworld.environments.steppers.arc_stepper import ArcStepper
+from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
+from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
-from rlarcworld.utils.augmentation import ArcAugmentationTransformer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     resolve_load_path,
     resolve_save_path,
 )
-from rlarcworld.utils.device import CudaConfig, enable_cuda
+from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
-
-
-class ArcStepper:
-    """ArcStepper class to handle environment stepping and episode simulation."""
-
-    def __init__(
-        self,
-        max_steps_per_epoch: int,
-        dataset_path: str,
-        grid_size: int,
-        color_values: int,
-        env_mode: ArcEnvRunningMode,
-        device: str,
-        actor: ArcActorNetwork,
-        config: CudaConfig,
-    ) -> None:
-        """Creates a stepper for the environment and dataset.
-
-        Args:
-            max_steps_per_epoch (int): Maximum steps per epoch.
-            dataset_path (str): Path to the dataset.
-            grid_size (int): Size of the ARC grid.
-            color_values (int): Number of possible colors.
-            env_mode (ArcEnvRunningMode): Environment running mode.
-            device (str): Device to use.
-            actor (ArcActorNetwork): Actor network.
-            config (dict): Configuration dictionary.
-        """
-        # Initialize dataset and environment
-        logger.info("Setting up dataset and environment...")
-        self.env_mode = env_mode
-
-        # Create augmentation transformer
-        augmentation = ArcAugmentationTransformer(
-            augmentations=["rotate", "reflect", "permute_colors"],
-            max_examples=None,
-            color_permutation_range=(1, 12),
-            augmentation_probability=0.5,  # Apply augmentations 50% of the time
-            shuffle_probability=0.5,  # Shuffle examples 50% of the time
-        )
-
-        # IMPORTANT: ArcSampleTransformer must come FIRST to convert lists to tensors
-        # and apply the padding and zero-based correction.
-        # Then augmentation can operate on the tensor data.
-        transform = ComposeTransforms(
-            [
-                ArcSampleTransformer(
-                    output_size=(grid_size, grid_size),
-                    examples_stack_dim=10,
-                    padding_constant_value=-1,
-                    zero_based_correction=1,
-                ),
-                augmentation,
-            ]
-        )
-        self.dataset: ArcDataset = ArcDataset(
-            dataset_path, keep_in_memory=False, transform=transform
-        )
-
-        base_env = ArcBatchGridEnv(
-            grid_size=grid_size,
-            color_values=color_values,
-            device=device,
-        )
-        # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
-        self.environment = PixelAwareRewardWrapper(
-            base_env,
-            max_penalty=1.0,
-            n_steps=base_env.n_steps,
-            gamma=base_env.gamma,
-            apply_clamp=False,
-        )
-
-        # Ensure rewards are structured for the critic heads via on_step processor
-        reward_on_step = RewardProcessor(
-            n_steps=self.environment.n_steps, device=device
-        ).get_on_step_rewards()
-
-        self.stepper = EnvStepper(
-            actor=actor,
-            device=device,
-            env=self.environment,
-            sampler=iter(self.dataset),
-            max_steps=max_steps_per_epoch,
-            env_sample_reset=self.reset_env,
-            amp_enabled=config.get("amp_enabled", True),
-            on_step=reward_on_step,
-        )
-
-    def reset_env(self, env, sample, **kwargs):
-        """Reset the environment with a sample from the dataset.
-
-        Args:
-            env: The environment to reset.
-            sample: The sample from the dataset.
-            **kwargs: Additional keyword arguments.
-        """
-        options: dict = kwargs.setdefault("options", {"mode": self.env_mode.value})
-        running_mode = options.setdefault("mode", self.env_mode.value)
-        if running_mode != self.env_mode.value:
-            raise ValueError(f"Unsupported running mode: {running_mode}")
-
-        # Accept single-sample outputs from dataset and add batch dim if needed
-        task = sample["task"]
-        examples = sample["examples"]
-        # Ensure 'input' and 'output' have shape (B, H, W)
-        inp = task["input"]
-        if inp.ndim == 2:
-            inp = inp.unsqueeze(0)
-        batched_task = {"input": inp}
-
-        if running_mode == ArcEnvRunningMode.TRAIN.value:
-            out = task["output"]
-            if out.ndim == 2:
-                out = out.unsqueeze(0)
-            batched_task["output"] = out
-
-        # Ensure examples have shape (B, E, 2, H, W)
-        if examples.ndim == 4:
-            examples = examples.unsqueeze(0)
-        args = {"batch": batched_task, "examples": examples}
-        kwargs["options"].update(args)
-        env.reset(**kwargs)
-
-    def create_step_stream_from_samples(self, **kwargs):
-        """Create a step stream from samples."""
-        return self.stepper.create_step_stream_from_samples(**kwargs)
 
 
 class ArcD4PG:
@@ -193,111 +76,48 @@ class ArcD4PG:
 
     def __init__(
         self,
-        dataset_path: str,
-        *,
-        # Environment config
-        grid_size: int = 30,
-        color_values: int = 10,
-        batch_size: int = 32,
-        # Network config
-        embedding_size: int = 128,
-        # D4PG config
-        policy_lr: float = 3e-4,
-        critic_lr: float = 3e-3,
-        gamma: float = 0.99,
-        tau: float = 0.005,
-        n_steps: int = 1,
-        # Distributional RL config
-        num_atoms: Optional[dict[str, int]] = None,
-        v_min: Optional[dict[str, int]] = None,
-        v_max: Optional[dict[str, int]] = None,
-        # Replay buffer config
-        replay_buffer_size: int = 100000,
-        alpha: float = 0.6,
-        beta: float = 0.4,
-        warmup_buffer_ratio: float = 0.2,
-        # Training config
-        max_steps_per_epoch: int = 1000,
-        validation_epochs: int = 1,
-        validation_steps_per_epoch: int = 100,
-        validation_epochs_frequency: int = 1,
-        validation_steps_frequency: int = 100,
-        # Checkpoint policies
-        periodic_ckpt_interval: int = 1000,
-        experiment_path: str | Path | None = None,
-        # System config
-        amp_enabled: bool = True,
-        device: Optional[str] = None,
-        seed: int = 42,
-        # Trainer guards
-        min_train_batch_size: int = 2,
-        # Data config
+        config: ArcD4PGConfig,
         **kwargs,
     ):
         """Initialize the ArcD4PG experiment.
 
         Args:
-            grid_size: Size of the ARC grid
-            color_values: Number of possible colors
-            batch_size: Training batch size
-            embedding_size: Neural network embedding dimension
-            policy_lr: Actor learning rate
-            critic_lr: Critic learning rate
-            gamma: Discount factor
-            tau: Soft update coefficient
-            n_steps: N-step returns
-            num_atoms: Number of atoms for distributional critic
-            v_min: Minimum values for distributional critic
-            v_max: Maximum values for distributional critic
-            replay_buffer_size: Replay buffer size
-            alpha: Prioritized replay buffer alpha
-            beta: Prioritized replay buffer beta
-            warmup_buffer_ratio: Replay buffer warmup ratio
-            max_steps_per_epoch: Maximum steps per training epoch
-            validation_epochs: Number of epochs to validate for
-            validation_steps_per_epoch: Number of steps per validation epoch
-            validation_epochs_frequency: Frequency of validation epochs
-            validation_steps_frequency: Frequency of validation steps
-            periodic_ckpt_interval: Periodic checkpoint interval
-            experiment_path: Path to experiment directory
-            amp_enabled: Enable automatic mixed precision
-            device: Device to use (auto-detected if None)
-            seed: Random seed
-            dataset_path: Path to ARC dataset
-            min_train_batch_size: Minimum batch size for training
-            **kwargs: Additional arguments passed to components
+            config: Complete experiment configuration
+            **kwargs: Additional arguments passed to D4PGCore
         """
+        # Store full config for reference
+        self.exp_config = config
+
         # Set random seed
-        torch.manual_seed(seed)
+        torch.manual_seed(config.system.seed)
 
         # Configure device and logging
-        if device is None:
-            self.config = enable_cuda(amp_enabled=amp_enabled)
+        if config.system.device is None:
+            self.cuda_config = enable_cuda(amp_enabled=config.system.amp_enabled)
         else:
-            self.config = {
-                "device": device,
-                "amp_enabled": amp_enabled,
+            self.cuda_config = {
+                "device": config.system.device,
+                "amp_enabled": config.system.amp_enabled,
                 "use_checkpointing": False,
             }
-        self.device = self.config["device"]
+        self.device = self.cuda_config["device"]
 
-        # Store configuration
-        self.grid_size = grid_size
-        self.color_values = color_values
-        self.batch_size = batch_size
-        self.max_steps_per_epoch = max_steps_per_epoch
-        self.validation_steps_per_epoch = validation_steps_per_epoch
-        self.min_train_batch_size = int(min_train_batch_size)
+        # Store commonly accessed values for convenience
+        self.grid_size = config.env.grid_size
+        self.color_values = config.env.color_values
+        self.batch_size = config.env.batch_size
+        self.max_steps_per_epoch = config.training.max_steps_per_epoch
+        self.validation_steps_per_epoch = config.training.validation_steps_per_epoch
+        self.min_train_batch_size = config.training.min_train_batch_size
 
         # Validation policies
-        self.validation_epochs = validation_epochs
-        self.validation_steps_per_epoch = validation_steps_per_epoch
-        self.validation_epochs_frequency = validation_epochs_frequency
-        self.validation_steps_frequency = validation_steps_frequency
+        self.validation_epochs = config.training.validation_epochs
+        self.validation_epochs_frequency = config.training.validation_epochs_frequency
+        self.validation_steps_frequency = config.training.validation_steps_frequency
 
         # Checkpoint policies
-        self.periodic_ckpt_interval = periodic_ckpt_interval
-        if experiment_path is None:
+        self.periodic_ckpt_interval = config.checkpoint.periodic_interval
+        if config.checkpoint.experiment_path is None:
             self.experiment_path = Path(
                 "./experiments/{}-{}/".format(
                     self.__class__.__name__,
@@ -305,40 +125,32 @@ class ArcD4PG:
                 )
             )
         else:
-            self.experiment_path = Path(experiment_path)
+            self.experiment_path = Path(config.checkpoint.experiment_path)
 
         logger.info(
             "Experiment outputs will be written to: %s", self.experiment_path.resolve()
         )
 
-        # Default distributional RL parameters
-        if num_atoms is None:
-            num_atoms = {"pixel_wise": 51, "binary": 51}
-        if v_min is None:
-            v_min = {"pixel_wise": -10, "binary": -1}
-        if v_max is None:
-            v_max = {"pixel_wise": 10, "binary": 1}
-
         # Initialize networks
         logger.info("Initializing actor and critic networks...")
         logger.info("Creating actor network...")
         self.actor = ArcActorNetwork(
-            grid_size=grid_size,
-            color_values=color_values,
-            embedding_size=embedding_size,
-            config=self.config,
+            grid_size=config.env.grid_size,
+            color_values=config.env.color_values,
+            embedding_size=config.network.embedding_size,
+            config=self.cuda_config,
         )
         logger.info("Actor network created successfully")
 
         logger.info("Creating critic network...")
         self.critic = ArcCriticNetwork(
-            grid_size=grid_size,
-            color_values=color_values,
-            num_atoms=num_atoms,
-            v_min=v_min,
-            v_max=v_max,
-            embedding_size=embedding_size,
-            config=self.config,
+            grid_size=config.env.grid_size,
+            color_values=config.env.color_values,
+            num_atoms=config.distributional.num_atoms,
+            v_min=config.distributional.v_min,
+            v_max=config.distributional.v_max,
+            embedding_size=config.network.embedding_size,
+            config=self.cuda_config,
         )
         logger.info("Critic network created successfully")
 
@@ -346,13 +158,13 @@ class ArcD4PG:
         logger.info("Creating training stepper...")
         self.training_stepper = ArcStepper(
             max_steps_per_epoch=self.max_steps_per_epoch,
-            dataset_path=dataset_path,
-            grid_size=grid_size,
-            color_values=color_values,
+            dataset_path=config.dataset_path,
+            grid_size=config.env.grid_size,
+            color_values=config.env.color_values,
             env_mode=ArcEnvRunningMode.TRAIN,
-            device=self.device,
             actor=self.actor,
-            config=self.config,
+            config=self.cuda_config,
+            n_steps=config.d4pg.n_steps,
         )
         logger.info("Training stepper created successfully")
 
@@ -360,37 +172,63 @@ class ArcD4PG:
         logger.info("Creating validation stepper...")
         self.validation_stepper = ArcStepper(
             max_steps_per_epoch=self.validation_steps_per_epoch,
-            dataset_path=dataset_path,
-            grid_size=grid_size,
-            color_values=color_values,
+            dataset_path=config.dataset_path,
+            grid_size=config.env.grid_size,
+            color_values=config.env.color_values,
             env_mode=ArcEnvRunningMode.TRAIN,
-            device=self.device,
             actor=self.actor,
-            config=self.config,
+            config=self.cuda_config,
         )
         logger.info("Validation stepper created successfully")
+
+        # Create world model stepper (optional Dyna-style imagination)
+        self.use_world_model = config.world_model.enabled
+        self.world_model_stepper: Optional[ArcWorldModelStepper] = None
+        if config.world_model.enabled:
+            logger.info("Creating world model stepper...")
+            reward_model = RewardWorldModel(
+                grid_size=config.env.grid_size,
+                color_values=config.env.color_values,
+                embedding_size=config.network.embedding_size,
+                config=self.cuda_config,
+            )
+            self.world_model_stepper = ArcWorldModelStepper(
+                grid_size=config.env.grid_size,
+                color_values=config.env.color_values,
+                actor=self.actor,
+                config=self.cuda_config,
+                reward_model=reward_model,
+                reward_model_lr=config.world_model.learning_rate,
+                step_horizon=config.world_model.imagination_horizon,
+                n_steps=config.d4pg.n_steps,
+                gamma=config.d4pg.gamma,
+                model_update_frequency=config.world_model.model_update_frequency,
+                imagination_ratio=config.world_model.imagination_ratio,
+                imagination_frequency=config.world_model.imagination_frequency,
+            )
+            logger.info("World model stepper created successfully")
 
         # Initialize D4PG core
         logger.info("Initializing D4PG algorithm core...")
         self.d4pg_core = D4PGCore(
             actor=self.actor,
             critic=self.critic,
-            policy_lr=policy_lr,
-            critic_lr=critic_lr,
-            gamma=gamma,
-            tau=tau,
-            n_steps=n_steps,
-            config=self.config,
-            amp_enabled=amp_enabled,
+            policy_lr=config.d4pg.policy_lr,
+            critic_lr=config.d4pg.critic_lr,
+            gamma=config.d4pg.gamma,
+            tau=config.d4pg.tau,
+            n_steps=config.d4pg.n_steps,
+            config=self.cuda_config,
+            amp_enabled=config.system.amp_enabled,
             **kwargs,
         )
 
         # Initialize trainer with callbacks
         self._setup_trainer(
-            replay_buffer_size=replay_buffer_size,
-            alpha=alpha,
-            beta=beta,
-            warmup_buffer_ratio=warmup_buffer_ratio,
+            replay_buffer_size=config.replay_buffer.size,
+            alpha=config.replay_buffer.alpha,
+            beta=config.replay_buffer.beta,
+            warmup_buffer_ratio=config.replay_buffer.warmup_ratio,
         )
 
     def _get_hparams(self):
@@ -401,6 +239,7 @@ class ArcD4PG:
             "max_steps_per_epoch": self.max_steps_per_epoch,
             "validation_steps_per_epoch": self.validation_steps_per_epoch,
             "device": self.device,
+            "use_world_model": self.use_world_model,
         }
         # trainer hyperparameters dict is nested; flatten selected
 
@@ -419,6 +258,11 @@ class ArcD4PG:
                     "entropy_coef": core_hp.get("entropy_coef", None),
                 }
             )
+
+        # Add world model hparams if enabled
+        if isinstance(self.world_model_stepper, ArcWorldModelStepper):
+            hparams["imagination_count"] = self.world_model_stepper.imagination_count
+
         return hparams
 
     def _setup_trainer(
@@ -481,22 +325,22 @@ class ArcD4PG:
 
     def _replay_buffer_update_priority(
         self,
-        context: OnStepContext,
+        ctx: OnStepContext,
         info: dict[str, torch.Tensor],
         replay_buffer: ReplayBufferProto,
     ) -> None:
         """Update replay buffer priority.
 
         Args:
-            context: Training context with batch and TD-error
+            ctx: Training ctx with batch and TD-error
             info: Metadata from replay buffer sample containing indices
             replay_buffer: The replay buffer to update
         """
         # These checks should not be needed since caller validates, but kept for safety
-        if context.td_error is None or info is None:
+        if ctx.td_error is None or info is None:
             raise ValueError("Skipping priority update: missing td_error or info")
 
-        td_error = context.td_error
+        td_error = ctx.td_error
 
         # Check if info has index metadata (required for update_tensordict_priority)
         if "index" not in info.keys():
@@ -515,8 +359,10 @@ class ArcD4PG:
                 info["index"], td_error.get(RewardKeys.PIXEL_WISE.value)
             )
 
-    def _on_train_callbacks(self) -> OrderedDict[str, Callable[[OnStepContext], None]]:
-        """Log training step information.
+    def _on_train_callbacks(
+        self,
+    ) -> OrderedDict[str, Callable[[OnStepContext], Any]]:
+        """Build training step callbacks.
 
         Returns:
             Dictionary of callbacks for training steps
@@ -525,7 +371,7 @@ class ArcD4PG:
         self.best_loss_actor: torch.Tensor = torch.tensor(float("inf"))
         self.best_loss_critic: torch.Tensor = torch.tensor(float("inf"))
 
-        return OrderedDict(
+        callbacks: OrderedDict[str, Callable[[OnStepContext], Any]] = OrderedDict(
             {
                 "core_step": self.d4pg_core.on_step,
                 "logging": self._log_step,
@@ -534,39 +380,50 @@ class ArcD4PG:
             }
         )
 
-    def _log_step(self, context: OnStepContext) -> None:
+        # Add world model callback if enabled
+        if isinstance(self.world_model_stepper, ArcWorldModelStepper):
+            callbacks["world_model"] = self.world_model_stepper.training_callback
+
+        return callbacks
+
+    def _log_step(self, ctx: OnStepContext):
         """Log training step information.
 
         Args:
-            context: Step context containing training information
+            ctx: Step ctx containing training information
         """
-        if context.iteration % 100 == 0 and context.loss_actor is not None:
-            logger.info(
-                f"Epoch {context.epoch}, Step {context.step_idx}, "
-                f"Iteration {context.iteration}: "
-                f"Actor Loss: {context.loss_actor:.4f}, "
-                f"Critic Loss: {context.loss_critic:.4f}"
+        if ctx.iteration % 100 == 0 and ctx.loss_actor is not None:
+            msg = (
+                f"Epoch {ctx.epoch}, Step {ctx.step_idx}, "
+                f"Iteration {ctx.iteration}: "
+                f"Actor Loss: {ctx.loss_actor:.4f}, "
+                f"Critic Loss: {ctx.loss_critic:.4f}"
             )
+            # Add world model metrics if enabled
+            if isinstance(self.world_model_stepper, ArcWorldModelStepper):
+                wm_losses = self.world_model_stepper.get_average_model_losses()
+                if wm_losses:
+                    wm_str = ", ".join(f"{k}: {v:.4f}" for k, v in wm_losses.items())
+                    msg += f", RWM Loss: [{wm_str}]"
+                msg += f", Imaginations: {self.world_model_stepper.imagination_count}"
+            logger.info(msg)
 
-    def _periodic_checkpoint(self, context: OnStepContext) -> None:
+    def _periodic_checkpoint(self, ctx: OnStepContext):
         """Periodic lightweight checkpoint: core + trainer + config + provenance.
 
         This runs frequently (every self.periodic_ckpt_interval steps) and avoids
         saving large components such as environment, stepper and replay buffer.
 
         Args:
-            context: Step context containing training information
+            ctx: Step ctx containing training information
         """
         if self.periodic_ckpt_interval <= 0:
             return
-        if (
-            context.iteration <= 0
-            or context.iteration % self.periodic_ckpt_interval != 0
-        ):
+        if ctx.iteration <= 0 or ctx.iteration % self.periodic_ckpt_interval != 0:
             return
         fname = os.path.join(
             self.experiment_path,
-            "checkpoints/periodic/d4pg_cp-per_i_{:06d}.pth".format(context.iteration),
+            "checkpoints/periodic/d4pg_cp-per_i_{:06d}.pth".format(ctx.iteration),
         )
         # Save minimal components for fast, small checkpoint files
         self.save_checkpoint(
@@ -581,32 +438,32 @@ class ArcD4PG:
             save_replay_buffer=False,
         )
 
-    def _improvement_checkpoint(self, context: OnStepContext) -> None:
+    def _improvement_checkpoint(self, ctx: OnStepContext):
         """Save core-only checkpoint when losses improve.
 
         Lower losses are better. We checkpoint the core networks and optimizers
         only, to capture the best model so far with minimal size.
 
         Args:
-            context: Step context containing training information
+            ctx: Step ctx containing training information
         """
-        if context.loss_actor is None or context.loss_critic is None:
+        if ctx.loss_actor is None or ctx.loss_critic is None:
             return
         improved = False
-        if context.loss_actor.item() < self.best_loss_actor:
-            self.best_loss_actor = context.loss_actor.item()
+        if ctx.loss_actor.item() < self.best_loss_actor:
+            self.best_loss_actor = ctx.loss_actor.item()
             improved = True
-        if context.loss_critic.item() < self.best_loss_critic:
-            self.best_loss_critic = context.loss_critic.item()
+        if ctx.loss_critic.item() < self.best_loss_critic:
+            self.best_loss_critic = ctx.loss_critic.item()
             improved = True
         if not improved:
             return
         fname = os.path.join(
             self.experiment_path,
             "checkpoints/best/d4pg_cp-best_i_{:06d}-la_{:.4f}-lc_{:.4f}.pth".format(
-                int(context.iteration),
-                context.loss_actor.item(),
-                context.loss_critic.item(),
+                int(ctx.iteration),
+                ctx.loss_actor.item(),
+                ctx.loss_critic.item(),
             ),
         )
         # Core-only save for best improvements
@@ -662,6 +519,7 @@ class ArcD4PG:
         include_env: bool = True,
         include_trainer: bool = True,
         include_stepper: bool = True,
+        include_world_model: bool = True,
         include_rng: bool = True,
         include_config: bool = True,
         include_provenance: bool = True,
@@ -675,6 +533,7 @@ class ArcD4PG:
             include_env: Whether to include environment checkpoint
             include_trainer: Whether to include trainer checkpoint
             include_stepper: Whether to include stepper checkpoint
+            include_world_model: Whether to include world model checkpoint
             include_rng: Whether to include RNG checkpoint
             include_config: Whether to include config checkpoint
             include_provenance: Whether to include provenance checkpoint
@@ -685,20 +544,25 @@ class ArcD4PG:
             hasattr(self, "trainer")
             and hasattr(self, "training_stepper")
             and hasattr(self.training_stepper, "environment")
-            and hasattr(self.training_stepper, "stepper")
+            and hasattr(self.training_stepper, "core")
         ):
             raise ValueError(
                 "Experiment must have environment, trainer, and stepper to checkpoint"
             )
 
-        # Core, env, trainer, stepper (conditionally included)
+        # Core, env, trainer, stepper, world_model (conditionally included)
         core_ckpt = self.d4pg_core.checkpoint() if include_core else None
         env_ckpt = (
             self.training_stepper.environment.checkpoint() if include_env else None
         )
         trainer_ckpt = self.trainer.checkpoint() if include_trainer else None
         stepper_ckpt = (
-            self.training_stepper.stepper.checkpoint() if include_stepper else None
+            self.training_stepper.core.checkpoint() if include_stepper else None
+        )
+        world_model_ckpt = (
+            self.world_model_stepper.checkpoint()
+            if include_world_model and self.world_model_stepper is not None
+            else None
         )
 
         # RNG states
@@ -732,6 +596,7 @@ class ArcD4PG:
                 "amp_enabled": getattr(self, "amp_enabled", True),
                 "seed": getattr(self, "seed", None),
                 "dataset_path": getattr(self, "dataset_path", None),
+                "use_world_model": self.use_world_model,
             }
             if include_config
             else None
@@ -790,6 +655,7 @@ class ArcD4PG:
             "env": env_ckpt,
             "trainer": trainer_ckpt,
             "stepper": stepper_ckpt,
+            "world_model": world_model_ckpt,
             "rng": rng_state,
             "config": config,
             "provenance": provenance,
@@ -830,6 +696,7 @@ class ArcD4PG:
         restored_env = False
         restored_trainer = False
         restored_stepper = False
+        restored_world_model = False
         restored_rng = False
         restored_replay = False
 
@@ -854,8 +721,14 @@ class ArcD4PG:
         # Restore stepper progress (does not restore sampler)
         stepper_state = checkpoint.get("stepper")
         if stepper_state is not None and hasattr(self, "training_stepper"):
-            self.training_stepper.stepper.load(stepper_state)
+            self.training_stepper.core.load(stepper_state)
             restored_stepper = True
+
+        # Restore world model stepper
+        world_model_state = checkpoint.get("world_model")
+        if world_model_state is not None and self.world_model_stepper is not None:
+            self.world_model_stepper.load(world_model_state)
+            restored_world_model = True
 
         # Restore RNGs
         rng = checkpoint.get("rng")
@@ -934,11 +807,12 @@ class ArcD4PG:
 
         logger.info(
             "Loaded checkpoint components — core=%s, env=%s, trainer=%s, "
-            "stepper=%s, rng=%s, replay=%s from %s",
+            "stepper=%s, world_model=%s, rng=%s, replay=%s from %s",
             restored_core,
             restored_env,
             restored_trainer,
             restored_stepper,
+            restored_world_model,
             restored_rng,
             restored_replay,
             path,

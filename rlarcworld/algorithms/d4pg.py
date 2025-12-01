@@ -398,18 +398,18 @@ class D4PGCore:
                 self.amp_scaler.step(self.actor_optimizer)
         return loss_actor, loss_critic, td_err
 
-    def on_step(self, context: OnStepContext):
+    def on_step(self, ctx: OnStepContext):
         """Callback function to handle all step-related operations.
 
         Args:
-            context: Step context containing all relevant information
+            ctx: Step ctx containing all relevant information
         """
         # Update target networks periodically
-        if context.batch is not None:
+        if ctx.batch is not None:
             return
 
         self.step_schedulers_and_decay()
-        if context.iteration % self.target_update_frequency == 0:
+        if ctx.iteration % self.target_update_frequency == 0:
             self.update_target_networks()
 
     def save_checkpoint(self, path: str | Path) -> None:

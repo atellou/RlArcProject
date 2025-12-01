@@ -11,7 +11,7 @@ import torch
 from gymnasium import Env
 from tensordict import TensorDict
 
-from rlarcworld.agent.actor import ArcActorNetwork
+from rlarcworld.models.actor import ArcActorNetwork
 from rlarcworld.utils.checkpointing import add_schema_and_class
 from rlarcworld.utils.device import AmpScaler
 
@@ -60,7 +60,7 @@ class EnvStepper:
         actor: ArcActorNetwork,
         device: str | torch.device,
         env: Env,
-        sampler: Iterator[ResetSample],
+        sampler: Iterator[ResetSample] | None = None,
         max_steps: int = -1,
         env_sample_reset: Callable[..., None] | None = None,
         amp_enabled: bool = True,
@@ -89,7 +89,7 @@ class EnvStepper:
         self.amp_enabled = amp_enabled
         self.on_step = on_step
         self.loaded_checkpoint = False
-        # Shared AMP context manager (no-op on CPU or when disabled)
+        # Shared AMP ctx manager (no-op on CPU or when disabled)
         self.amp_cm = AmpScaler(amp_enabled=self.amp_enabled, device=self.device)
         # Progress tracking for checkpointing
         self._samples_processed: int = 0
@@ -114,7 +114,7 @@ class EnvStepper:
             if state is None:
                 state = env.get_state(unsqueeze=1).to(self.device)
 
-            # Get action from actor (AMP context is a no-op if disabled/CPU)
+            # Get action from actor (AMP ctx is a no-op if disabled/CPU)
             # Force eval mode temporarily to avoid BatchNorm errors with small batches
             prev_training = self.actor.training
             try:
@@ -236,12 +236,18 @@ class EnvStepper:
             Tuples of (done, step_number, step_data) where step_data is a TensorDict
             with keys: state, reward, actions, next_state, terminated, truncated
         """
+        if self.sampler is None:
+            raise ValueError("Sampler is not initialized")
         for sample in self.sampler:
-            self._reset_env(sample, **kwargs)
-            for done, step_number, step_data in self.create_episode_stream():
-                yield done, step_number, step_data
+            yield from self.stream_on_reset(sample, **kwargs)
             # count one sample processed after finishing its episode
             self._samples_processed += 1
+
+    def stream_on_reset(self, sample, **kwargs):
+        """Stream on reset callback."""
+        self._reset_env(sample, **kwargs)
+        for done, step_number, step_data in self.create_episode_stream():
+            yield done, step_number, step_data
 
     # ---------------- Checkpoint API ----------------
     def checkpoint(self) -> dict:

@@ -85,7 +85,7 @@ def test_amp_scaler_cpu_noop():
 
     scaler = AmpScaler(amp_enabled=True, device="cpu")
 
-    # Context manager should be a no-op on CPU
+    # ctx manager should be a no-op on CPU
     with scaler as ctx:
         assert ctx is None
 
@@ -155,7 +155,7 @@ def test_amp_scaler_cuda_enabled(monkeypatch):
 
     scaler = AmpScaler(amp_enabled=True, device="cuda")
 
-    # Context manager should enter/exit
+    # ctx manager should enter/exit
     with scaler as ctx:
         assert isinstance(ctx, DummyContext)
         assert ctx.entered is True

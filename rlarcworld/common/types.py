@@ -17,7 +17,7 @@ class StateDict(TypedDict):
     """
 
     # Core state tensors
-    # Shapes are context-dependent; enforced at runtime by validators.
+    # Shapes are ctx-dependent; enforced at runtime by validators.
     # Using torch.Tensor type for generality.
     last_grid: torch.Tensor  # StateKeys.LAST_GRID
     grid: torch.Tensor  # StateKeys.GRID
