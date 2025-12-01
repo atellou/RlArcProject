@@ -46,7 +46,7 @@ from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import (
     ArcEnvRunningMode,
 )
-from rlarcworld.environments.steppers.arc_stepper import ArcStepper
+from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ArcActorNetwork
@@ -156,7 +156,7 @@ class ArcD4PG:
 
         # Create training stepper
         logger.info("Creating training stepper...")
-        self.training_stepper = ArcStepper(
+        self.training_stepper = PixelWiseArcStepper(
             max_steps_per_epoch=self.max_steps_per_epoch,
             dataset_path=config.dataset_path,
             grid_size=config.env.grid_size,
@@ -164,13 +164,13 @@ class ArcD4PG:
             env_mode=ArcEnvRunningMode.TRAIN,
             actor=self.actor,
             config=self.cuda_config,
-            n_steps=config.d4pg.n_steps,
+            n_step_config=config.d4pg.n_step_config,
         )
         logger.info("Training stepper created successfully")
 
         # Create validation stepper
         logger.info("Creating validation stepper...")
-        self.validation_stepper = ArcStepper(
+        self.validation_stepper = PixelWiseArcStepper(
             max_steps_per_epoch=self.validation_steps_per_epoch,
             dataset_path=config.dataset_path,
             grid_size=config.env.grid_size,
@@ -200,7 +200,7 @@ class ArcD4PG:
                 reward_model=reward_model,
                 reward_model_lr=config.world_model.learning_rate,
                 step_horizon=config.world_model.imagination_horizon,
-                n_steps=config.d4pg.n_steps,
+                n_step_config=config.d4pg.n_step_config,
                 gamma=config.d4pg.gamma,
                 model_update_frequency=config.world_model.model_update_frequency,
                 imagination_ratio=config.world_model.imagination_ratio,
@@ -217,7 +217,7 @@ class ArcD4PG:
             critic_lr=config.d4pg.critic_lr,
             gamma=config.d4pg.gamma,
             tau=config.d4pg.tau,
-            n_steps=config.d4pg.n_steps,
+            n_steps=config.d4pg.n_step_config.n_steps,
             config=self.cuda_config,
             amp_enabled=config.system.amp_enabled,
             **kwargs,
@@ -350,9 +350,9 @@ class ArcD4PG:
                 list(info.keys()),
             )
 
-        if td_error.get(RewardKeys.N_REWARD.value) is not None:
+        if td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value) is not None:
             replay_buffer.update_priority(
-                info["index"], td_error.get(RewardKeys.N_REWARD.value)
+                info["index"], td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value)
             )
         else:
             replay_buffer.update_priority(

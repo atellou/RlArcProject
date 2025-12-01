@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from rlarcworld.common.configs import NStepMinVMaxConfig
+
 
 @dataclass
 class EnvConfig:
@@ -47,7 +49,9 @@ class D4PGConfig:
     critic_lr: float = 3e-3
     gamma: float = 0.99
     tau: float = 0.005
-    n_steps: int = 1
+    n_step_config: NStepMinVMaxConfig = field(
+        default_factory=lambda: NStepMinVMaxConfig(n_steps=1)
+    )
 
 
 @dataclass

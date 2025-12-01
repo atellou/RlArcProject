@@ -32,7 +32,18 @@ class RewardKeys(StrEnum):
 
     PIXEL_WISE = "pixel_wise"
     BINARY = "binary"
-    N_REWARD = "n_reward"
+    PIXEL_WISE_N_REWARD = "pixel_wise_n_reward"
+    BINARY_N_REWARD = "binary_n_reward"
+
+    @staticmethod
+    def get_n_step_keys() -> list[RewardKeys]:
+        """Get the reward keys for the given n-step."""
+        return [RewardKeys.PIXEL_WISE_N_REWARD, RewardKeys.BINARY_N_REWARD]
+
+    @staticmethod
+    def get_base_keys() -> list[RewardKeys]:
+        """Get the reward keys."""
+        return [RewardKeys.PIXEL_WISE, RewardKeys.BINARY]
 
 
 class ArcEnvRunningMode(StrEnum):

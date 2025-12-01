@@ -6,7 +6,7 @@ from typing import NotRequired, TypedDict
 
 import torch
 
-from rlarcworld.common.enums import ActionKeys, RewardKeys, StateKeys
+from rlarcworld.common.enums import ActionKeys, StateKeys
 
 
 class StateDict(TypedDict):
@@ -48,7 +48,8 @@ class RewardDict(TypedDict, total=False):
     binary: torch.Tensor  # RewardKeys.BINARY
 
     # Optional reward type, present only when n-step returns are enabled
-    n_reward: NotRequired[torch.Tensor]  # RewardKeys.N_REWARD
+    pixel_wise_n_reward: NotRequired[torch.Tensor]  # RewardKeys.PIXEL_WISE_N_REWARD
+    binary_n_reward: NotRequired[torch.Tensor]  # RewardKeys.BINARY_N_REWARD
 
 
 # Module-level canonical key sets for runtime validation or configuration
@@ -68,12 +69,5 @@ ACTION_KEYS_SET = frozenset(
         ActionKeys.Y_LOCATION.value,
         ActionKeys.COLOR_VALUES.value,
         ActionKeys.SUBMIT.value,
-    }
-)
-
-REWARD_REQUIRED_KEYS = frozenset(
-    {
-        RewardKeys.PIXEL_WISE.value,
-        RewardKeys.BINARY.value,
     }
 )

@@ -3,9 +3,10 @@ import os
 import torch
 from tensordict import TensorDict
 
-from rlarcworld.common.enums import ArcEnvRunningMode
+from rlarcworld.common.configs import NStepMinVMaxConfig
+from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.environments.steppers.arc_stepper import ArcStepper
+from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ArcActorNetwork
@@ -191,7 +192,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
     def env_reset_fn(env, sample, seed=None):
         env.reset(options={**sample, "mode": "train"}, seed=seed)
 
-    stepper = ArcStepper(
+    stepper = PixelWiseArcStepper(
         max_steps_per_epoch=2,
         dataset_path="tests/test_data/",
         grid_size=grid_size,
@@ -199,9 +200,13 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         env_mode=ArcEnvRunningMode.TRAIN,
         actor=actor,
         config={"device": device, "amp_enabled": False, "use_checkpointing": False},
-        n_steps=2,
-        v_min_n_step=0,
-        v_max_n_step=1,
+        n_step_config=NStepMinVMaxConfig(
+            n_steps=2,
+            pixel_wise_min_v=-10,
+            pixel_wise_max_v=1,
+            binary_min_v=-10,
+            binary_max_v=1,
+        ),
     )
 
     # Reset env
@@ -245,7 +250,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         assert isinstance(step["reward"], TensorDict)
         assert "pixel_wise" in step["reward"]
         assert "binary" in step["reward"]
-        assert "n_reward" in step["reward"]
+        assert set(RewardKeys.get_n_step_keys()).issubset(step["reward"].keys())
 
 
 def test_env_stepper_episode_stream(device):
@@ -354,7 +359,7 @@ def test_env_stepper_step_stream_from_samples(device):
     )
     actor.eval()
 
-    stepper = ArcStepper(
+    stepper = PixelWiseArcStepper(
         max_steps_per_epoch=2,
         dataset_path="tests/test_data/",
         grid_size=grid_size,
@@ -362,9 +367,13 @@ def test_env_stepper_step_stream_from_samples(device):
         env_mode=ArcEnvRunningMode.TRAIN,
         actor=actor,
         config={"device": device, "amp_enabled": False, "use_checkpointing": False},
-        n_steps=2,
-        v_min_n_step=0,
-        v_max_n_step=1,
+        n_step_config=NStepMinVMaxConfig(
+            n_steps=2,
+            pixel_wise_min_v=-10,
+            pixel_wise_max_v=1,
+            binary_min_v=-10,
+            binary_max_v=1,
+        ),
     )
 
     # Create step stream from samples and collect steps
@@ -399,4 +408,4 @@ def test_env_stepper_step_stream_from_samples(device):
         assert isinstance(step_data["actions"], TensorDict)
         assert isinstance(step_data["reward"], TensorDict)
         # When n_steps>1 and wrapper supports n-step, expect n_reward in reward dict
-        assert "n_reward" in step_data["reward"]
+        assert set(RewardKeys.get_n_step_keys()).issubset(step_data["reward"].keys())

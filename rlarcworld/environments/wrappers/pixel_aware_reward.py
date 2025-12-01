@@ -38,9 +38,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         max_penalty: float = 0.0,
         n_steps: int = 1,
         gamma: float = 1.0,
-        apply_clamp: bool = False,
-        v_min: int | None = None,
-        v_max: int | None = None,
     ):
         """Initialize the PixelAwareRewardWrapper.
 
@@ -52,19 +49,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 Defaults to 1.
             gamma (float, optional): Discount factor in the reward
                 computation. Defaults to 1.0.
-            apply_clamp (bool, optional): Whether to apply clamping to the
-                reward. Defaults to False.
-            v_min (int, optional): Minimum value for clamping. Defaults to
-                None.
-            v_max (int, optional): Maximum value for clamping. Defaults to
-                None.
-
-        Raises:
-            AssertionError: If max_penalty is not a float, n_steps is not a
-                positive int, gamma is not a positive float less than or equal
-                to 1.0, apply_clamp is not a bool, v_max is not None or an
-                int, v_min is not None or an int, or v_min >= v_max when
-                apply_clamp is True.
         """
         super().__init__(env)
         assert isinstance(max_penalty, float), "max_penalty must be a float"
@@ -74,12 +58,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         assert (
             isinstance(gamma, float) and gamma > 0 and gamma <= 1
         ), "gamma must be a positive float lower or equal than 1.0"
-        assert isinstance(apply_clamp, bool), "apply_clamp must be a bool"
-        if apply_clamp:
-            assert v_max is None or isinstance(v_max, int)
-            assert v_min is None or isinstance(v_min, int)
-            if isinstance(v_min, int) and isinstance(v_max, int):
-                assert v_min < v_max
 
         assert (
             isinstance(max_penalty, float) and max_penalty >= 0
@@ -87,9 +65,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             max_penalty
         )
         self.__max_penalty = max_penalty
-        self.apply_clamp = apply_clamp
-        self.v_min = v_min
-        self.v_max = v_max
         self.n_steps = n_steps
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
@@ -122,7 +97,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         reset = super().reset(seed=seed, options=options)
         self.mode: ArcEnvRunningMode = self.env.mode
         self.batch_size: int = options["batch"]["input"].shape[0]
-        # Reward attributes
+        # Reward attributes - pixel-wise rewards
         self._reward_storage = TorchQueue(
             torch.zeros((self.batch_size, self.n_steps)),
             queue_size=self.n_steps,
@@ -134,28 +109,13 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.last_reward = self.last_reward.to(self.device)
         return reset
 
-    def n_step_reward(
-        self, v_min: float | None = None, v_max: float | None = None
-    ) -> torch.Tensor:
-        """Compute the n-step reward for the current grid of the environment.
-
-        Args:
-            apply_clamp (bool, optional): Whether to clamp the reward between
-                v_min and v_max. Defaults to False.
-            v_min (int, optional): Minimum value for clamping. Defaults to
-                None.
-            v_max (int, optional): Maximum value for clamping. Defaults to
-                None.
+    def n_step_reward(self) -> torch.Tensor:
+        """Compute the pixel-wise n-step reward for the current grid.
 
         Returns:
-            torch.Tensor: The computed reward.
+            torch.Tensor: The computed n-step pixel-wise reward.
         """
         total = torch.sum(self._reward_storage * self.discount_factor, dim=1)
-        if v_min is not None and v_max is not None:
-            total = torch.clamp(total, min=v_min, max=v_max)
-        elif self.apply_clamp:
-            total = torch.clamp(total, min=self.v_min, max=self.v_max)
-
         return total.to(self.device)
 
     def get_state(self, **kwargs) -> dict:
@@ -207,12 +167,12 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
     @property
     def reward_storage(self):
-        """TorchQueue containing the reward storage."""
+        """TorchQueue containing the pixel-wise reward storage."""
         return self._reward_storage
 
     @reward_storage.setter
     def reward_storage(self, value: torch.Tensor) -> None:
-        """Sets the reward storage.
+        """Sets the pixel-wise reward storage.
 
         Args:
             value (torch.Tensor): The reward storage.
@@ -229,6 +189,10 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         res = q[tuple(index)]
         # res is already a tensor; avoid reconstructing via torch.tensor()
         return res.to(self.device)
+
+    def get_source_env_n_step_reward(self) -> torch.Tensor:
+        """Returns the last n-step reward from the source environment."""
+        return self.env.n_step_reward().to(self.device)
 
     def reward(
         self,
@@ -287,10 +251,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             + penalization
             + (grid_diff == 0).long() * submission
         )
-        if self.apply_clamp:
-            return torch.clamp(reward, min=self.v_min, max=self.v_max)
-        else:
-            return reward
+        return reward
 
     def step(
         self, actions: TensorDict | dict[str, torch.Tensor]
@@ -327,6 +288,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(-1))
         self.last_reward = reward
+
         return obs, reward, terminated, truncated, info
 
     def checkpoint(self) -> dict[str, Any]:
@@ -343,9 +305,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 "batch_size": self.batch_size,
                 "n_steps": self.n_steps,
                 "gamma": self.gamma,
-                "apply_clamp": self.apply_clamp,
-                "v_min": self.v_min,
-                "v_max": self.v_max,
             }
             return {
                 "wrapper": add_schema_and_class(
@@ -416,9 +375,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         assert self.max_penalty == meta["max_penalty"]
         assert self.n_steps == meta["n_steps"]
         assert self.gamma == meta["gamma"]
-        assert self.apply_clamp == meta["apply_clamp"]
-        assert self.v_min == meta["v_min"]
-        assert self.v_max == meta["v_max"]
 
         # Recompute discount factor and ensure tensors are on target device
         target_device = device or self.device

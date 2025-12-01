@@ -385,7 +385,7 @@ class ArcBatchGridEnv(gym.Env):
     def n_step_reward(self) -> torch.Tensor:
         """Computes the reward for the current grid of the environment."""
         return torch.tensor(
-            torch.sum(self._reward_storage * self.discount_factor, dim=1).cpu().numpy()
+            torch.sum(self._reward_storage * self.discount_factor, dim=1)
         ).to(self.device)
 
     @property

@@ -187,14 +187,7 @@ def env(grid_size, color_values, n_steps_param, device) -> ArcBatchGridEnv:
 
 @pytest.fixture()
 def wrapped_env(env: ArcBatchGridEnv, n_steps_param: int) -> PixelAwareRewardWrapper:
-    return PixelAwareRewardWrapper(
-        env,
-        n_steps=n_steps_param,
-        gamma=0.99,
-        apply_clamp=False,
-        v_min=0,
-        v_max=1,
-    )
+    return PixelAwareRewardWrapper(env, n_steps=n_steps_param, gamma=0.99)
 
 
 # ---------- Dataset and DataLoader fixtures ----------

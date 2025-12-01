@@ -341,21 +341,10 @@ def test_arc_batch_grid_env_checkpoint_roundtrip(
 
 
 @pytest.mark.parametrize("as_dir", [False, True])
-@pytest.mark.parametrize("apply_clamp", [False, True])
-def test_reward_wrapper_checkpoint_roundtrip(
-    tmp_path: Path, as_dir: bool, apply_clamp: bool
-):
+def test_reward_wrapper_checkpoint_roundtrip(tmp_path: Path, as_dir: bool):
     grid, colors, batch_size = 5, 6, 2
     base = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=4, gamma=0.95)
-    env1 = PixelAwareRewardWrapper(
-        base,
-        max_penalty=1.0,
-        n_steps=4,
-        gamma=0.95,
-        apply_clamp=apply_clamp,
-        v_min=-10 if apply_clamp else None,
-        v_max=10 if apply_clamp else None,
-    )
+    env1 = PixelAwareRewardWrapper(base, max_penalty=1.0, n_steps=4, gamma=0.95)
 
     batch = make_batch(batch_size, grid, colors)
     obs1, info1 = env1.reset(
@@ -373,15 +362,7 @@ def test_reward_wrapper_checkpoint_roundtrip(
 
     # Load into fresh wrapped env
     base2 = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=4, gamma=0.95)
-    env2 = PixelAwareRewardWrapper(
-        base2,
-        max_penalty=1.0,
-        n_steps=4,
-        gamma=0.95,
-        apply_clamp=apply_clamp,
-        v_min=-10 if apply_clamp else None,
-        v_max=10 if apply_clamp else None,
-    )
+    env2 = PixelAwareRewardWrapper(base2, max_penalty=1.0, n_steps=4, gamma=0.95)
     env2.load(target_path)
 
     # Compare wrapper fields
@@ -391,9 +372,6 @@ def test_reward_wrapper_checkpoint_roundtrip(
     assert env2.max_penalty == env1.max_penalty
     assert env2.n_steps == env1.n_steps
     assert env2.gamma == env1.gamma
-    assert env2.apply_clamp == env1.apply_clamp
-    assert env2.v_min == env1.v_min
-    assert env2.v_max == env1.v_max
 
     # Compare inner environment state
     def assert_td_close(a: TensorDict, b: TensorDict):
@@ -744,15 +722,7 @@ def test_reward_world_model_wrapper_caching():
     batch_size = 2
 
     env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values)
-    env2 = PixelAwareRewardWrapper(
-        env,
-        max_penalty=1.0,
-        n_steps=4,
-        gamma=0.95,
-        apply_clamp=False,
-        v_min=None,
-        v_max=None,
-    )
+    env2 = PixelAwareRewardWrapper(env, max_penalty=1.0, n_steps=4, gamma=0.95)
     model = RewardWorldModel(grid_size=grid_size, color_values=color_values)
 
     wrapped_env = RewardWorldModelWrapper(

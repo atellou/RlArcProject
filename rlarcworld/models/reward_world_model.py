@@ -13,8 +13,8 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
-from rlarcworld.common.enums import StateKeys
-from rlarcworld.common.types import STATE_REQUIRED_KEYS, RewardKeys
+from rlarcworld.common.enums import RewardKeys, StateKeys
+from rlarcworld.common.types import STATE_REQUIRED_KEYS
 from rlarcworld.nn_modules import (
     CnnAttention,
     CnnPreTrainedModule,

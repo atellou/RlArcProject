@@ -1,4 +1,4 @@
-"""ArcStepper class to handle environment stepping and episode simulation."""
+"""PixelWiseArcStepper class to handle environment stepping and episode simulation."""
 
 import logging
 from typing import Any, Callable, Tuple
@@ -6,8 +6,9 @@ from typing import Any, Callable, Tuple
 import torch
 
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer, ComposeTransforms
+from rlarcworld.common.configs import NStepMinVMaxConfig
 from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
-from rlarcworld.common.types import REWARD_REQUIRED_KEYS, RewardDict
+from rlarcworld.common.types import RewardDict
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
@@ -18,8 +19,8 @@ from rlarcworld.utils.device import CudaConfig
 logger = logging.getLogger(__name__)
 
 
-class ArcStepper:
-    """ArcStepper class to handle environment stepping and episode simulation."""
+class PixelWiseArcStepper:
+    """PixelWiseArcStepper to handle environment stepping and episode simulation."""
 
     def __init__(
         self,
@@ -30,9 +31,7 @@ class ArcStepper:
         env_mode: ArcEnvRunningMode,
         actor: ArcActorNetwork,
         config: CudaConfig,
-        n_steps: int = 1,
-        v_min_n_step: float | None = None,
-        v_max_n_step: float | None = None,
+        n_step_config: NStepMinVMaxConfig | None = None,
     ) -> None:
         """Creates a stepper for the environment and dataset.
 
@@ -41,20 +40,19 @@ class ArcStepper:
             dataset_path (str): Path to the dataset.
             grid_size (int): Size of the ARC grid.
             color_values (int): Number of possible colors.
-            n_steps (int): Number of steps for n-step returns.
             env_mode (ArcEnvRunningMode): Environment running mode.
             actor (ArcActorNetwork): Actor network.
             config (dict): Configuration dictionary.
-            v_min_n_step (float | None): Minimum value for n-step returns.
-            v_max_n_step (float | None): Maximum value for n-step returns.
+            n_step_config (NStepMinVMaxConfig | None):
+                Minimum value for n-step returns.
         """
         # Initialize dataset and environment
         logger.info("Setting up dataset and environment...")
         self.env_mode = env_mode
         self.device = config["device"]
-        self.v_min_n_step = v_min_n_step
-        self.v_max_n_step = v_max_n_step
-        self.n_steps = n_steps
+        self.n_step_config = (
+            n_step_config if n_step_config is not None else NStepMinVMaxConfig()
+        )
 
         # Create augmentation transformer
         augmentation = ArcAugmentationTransformer(
@@ -92,9 +90,8 @@ class ArcStepper:
         self.environment = PixelAwareRewardWrapper(
             base_env,
             max_penalty=1.0,
-            n_steps=self.n_steps,
+            n_steps=self.n_step_config.n_steps,
             gamma=base_env.gamma,
-            apply_clamp=False,
         )
 
         self.core = EnvStepper(
@@ -159,10 +156,6 @@ class ArcStepper:
         Args:
             env: The environment instance
             reward: Raw reward tensor from the environment
-            n_steps: Number of steps for n-step returns (if supported)
-            device: Device to move tensors to
-            v_min_n_step: Minimum value for n-step returns
-            v_max_n_step: Maximum value for n-step returns
 
         Returns:
             Dictionary of processed rewards with different formats
@@ -175,30 +168,29 @@ class ArcStepper:
             pixel_wise_reward = pixel_wise_reward.to(self.device)
             binary_reward = binary_reward.to(self.device)
 
-        reward_dict: RewardDict = {
+        rewards: RewardDict = {
             RewardKeys.PIXEL_WISE.value: pixel_wise_reward,
             RewardKeys.BINARY.value: binary_reward,
         }
 
         # Add n-step reward if configured and supported by the environment
-        if env.n_steps > 1 and hasattr(env, "n_step_reward"):
-            if self.v_min_n_step is None or self.v_max_n_step is None:
-                raise ValueError(
-                    "v_min_n_step and v_max_n_step must be provided for n-step rewards"
-                )
-            n_step_reward = env.n_step_reward(self.v_min_n_step, self.v_max_n_step)
+        if env.n_steps > 1:
+            pixel_n_step = env.n_step_reward()
+            binary_n_step = env.get_source_env_n_step_reward()
             if self.device is not None:
-                n_step_reward = n_step_reward.to(self.device)
-            reward_dict[RewardKeys.N_REWARD.value] = n_step_reward.unsqueeze(-1)
+                pixel_n_step = pixel_n_step.to(self.device)
+                binary_n_step = binary_n_step.to(self.device)
 
-        # Sanity-check required keys are present
-        if not set(reward_dict.keys()).issuperset(REWARD_REQUIRED_KEYS):
-            raise ValueError(
-                "Reward dict missing required keys: expected at least "
-                f"{REWARD_REQUIRED_KEYS}, got {set(reward_dict.keys())}"
-            )
+            pixel_wise_minmax = self.n_step_config.get_pixel_wise_minmax()
+            if pixel_wise_minmax is not None:
+                pixel_n_step = torch.clamp(pixel_n_step, **pixel_wise_minmax)
+            binary_minmax = self.n_step_config.get_binary_minmax()
+            if binary_minmax is not None:
+                binary_n_step = torch.clamp(binary_n_step, **binary_minmax)
+            rewards[RewardKeys.PIXEL_WISE_N_REWARD.value] = pixel_n_step.unsqueeze(-1)
+            rewards[RewardKeys.BINARY_N_REWARD.value] = binary_n_step.unsqueeze(-1)
 
-        return reward_dict
+        return rewards
 
     def _get_on_step_rewards(self) -> Callable[..., Tuple[Any, ...]]:
         """Create a default on_step callback that processes rewards.

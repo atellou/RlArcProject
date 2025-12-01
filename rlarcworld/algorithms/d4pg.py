@@ -179,7 +179,7 @@ class D4PGCore:
                     self.critic_target.v_max[key],
                     self.critic_target.num_atoms[key],
                     apply_softmax=True,
-                    n_steps=self.n_steps if key == RewardKeys.N_REWARD.value else 1,
+                    n_steps=self.n_steps if key in RewardKeys.get_n_step_keys() else 1,
                 )
                 for key in next_q_dist.keys()
             }

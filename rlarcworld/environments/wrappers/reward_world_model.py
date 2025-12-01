@@ -39,9 +39,6 @@ class RewardWorldModelWrapper(gym.Wrapper):
         step_horizon: int = 1,
         n_steps: int = 1,
         gamma: float = 1.0,
-        apply_clamp: bool = False,
-        v_min: int | None = None,
-        v_max: int | None = None,
         grid_diff_epsilon: float = 0.01,
         smooth_transition: bool = True,
         transition_steepness: float = 100.0,
@@ -56,9 +53,6 @@ class RewardWorldModelWrapper(gym.Wrapper):
             n_steps (int, optional): Number of steps for n-step returns.
                 Defaults to 1.
             gamma (float, optional): Discount factor. Defaults to 1.0.
-            apply_clamp (bool, optional): Whether to clamp rewards. Defaults to False.
-            v_min (int, optional): Minimum reward value for clamping. Defaults to None.
-            v_max (int, optional): Maximum reward value for clamping. Defaults to None.
             grid_diff_epsilon (float, optional): Threshold for considering grid_diff
                 as zero. Defaults to 0.01 (1% of pixels).
             smooth_transition (bool, optional): If True, use smooth sigmoid transition
@@ -77,12 +71,6 @@ class RewardWorldModelWrapper(gym.Wrapper):
             isinstance(gamma, float) and gamma > 0 and gamma <= 1
         ), "gamma must be a positive float lower or equal than 1.0"
         assert isinstance(model, torch.nn.Module), "model must be a torch.nn.Module"
-        assert isinstance(apply_clamp, bool), "apply_clamp must be a bool"
-        if apply_clamp:
-            assert v_max is None or isinstance(v_max, int)
-            assert v_min is None or isinstance(v_min, int)
-            if isinstance(v_min, int) and isinstance(v_max, int):
-                assert v_min < v_max
         assert (
             isinstance(grid_diff_epsilon, float) and 0 < grid_diff_epsilon < 1
         ), "grid_diff_epsilon must be a float in (0, 1)"
@@ -96,8 +84,6 @@ class RewardWorldModelWrapper(gym.Wrapper):
         self.model = model
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
-        self.apply_clamp = apply_clamp
-        self.v_min, self.v_max = v_min, v_max
         self.max_penalty = self.get_wrapper_attr("max_penalty")
         self.grid_size = self.get_wrapper_attr("grid_size")
         self.color_values = self.get_wrapper_attr("color_values")
@@ -170,16 +156,12 @@ class RewardWorldModelWrapper(gym.Wrapper):
     def n_step_reward(
         self,
         reward_key: str = RewardKeys.BINARY.value,
-        v_min: float | None = None,
-        v_max: float | None = None,
     ) -> torch.Tensor:
         """Compute the n-step reward for the current grid of the environment.
 
         Args:
             reward_key (str, optional): Which reward type to compute n-step return for.
                 Defaults to RewardKeys.BINARY.value.
-            v_min (float, optional): Minimum value for clamping. Defaults to None.
-            v_max (float, optional): Maximum value for clamping. Defaults to None.
 
         Returns:
             torch.Tensor: The computed n-step discounted return.
@@ -187,11 +169,6 @@ class RewardWorldModelWrapper(gym.Wrapper):
         total = torch.sum(
             self._reward_storage[reward_key] * self.discount_factor, dim=1
         )
-        if v_min is not None and v_max is not None:
-            total = torch.clamp(total, min=v_min, max=v_max)
-        elif self.apply_clamp:
-            total = torch.clamp(total, min=self.v_min, max=self.v_max)
-
         return total.to(self.device)
 
     def get_state(self, **kwargs) -> dict:
@@ -308,10 +285,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
                 (improvement - 1) * has_errors + penalization + is_perfect * submission
             )
 
-        if self.apply_clamp:
-            return torch.clamp(reward, min=self.v_min, max=self.v_max)
-        else:
-            return reward
+        return reward
 
     @property
     def binary_model_reward(self):

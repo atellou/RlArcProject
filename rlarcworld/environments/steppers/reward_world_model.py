@@ -11,9 +11,10 @@ import torch
 import torch.nn.functional as F
 from tensordict import TensorDict
 
+from rlarcworld.common.configs import NStepMinVMaxConfig
 from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
 from rlarcworld.common.protocols import ActorCriticCoreProto, RewardWorldModelProto
-from rlarcworld.common.types import REWARD_REQUIRED_KEYS, RewardDict
+from rlarcworld.common.types import RewardDict
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
@@ -50,10 +51,8 @@ class ArcWorldModelStepper:
         reward_model_lr: float = 1e-4,
         # Imagination params
         step_horizon: int = 5,
-        n_steps: int = 1,
         gamma: float = 0.99,
-        v_min_n_step: float | None = None,
-        v_max_n_step: float | None = None,
+        n_step_config: NStepMinVMaxConfig | None = None,
         # Smooth transition params
         grid_diff_epsilon: float = 0.01,
         smooth_transition: bool = True,
@@ -73,10 +72,8 @@ class ArcWorldModelStepper:
             reward_model: RewardWorldModel to train and use for imagination.
             reward_model_lr: Learning rate for world model optimizer.
             step_horizon: Planning horizon for imagined rollouts.
-            n_steps: Number of steps for n-step returns.
             gamma: Discount factor.
-            v_min_n_step: Minimum value for n-step returns.
-            v_max_n_step: Maximum value for n-step returns.
+            n_step_config: N-step configuration.
             grid_diff_epsilon: Threshold for "perfect" grid detection.
             smooth_transition: Use smooth sigmoid transition.
             transition_steepness: Steepness of smooth transition.
@@ -86,11 +83,12 @@ class ArcWorldModelStepper:
         """
         self.model = reward_model
         self.device = config["device"]
-        self.v_min_n_step = v_min_n_step
-        self.v_max_n_step = v_max_n_step
         self.model_update_frequency = model_update_frequency
         self.imagination_ratio = imagination_ratio
         self.imagination_frequency = imagination_frequency
+        self.n_step_config = (
+            n_step_config if n_step_config is not None else NStepMinVMaxConfig()
+        )
 
         # Metrics tracking using tensors for compute optimization
         self._max_tracked_losses = 1000
@@ -119,7 +117,7 @@ class ArcWorldModelStepper:
             env=base_env,
             model=reward_model,
             step_horizon=step_horizon,
-            n_steps=n_steps,
+            n_steps=self.n_step_config.n_steps,
             gamma=gamma,
             grid_diff_epsilon=grid_diff_epsilon,
             smooth_transition=smooth_transition,
@@ -199,20 +197,11 @@ class ArcWorldModelStepper:
 
     # ==================== Reward Processing ====================
 
-    def process_rewards(
-        self,
-        env: RewardWorldModelWrapper,
-        reward: torch.Tensor,
-    ) -> RewardDict:
+    def process_rewards(self, env: RewardWorldModelWrapper) -> RewardDict:
         """Process and format rewards from the environment.
 
         Args:
             env: The environment instance
-            reward: Raw reward tensor from the environment
-            n_steps: Number of steps for n-step returns (if supported)
-            device: Device to move tensors to
-            v_min_n_step: Minimum value for n-step returns
-            v_max_n_step: Maximum value for n-step returns
 
         Returns:
             Dictionary of processed rewards with different formats
@@ -227,26 +216,21 @@ class ArcWorldModelStepper:
         ).to(self.device)
 
         # Add n-step reward if configured and supported by the environment
-        # TODO: We have binary and pixel-wise n-step, in the real env too
-        # but at inference time only binary would be available
-        if env.n_steps > 1 and hasattr(env, "n_pixel_wise_reward"):
-            if self.v_min_n_step is None or self.v_max_n_step is None:
-                raise ValueError(
-                    "v_min_n_step and v_max_n_step must be provided for n-step rewards"
-                )
-            n_step_reward = env.n_pixel_wise_reward(
-                self.v_min_n_step, self.v_max_n_step
-            )
+        if env.n_steps > 1:
+            pixel_n_step = env.n_pixel_wise_reward
+            binary_n_step = env.n_binary_reward
             if self.device is not None:
-                n_step_reward = n_step_reward.to(self.device)
-            rewards[RewardKeys.N_REWARD.value] = n_step_reward.unsqueeze(-1)
+                pixel_n_step = pixel_n_step.to(self.device)
+                binary_n_step = binary_n_step.to(self.device)
 
-        # Sanity-check required keys are present
-        if not set(rewards.keys()).issuperset(REWARD_REQUIRED_KEYS):
-            raise ValueError(
-                "Reward dict missing required keys: expected at least "
-                f"{REWARD_REQUIRED_KEYS}, got {set(rewards.keys())}"
-            )
+            pixel_wise_minmax = self.n_step_config.get_pixel_wise_minmax()
+            if pixel_wise_minmax is not None:
+                pixel_n_step = torch.clamp(pixel_n_step, **pixel_wise_minmax)
+            binary_minmax = self.n_step_config.get_binary_minmax()
+            if binary_minmax is not None:
+                binary_n_step = torch.clamp(binary_n_step, **binary_minmax)
+            rewards[RewardKeys.PIXEL_WISE_N_REWARD.value] = pixel_n_step.unsqueeze(-1)
+            rewards[RewardKeys.BINARY_N_REWARD.value] = binary_n_step.unsqueeze(-1)
 
         return rewards
 
@@ -261,7 +245,7 @@ class ArcWorldModelStepper:
             env, state, action_probs, reward, observation, terminated, truncated, info
         ):
             # Process rewards
-            reward = self.process_rewards(env=env, reward=reward)
+            reward = self.process_rewards(env=env)
             return (
                 env,
                 state,

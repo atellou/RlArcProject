@@ -7,6 +7,7 @@ import pytest
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.common.configs import NStepMinVMaxConfig
 from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.common.protocols import ActorCriticCoreProto
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
@@ -83,7 +84,9 @@ def stepper(grid_size, color_values, actor, reward_model, config):
         reward_model=reward_model,
         reward_model_lr=1e-4,
         step_horizon=3,
-        n_steps=1,
+        n_step_config=NStepMinVMaxConfig(
+            n_steps=1,
+        ),
         gamma=0.99,
         model_update_frequency=1,
         imagination_ratio=1,
