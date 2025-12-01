@@ -267,8 +267,6 @@ class ArcBatchGridEnv(gym.Env):
                 "The batch output (target) shape is not correct. A shape of "
                 "(batch_size, {size}, {size}) is expected".format(size=self.grid_size)
             )
-        else:
-            logger.warning(f"Running in {self.mode} mode")
 
         assert (
             len(batch_in.shape) == 3

@@ -220,8 +220,8 @@ class ArcWorldModelStepper:
         # Prepare base rewards with consistent device placement
         rewards = TensorDict(
             {
-                RewardKeys.PIXEL_WISE.value: env.pixel_wise_model_reward(),
-                RewardKeys.BINARY.value: env.binary_model_reward(),
+                RewardKeys.PIXEL_WISE.value: env.pixel_wise_model_reward,
+                RewardKeys.BINARY.value: env.binary_model_reward,
             },
             batch_size=[],
         ).to(self.device)
@@ -386,7 +386,7 @@ class ArcWorldModelStepper:
 
     # ==================== Callback Integration ====================
 
-    def training_callback(self, ctx: OnStepContext) -> None:
+    def training_callback(self, context: OnStepContext):
         """Callback for integration with Trainer.
 
         This callback:
@@ -394,36 +394,35 @@ class ArcWorldModelStepper:
         2. Runs imagination rollouts for policy training every imagination_frequency
 
         Args:
-            ctx: OnStepContext containing training information
+            context: OnStepContext containing training information
         """
-        if ctx.batch is None:
+        if context.batch is None:
             return
 
         # 1. Update world model with true rewards
-        if ctx.iteration % self.model_update_frequency == 0:
-            self.update_model(
-                state=ctx.batch["state"],
-                true_reward=ctx.batch["reward"],
+        if context.iteration % self.model_update_frequency == 0:
+            loss_dict = self.update_model(
+                state=context.batch["state"],
+                true_reward=context.batch["reward"],
             )
             logger.debug(
-                f"World model updated at iteration {ctx.iteration}, "
-                f"loss: {self._model_losses[-1] if self._model_losses else 'N/A'}"
+                f"World model updated. Iteration {context.iteration}, loss: {loss_dict}"
             )
 
         # 2. Run imagination rollouts
-        if ctx.iteration % self.imagination_frequency == 0:
+        if context.iteration % self.imagination_frequency == 0:
             for _ in range(self.imagination_ratio):
-                starting_state = ctx.batch["state"]
+                starting_state = context.batch["state"]
 
                 # Run imagination and train
                 self._imagine_and_train(
-                    core=ctx.core,
+                    core=context.core,
                     sample=starting_state,
                     training=True,
                 )
 
             logger.debug(
-                f"Imagination rollouts at iteration {ctx.iteration}, "
+                f"Imagination rollouts at iteration {context.iteration}, "
                 f"total imaginations: {self._imagination_count}"
             )
 

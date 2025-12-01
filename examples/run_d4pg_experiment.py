@@ -66,6 +66,43 @@ def main():
         help="Replay buffer warmup ratio before training starts (default: 0.2)",
     )
 
+    # World model parameters (Dyna-style imagination)
+    parser.add_argument(
+        "--use-world-model",
+        action="store_true",
+        help="Enable world model for Dyna-style imagination",
+    )
+    parser.add_argument(
+        "--world-model-lr",
+        type=float,
+        default=1e-4,
+        help="World model learning rate (default: 1e-4)",
+    )
+    parser.add_argument(
+        "--imagination-horizon",
+        type=int,
+        default=5,
+        help="Planning horizon for imagined rollouts (default: 5)",
+    )
+    parser.add_argument(
+        "--imagination-ratio",
+        type=int,
+        default=5,
+        help="Number of imagined rollouts per real step (default: 5)",
+    )
+    parser.add_argument(
+        "--imagination-frequency",
+        type=int,
+        default=10,
+        help="Run imagination every N training steps (default: 10)",
+    )
+    parser.add_argument(
+        "--model-update-frequency",
+        type=int,
+        default=10,
+        help="Update world model every N training steps (default: 10)",
+    )
+
     # System parameters
     parser.add_argument(
         "--device", type=str, default=None, help="Device to use (auto-detect if None)"
@@ -158,6 +195,14 @@ def main():
             gamma=args.gamma,
             warmup_buffer_ratio=args.warmup_buffer_ratio,
             max_steps_per_epoch=args.max_steps_per_epoch,
+            # World model config
+            use_world_model=args.use_world_model,
+            world_model_lr=args.world_model_lr,
+            imagination_horizon=args.imagination_horizon,
+            imagination_ratio=args.imagination_ratio,
+            imagination_frequency=args.imagination_frequency,
+            model_update_frequency=args.model_update_frequency,
+            # System config
             amp_enabled=not args.no_amp,
             device=args.device,
             seed=args.seed,

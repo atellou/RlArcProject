@@ -34,9 +34,11 @@ from rlarcworld.environments.arc_batch_grid_env import (
     ArcEnvRunningMode,
 )
 from rlarcworld.environments.steppers.arc_stepper import ArcStepper
+from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ArcActorNetwork
 from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
@@ -90,6 +92,13 @@ class ArcD4PG:
         validation_steps_per_epoch: int = 100,
         validation_epochs_frequency: int = 1,
         validation_steps_frequency: int = 100,
+        # World model config (Dyna-style imagination)
+        use_world_model: bool = False,
+        world_model_lr: float = 1e-4,
+        imagination_horizon: int = 5,
+        imagination_ratio: int = 5,
+        imagination_frequency: int = 10,
+        model_update_frequency: int = 10,
         # Checkpoint policies
         periodic_ckpt_interval: int = 1000,
         experiment_path: str | Path | None = None,
@@ -126,6 +135,12 @@ class ArcD4PG:
             validation_steps_per_epoch: Number of steps per validation epoch
             validation_epochs_frequency: Frequency of validation epochs
             validation_steps_frequency: Frequency of validation steps
+            use_world_model: Enable world model for Dyna-style imagination
+            world_model_lr: Learning rate for world model
+            imagination_horizon: Planning horizon for imagined rollouts
+            imagination_ratio: Number of imagined rollouts per real step
+            imagination_frequency: Run imagination every N training steps
+            model_update_frequency: Update world model every N training steps
             periodic_ckpt_interval: Periodic checkpoint interval
             experiment_path: Path to experiment directory
             amp_enabled: Enable automatic mixed precision
@@ -237,6 +252,33 @@ class ArcD4PG:
         )
         logger.info("Validation stepper created successfully")
 
+        # Create world model stepper (optional Dyna-style imagination)
+        self.use_world_model = use_world_model
+        self.world_model_stepper: Optional[ArcWorldModelStepper] = None
+        if use_world_model:
+            logger.info("Creating world model stepper...")
+            reward_model = RewardWorldModel(
+                grid_size=grid_size,
+                color_values=color_values,
+                embedding_size=embedding_size,
+                config=self.config,
+            )
+            self.world_model_stepper = ArcWorldModelStepper(
+                grid_size=grid_size,
+                color_values=color_values,
+                actor=self.actor,
+                config=self.config,
+                reward_model=reward_model,
+                reward_model_lr=world_model_lr,
+                step_horizon=imagination_horizon,
+                n_steps=n_steps,
+                gamma=gamma,
+                model_update_frequency=model_update_frequency,
+                imagination_ratio=imagination_ratio,
+                imagination_frequency=imagination_frequency,
+            )
+            logger.info("World model stepper created successfully")
+
         # Initialize D4PG core
         logger.info("Initializing D4PG algorithm core...")
         self.d4pg_core = D4PGCore(
@@ -268,6 +310,7 @@ class ArcD4PG:
             "max_steps_per_epoch": self.max_steps_per_epoch,
             "validation_steps_per_epoch": self.validation_steps_per_epoch,
             "device": self.device,
+            "use_world_model": self.use_world_model,
         }
         # trainer hyperparameters dict is nested; flatten selected
 
@@ -286,6 +329,11 @@ class ArcD4PG:
                     "entropy_coef": core_hp.get("entropy_coef", None),
                 }
             )
+
+        # Add world model hparams if enabled
+        if isinstance(self.world_model_stepper, ArcWorldModelStepper):
+            hparams["imagination_count"] = self.world_model_stepper.imagination_count
+
         return hparams
 
     def _setup_trainer(
@@ -382,8 +430,10 @@ class ArcD4PG:
                 info["index"], td_error.get(RewardKeys.PIXEL_WISE.value)
             )
 
-    def _on_train_callbacks(self) -> OrderedDict[str, Callable[[OnStepContext], None]]:
-        """Log training step information.
+    def _on_train_callbacks(
+        self,
+    ) -> OrderedDict[str, Callable[[OnStepContext], Any]]:
+        """Build training step callbacks.
 
         Returns:
             Dictionary of callbacks for training steps
@@ -392,7 +442,7 @@ class ArcD4PG:
         self.best_loss_actor: torch.Tensor = torch.tensor(float("inf"))
         self.best_loss_critic: torch.Tensor = torch.tensor(float("inf"))
 
-        return OrderedDict(
+        callbacks: OrderedDict[str, Callable[[OnStepContext], Any]] = OrderedDict(
             {
                 "core_step": self.d4pg_core.on_step,
                 "logging": self._log_step,
@@ -401,21 +451,35 @@ class ArcD4PG:
             }
         )
 
-    def _log_step(self, context: OnStepContext) -> None:
+        # Add world model callback if enabled
+        if isinstance(self.world_model_stepper, ArcWorldModelStepper):
+            callbacks["world_model"] = self.world_model_stepper.training_callback
+
+        return callbacks
+
+    def _log_step(self, context: OnStepContext):
         """Log training step information.
 
         Args:
             context: Step context containing training information
         """
         if context.iteration % 100 == 0 and context.loss_actor is not None:
-            logger.info(
+            msg = (
                 f"Epoch {context.epoch}, Step {context.step_idx}, "
                 f"Iteration {context.iteration}: "
                 f"Actor Loss: {context.loss_actor:.4f}, "
                 f"Critic Loss: {context.loss_critic:.4f}"
             )
+            # Add world model metrics if enabled
+            if isinstance(self.world_model_stepper, ArcWorldModelStepper):
+                wm_losses = self.world_model_stepper.get_average_model_losses()
+                if wm_losses:
+                    wm_str = ", ".join(f"{k}: {v:.4f}" for k, v in wm_losses.items())
+                    msg += f", RWM Loss: [{wm_str}]"
+                msg += f", Imaginations: {self.world_model_stepper.imagination_count}"
+            logger.info(msg)
 
-    def _periodic_checkpoint(self, context: OnStepContext) -> None:
+    def _periodic_checkpoint(self, context: OnStepContext):
         """Periodic lightweight checkpoint: core + trainer + config + provenance.
 
         This runs frequently (every self.periodic_ckpt_interval steps) and avoids
@@ -448,7 +512,7 @@ class ArcD4PG:
             save_replay_buffer=False,
         )
 
-    def _improvement_checkpoint(self, context: OnStepContext) -> None:
+    def _improvement_checkpoint(self, context: OnStepContext):
         """Save core-only checkpoint when losses improve.
 
         Lower losses are better. We checkpoint the core networks and optimizers
@@ -529,6 +593,7 @@ class ArcD4PG:
         include_env: bool = True,
         include_trainer: bool = True,
         include_stepper: bool = True,
+        include_world_model: bool = True,
         include_rng: bool = True,
         include_config: bool = True,
         include_provenance: bool = True,
@@ -542,6 +607,7 @@ class ArcD4PG:
             include_env: Whether to include environment checkpoint
             include_trainer: Whether to include trainer checkpoint
             include_stepper: Whether to include stepper checkpoint
+            include_world_model: Whether to include world model checkpoint
             include_rng: Whether to include RNG checkpoint
             include_config: Whether to include config checkpoint
             include_provenance: Whether to include provenance checkpoint
@@ -558,7 +624,7 @@ class ArcD4PG:
                 "Experiment must have environment, trainer, and stepper to checkpoint"
             )
 
-        # Core, env, trainer, stepper (conditionally included)
+        # Core, env, trainer, stepper, world_model (conditionally included)
         core_ckpt = self.d4pg_core.checkpoint() if include_core else None
         env_ckpt = (
             self.training_stepper.environment.checkpoint() if include_env else None
@@ -566,6 +632,11 @@ class ArcD4PG:
         trainer_ckpt = self.trainer.checkpoint() if include_trainer else None
         stepper_ckpt = (
             self.training_stepper.core.checkpoint() if include_stepper else None
+        )
+        world_model_ckpt = (
+            self.world_model_stepper.checkpoint()
+            if include_world_model and self.world_model_stepper is not None
+            else None
         )
 
         # RNG states
@@ -599,6 +670,7 @@ class ArcD4PG:
                 "amp_enabled": getattr(self, "amp_enabled", True),
                 "seed": getattr(self, "seed", None),
                 "dataset_path": getattr(self, "dataset_path", None),
+                "use_world_model": self.use_world_model,
             }
             if include_config
             else None
@@ -657,6 +729,7 @@ class ArcD4PG:
             "env": env_ckpt,
             "trainer": trainer_ckpt,
             "stepper": stepper_ckpt,
+            "world_model": world_model_ckpt,
             "rng": rng_state,
             "config": config,
             "provenance": provenance,
@@ -697,6 +770,7 @@ class ArcD4PG:
         restored_env = False
         restored_trainer = False
         restored_stepper = False
+        restored_world_model = False
         restored_rng = False
         restored_replay = False
 
@@ -723,6 +797,12 @@ class ArcD4PG:
         if stepper_state is not None and hasattr(self, "training_stepper"):
             self.training_stepper.core.load(stepper_state)
             restored_stepper = True
+
+        # Restore world model stepper
+        world_model_state = checkpoint.get("world_model")
+        if world_model_state is not None and self.world_model_stepper is not None:
+            self.world_model_stepper.load(world_model_state)
+            restored_world_model = True
 
         # Restore RNGs
         rng = checkpoint.get("rng")
@@ -801,11 +881,12 @@ class ArcD4PG:
 
         logger.info(
             "Loaded checkpoint components — core=%s, env=%s, trainer=%s, "
-            "stepper=%s, rng=%s, replay=%s from %s",
+            "stepper=%s, world_model=%s, rng=%s, replay=%s from %s",
             restored_core,
             restored_env,
             restored_trainer,
             restored_stepper,
+            restored_world_model,
             restored_rng,
             restored_replay,
             path,
