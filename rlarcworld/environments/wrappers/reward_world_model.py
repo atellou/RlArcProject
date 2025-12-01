@@ -7,10 +7,7 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys, RewardKeys
-from rlarcworld.environments.arc_batch_grid_env import (
-    ArcBatchGridEnv,
-    ArcEnvRunningMode,
-)
+from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
@@ -132,7 +129,6 @@ class RewardWorldModelWrapper(gym.Wrapper):
             environment's reset method.
         """
         reset = super().reset(seed=seed, options=options)
-        self.mode: ArcEnvRunningMode = self.env.mode
         self.batch_size: int = options["batch"]["input"].shape[0]
         self._remaining_horizon = self.step_horizon
 
@@ -235,7 +231,20 @@ class RewardWorldModelWrapper(gym.Wrapper):
             raise ValueError(
                 "Reward storage must have the same keys as the current reward storage"
             )
-        self._reward_storage = TorchQueue(value, queue_size=self.n_steps, queue_dim=1)
+        self._reward_storage = TensorDict(
+            {
+                RewardKeys.BINARY.value: TorchQueue(
+                    value[RewardKeys.BINARY.value],
+                    queue_size=self.n_steps,
+                    queue_dim=1,
+                ),
+                RewardKeys.PIXEL_WISE.value: TorchQueue(
+                    value[RewardKeys.PIXEL_WISE.value],
+                    queue_size=self.n_steps,
+                    queue_dim=1,
+                ),
+            }
+        )
 
     def reward(self) -> torch.Tensor:
         """Return the reward of the environment.

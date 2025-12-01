@@ -5,13 +5,13 @@ from typing import Any, Callable, Tuple
 
 import torch
 
-from rlarcworld.agent.actor import ArcActorNetwork
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer, ComposeTransforms
 from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
 from rlarcworld.common.types import REWARD_REQUIRED_KEYS, RewardDict
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
+from rlarcworld.models.actor import ArcActorNetwork
 from rlarcworld.utils.augmentation import ArcAugmentationTransformer
 from rlarcworld.utils.device import CudaConfig
 
@@ -87,13 +87,12 @@ class ArcStepper:
             grid_size=grid_size,
             color_values=color_values,
             device=self.device,
-            n_steps=self.n_steps,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
         self.environment = PixelAwareRewardWrapper(
             base_env,
             max_penalty=1.0,
-            n_steps=base_env.n_steps,
+            n_steps=self.n_steps,
             gamma=base_env.gamma,
             apply_clamp=False,
         )
@@ -104,12 +103,12 @@ class ArcStepper:
             env=self.environment,
             sampler=iter(self.dataset),
             max_steps=max_steps_per_epoch,
-            env_sample_reset=self.reset_env,
+            env_sample_reset=self._reset_env,
             amp_enabled=config.get("amp_enabled", True),
-            on_step=self.get_on_step_rewards(),
+            on_step=self._get_on_step_rewards(),
         )
 
-    def reset_env(self, env, sample, **kwargs):
+    def _reset_env(self, env, sample, **kwargs):
         """Reset the environment with a sample from the dataset.
 
         Args:
@@ -141,12 +140,14 @@ class ArcStepper:
         if examples.ndim == 4:
             examples = examples.unsqueeze(0)
         args = {"batch": batched_task, "examples": examples}
-        kwargs["options"].update(args)
+        options.update(args)
         env.reset(**kwargs)
 
     def create_step_stream_from_samples(self, **kwargs):
         """Create a step stream from samples."""
         return self.core.create_step_stream_from_samples(**kwargs)
+
+    # ==================== Reward Processing ====================
 
     def process_rewards(
         self,
@@ -166,17 +167,6 @@ class ArcStepper:
         Returns:
             Dictionary of processed rewards with different formats
         """
-        if env.n_steps > 1:
-            assert (
-                self.v_min_n_step is not None and self.v_max_n_step is not None
-            ), "v_min_n_step and v_max_n_step must be provided for n-step rewards"
-        logger.debug(
-            "Processing rewards: n_steps=%s, device=%s, reward_shape=%s",
-            env.n_steps,
-            str(self.device),
-            tuple(reward.shape) if hasattr(reward, "shape") else None,
-        )
-
         # Prepare base rewards with consistent device placement
         pixel_wise_reward = reward.unsqueeze(-1)
         binary_reward = env.get_source_env_reward().unsqueeze(-1)
@@ -192,23 +182,25 @@ class ArcStepper:
 
         # Add n-step reward if configured and supported by the environment
         if env.n_steps > 1 and hasattr(env, "n_step_reward"):
+            if self.v_min_n_step is None or self.v_max_n_step is None:
+                raise ValueError(
+                    "v_min_n_step and v_max_n_step must be provided for n-step rewards"
+                )
             n_step_reward = env.n_step_reward(self.v_min_n_step, self.v_max_n_step)
             if self.device is not None:
                 n_step_reward = n_step_reward.to(self.device)
             reward_dict[RewardKeys.N_REWARD.value] = n_step_reward.unsqueeze(-1)
-            logger.debug(
-                "Added n_step_reward with shape %s", tuple(n_step_reward.shape)
-            )
 
         # Sanity-check required keys are present
-        assert set(reward_dict.keys()).issuperset(REWARD_REQUIRED_KEYS), (
-            "Reward dict missing required keys: expected at least "
-            f"{REWARD_REQUIRED_KEYS}, got {set(reward_dict.keys())}"
-        )
+        if not set(reward_dict.keys()).issuperset(REWARD_REQUIRED_KEYS):
+            raise ValueError(
+                "Reward dict missing required keys: expected at least "
+                f"{REWARD_REQUIRED_KEYS}, got {set(reward_dict.keys())}"
+            )
 
         return reward_dict
 
-    def get_on_step_rewards(self) -> Callable[..., Tuple[Any, ...]]:
+    def _get_on_step_rewards(self) -> Callable[..., Tuple[Any, ...]]:
         """Create a default on_step callback that processes rewards.
 
         Returns:
