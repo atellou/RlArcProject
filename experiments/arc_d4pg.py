@@ -28,6 +28,19 @@ from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
 )
 
+# Re-export config classes for convenient imports
+from experiments.configs import (  # noqa: F401
+    ArcD4PGConfig,
+    CheckpointConfig,
+    D4PGConfig,
+    DistributionalConfig,
+    EnvConfig,
+    NetworkConfig,
+    ReplayBufferConfig,
+    SystemConfig,
+    TrainingConfig,
+    WorldModelConfig,
+)
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import (
@@ -63,124 +76,48 @@ class ArcD4PG:
 
     def __init__(
         self,
-        dataset_path: str,
-        *,
-        # Environment config
-        grid_size: int = 30,
-        color_values: int = 10,
-        batch_size: int = 32,
-        # Network config
-        embedding_size: int = 128,
-        # D4PG config
-        policy_lr: float = 3e-4,
-        critic_lr: float = 3e-3,
-        gamma: float = 0.99,
-        tau: float = 0.005,
-        n_steps: int = 1,
-        # Distributional RL config
-        num_atoms: Optional[dict[str, int]] = None,
-        v_min: Optional[dict[str, int]] = None,
-        v_max: Optional[dict[str, int]] = None,
-        # Replay buffer config
-        replay_buffer_size: int = 100000,
-        alpha: float = 0.6,
-        beta: float = 0.4,
-        warmup_buffer_ratio: float = 0.2,
-        # Training config
-        max_steps_per_epoch: int = 1000,
-        validation_epochs: int = 1,
-        validation_steps_per_epoch: int = 100,
-        validation_epochs_frequency: int = 1,
-        validation_steps_frequency: int = 100,
-        # World model config (Dyna-style imagination)
-        use_world_model: bool = False,
-        world_model_lr: float = 1e-4,
-        imagination_horizon: int = 5,
-        imagination_ratio: int = 5,
-        imagination_frequency: int = 10,
-        model_update_frequency: int = 10,
-        # Checkpoint policies
-        periodic_ckpt_interval: int = 1000,
-        experiment_path: str | Path | None = None,
-        # System config
-        amp_enabled: bool = True,
-        device: Optional[str] = None,
-        seed: int = 42,
-        # Trainer guards
-        min_train_batch_size: int = 2,
-        # Data config
+        config: ArcD4PGConfig,
         **kwargs,
     ):
         """Initialize the ArcD4PG experiment.
 
         Args:
-            grid_size: Size of the ARC grid
-            color_values: Number of possible colors
-            batch_size: Training batch size
-            embedding_size: Neural network embedding dimension
-            policy_lr: Actor learning rate
-            critic_lr: Critic learning rate
-            gamma: Discount factor
-            tau: Soft update coefficient
-            n_steps: N-step returns
-            num_atoms: Number of atoms for distributional critic
-            v_min: Minimum values for distributional critic
-            v_max: Maximum values for distributional critic
-            replay_buffer_size: Replay buffer size
-            alpha: Prioritized replay buffer alpha
-            beta: Prioritized replay buffer beta
-            warmup_buffer_ratio: Replay buffer warmup ratio
-            max_steps_per_epoch: Maximum steps per training epoch
-            validation_epochs: Number of epochs to validate for
-            validation_steps_per_epoch: Number of steps per validation epoch
-            validation_epochs_frequency: Frequency of validation epochs
-            validation_steps_frequency: Frequency of validation steps
-            use_world_model: Enable world model for Dyna-style imagination
-            world_model_lr: Learning rate for world model
-            imagination_horizon: Planning horizon for imagined rollouts
-            imagination_ratio: Number of imagined rollouts per real step
-            imagination_frequency: Run imagination every N training steps
-            model_update_frequency: Update world model every N training steps
-            periodic_ckpt_interval: Periodic checkpoint interval
-            experiment_path: Path to experiment directory
-            amp_enabled: Enable automatic mixed precision
-            device: Device to use (auto-detected if None)
-            seed: Random seed
-            dataset_path: Path to ARC dataset
-            min_train_batch_size: Minimum batch size for training
-            **kwargs: Additional arguments passed to components
+            config: Complete experiment configuration
+            **kwargs: Additional arguments passed to D4PGCore
         """
+        # Store full config for reference
+        self.exp_config = config
+
         # Set random seed
-        torch.manual_seed(seed)
+        torch.manual_seed(config.system.seed)
 
         # Configure device and logging
-        if device is None:
-            self.config = enable_cuda(amp_enabled=amp_enabled)
+        if config.system.device is None:
+            self.cuda_config = enable_cuda(amp_enabled=config.system.amp_enabled)
         else:
-            self.config = {
-                "device": device,
-                "amp_enabled": amp_enabled,
+            self.cuda_config = {
+                "device": config.system.device,
+                "amp_enabled": config.system.amp_enabled,
                 "use_checkpointing": False,
             }
-        self.device = self.config["device"]
+        self.device = self.cuda_config["device"]
 
-        # Store configuration
-        self.grid_size = grid_size
-        self.color_values = color_values
-        self.batch_size = batch_size
-        self.max_steps_per_epoch = max_steps_per_epoch
-        self.validation_steps_per_epoch = validation_steps_per_epoch
-        self.min_train_batch_size = int(min_train_batch_size)
+        # Store commonly accessed values for convenience
+        self.grid_size = config.env.grid_size
+        self.color_values = config.env.color_values
+        self.batch_size = config.env.batch_size
+        self.max_steps_per_epoch = config.training.max_steps_per_epoch
+        self.validation_steps_per_epoch = config.training.validation_steps_per_epoch
+        self.min_train_batch_size = config.training.min_train_batch_size
 
         # Validation policies
-        self.validation_epochs = validation_epochs
-        self.validation_steps_per_epoch = validation_steps_per_epoch
-        self.validation_epochs_frequency = validation_epochs_frequency
-        self.validation_steps_frequency = validation_steps_frequency
+        self.validation_epochs = config.training.validation_epochs
+        self.validation_epochs_frequency = config.training.validation_epochs_frequency
+        self.validation_steps_frequency = config.training.validation_steps_frequency
 
         # Checkpoint policies
-        self.periodic_ckpt_interval = periodic_ckpt_interval
-        if experiment_path is None:
+        self.periodic_ckpt_interval = config.checkpoint.periodic_interval
+        if config.checkpoint.experiment_path is None:
             self.experiment_path = Path(
                 "./experiments/{}-{}/".format(
                     self.__class__.__name__,
@@ -188,40 +125,32 @@ class ArcD4PG:
                 )
             )
         else:
-            self.experiment_path = Path(experiment_path)
+            self.experiment_path = Path(config.checkpoint.experiment_path)
 
         logger.info(
             "Experiment outputs will be written to: %s", self.experiment_path.resolve()
         )
 
-        # Default distributional RL parameters
-        if num_atoms is None:
-            num_atoms = {"pixel_wise": 51, "binary": 51}
-        if v_min is None:
-            v_min = {"pixel_wise": -10, "binary": -1}
-        if v_max is None:
-            v_max = {"pixel_wise": 10, "binary": 1}
-
         # Initialize networks
         logger.info("Initializing actor and critic networks...")
         logger.info("Creating actor network...")
         self.actor = ArcActorNetwork(
-            grid_size=grid_size,
-            color_values=color_values,
-            embedding_size=embedding_size,
-            config=self.config,
+            grid_size=config.env.grid_size,
+            color_values=config.env.color_values,
+            embedding_size=config.network.embedding_size,
+            config=self.cuda_config,
         )
         logger.info("Actor network created successfully")
 
         logger.info("Creating critic network...")
         self.critic = ArcCriticNetwork(
-            grid_size=grid_size,
-            color_values=color_values,
-            num_atoms=num_atoms,
-            v_min=v_min,
-            v_max=v_max,
-            embedding_size=embedding_size,
-            config=self.config,
+            grid_size=config.env.grid_size,
+            color_values=config.env.color_values,
+            num_atoms=config.distributional.num_atoms,
+            v_min=config.distributional.v_min,
+            v_max=config.distributional.v_max,
+            embedding_size=config.network.embedding_size,
+            config=self.cuda_config,
         )
         logger.info("Critic network created successfully")
 
@@ -229,13 +158,13 @@ class ArcD4PG:
         logger.info("Creating training stepper...")
         self.training_stepper = ArcStepper(
             max_steps_per_epoch=self.max_steps_per_epoch,
-            dataset_path=dataset_path,
-            grid_size=grid_size,
-            color_values=color_values,
+            dataset_path=config.dataset_path,
+            grid_size=config.env.grid_size,
+            color_values=config.env.color_values,
             env_mode=ArcEnvRunningMode.TRAIN,
             actor=self.actor,
-            config=self.config,
-            n_steps=n_steps,
+            config=self.cuda_config,
+            n_steps=config.d4pg.n_steps,
         )
         logger.info("Training stepper created successfully")
 
@@ -243,39 +172,39 @@ class ArcD4PG:
         logger.info("Creating validation stepper...")
         self.validation_stepper = ArcStepper(
             max_steps_per_epoch=self.validation_steps_per_epoch,
-            dataset_path=dataset_path,
-            grid_size=grid_size,
-            color_values=color_values,
+            dataset_path=config.dataset_path,
+            grid_size=config.env.grid_size,
+            color_values=config.env.color_values,
             env_mode=ArcEnvRunningMode.TRAIN,
             actor=self.actor,
-            config=self.config,
+            config=self.cuda_config,
         )
         logger.info("Validation stepper created successfully")
 
         # Create world model stepper (optional Dyna-style imagination)
-        self.use_world_model = use_world_model
+        self.use_world_model = config.world_model.enabled
         self.world_model_stepper: Optional[ArcWorldModelStepper] = None
-        if use_world_model:
+        if config.world_model.enabled:
             logger.info("Creating world model stepper...")
             reward_model = RewardWorldModel(
-                grid_size=grid_size,
-                color_values=color_values,
-                embedding_size=embedding_size,
-                config=self.config,
+                grid_size=config.env.grid_size,
+                color_values=config.env.color_values,
+                embedding_size=config.network.embedding_size,
+                config=self.cuda_config,
             )
             self.world_model_stepper = ArcWorldModelStepper(
-                grid_size=grid_size,
-                color_values=color_values,
+                grid_size=config.env.grid_size,
+                color_values=config.env.color_values,
                 actor=self.actor,
-                config=self.config,
+                config=self.cuda_config,
                 reward_model=reward_model,
-                reward_model_lr=world_model_lr,
-                step_horizon=imagination_horizon,
-                n_steps=n_steps,
-                gamma=gamma,
-                model_update_frequency=model_update_frequency,
-                imagination_ratio=imagination_ratio,
-                imagination_frequency=imagination_frequency,
+                reward_model_lr=config.world_model.learning_rate,
+                step_horizon=config.world_model.imagination_horizon,
+                n_steps=config.d4pg.n_steps,
+                gamma=config.d4pg.gamma,
+                model_update_frequency=config.world_model.model_update_frequency,
+                imagination_ratio=config.world_model.imagination_ratio,
+                imagination_frequency=config.world_model.imagination_frequency,
             )
             logger.info("World model stepper created successfully")
 
@@ -284,22 +213,22 @@ class ArcD4PG:
         self.d4pg_core = D4PGCore(
             actor=self.actor,
             critic=self.critic,
-            policy_lr=policy_lr,
-            critic_lr=critic_lr,
-            gamma=gamma,
-            tau=tau,
-            n_steps=n_steps,
-            config=self.config,
-            amp_enabled=amp_enabled,
+            policy_lr=config.d4pg.policy_lr,
+            critic_lr=config.d4pg.critic_lr,
+            gamma=config.d4pg.gamma,
+            tau=config.d4pg.tau,
+            n_steps=config.d4pg.n_steps,
+            config=self.cuda_config,
+            amp_enabled=config.system.amp_enabled,
             **kwargs,
         )
 
         # Initialize trainer with callbacks
         self._setup_trainer(
-            replay_buffer_size=replay_buffer_size,
-            alpha=alpha,
-            beta=beta,
-            warmup_buffer_ratio=warmup_buffer_ratio,
+            replay_buffer_size=config.replay_buffer.size,
+            alpha=config.replay_buffer.alpha,
+            beta=config.replay_buffer.beta,
+            warmup_buffer_ratio=config.replay_buffer.warmup_ratio,
         )
 
     def _get_hparams(self):

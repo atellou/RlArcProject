@@ -5,7 +5,17 @@ import argparse
 import logging
 from pathlib import Path
 
-from experiments.arc_d4pg import ArcD4PG
+from experiments.arc_d4pg import (
+    ArcD4PG,
+    ArcD4PGConfig,
+    CheckpointConfig,
+    D4PGConfig,
+    EnvConfig,
+    ReplayBufferConfig,
+    SystemConfig,
+    TrainingConfig,
+    WorldModelConfig,
+)
 
 
 def main():
@@ -184,30 +194,46 @@ def main():
         default_ds = Path(__file__).resolve().parents[1] / "tests" / "test_data"
         dataset_path = args.dataset_path or str(default_ds.resolve())
 
-        # Initialize experiment
-        experiment = ArcD4PG(
-            grid_size=args.grid_size,
-            color_values=args.color_values,
-            batch_size=args.batch_size,
-            min_train_batch_size=args.min_train_batch_size,
-            policy_lr=args.policy_lr,
-            critic_lr=args.critic_lr,
-            gamma=args.gamma,
-            warmup_buffer_ratio=args.warmup_buffer_ratio,
-            max_steps_per_epoch=args.max_steps_per_epoch,
-            # World model config
-            use_world_model=args.use_world_model,
-            world_model_lr=args.world_model_lr,
-            imagination_horizon=args.imagination_horizon,
-            imagination_ratio=args.imagination_ratio,
-            imagination_frequency=args.imagination_frequency,
-            model_update_frequency=args.model_update_frequency,
-            # System config
-            amp_enabled=not args.no_amp,
-            device=args.device,
-            seed=args.seed,
+        # Build config from CLI args
+        config = ArcD4PGConfig(
             dataset_path=dataset_path,
+            env=EnvConfig(
+                grid_size=args.grid_size,
+                color_values=args.color_values,
+                batch_size=args.batch_size,
+            ),
+            d4pg=D4PGConfig(
+                policy_lr=args.policy_lr,
+                critic_lr=args.critic_lr,
+                gamma=args.gamma,
+            ),
+            replay_buffer=ReplayBufferConfig(
+                warmup_ratio=args.warmup_buffer_ratio,
+            ),
+            training=TrainingConfig(
+                max_steps_per_epoch=args.max_steps_per_epoch,
+                min_train_batch_size=args.min_train_batch_size,
+            ),
+            world_model=WorldModelConfig(
+                enabled=args.use_world_model,
+                learning_rate=args.world_model_lr,
+                imagination_horizon=args.imagination_horizon,
+                imagination_ratio=args.imagination_ratio,
+                imagination_frequency=args.imagination_frequency,
+                model_update_frequency=args.model_update_frequency,
+            ),
+            checkpoint=CheckpointConfig(
+                experiment_path=args.checkpoint_dir,
+            ),
+            system=SystemConfig(
+                amp_enabled=not args.no_amp,
+                device=args.device,
+                seed=args.seed,
+            ),
         )
+
+        # Initialize experiment
+        experiment = ArcD4PG(config)
 
         # Load checkpoint if specified
         if args.load_checkpoint:
