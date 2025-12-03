@@ -94,8 +94,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             The initial observation and information from the parent
             environment's reset method.
         """
+        options["mode"] = ArcEnvRunningMode.TRAIN
         reset = super().reset(seed=seed, options=options)
-        self.mode: ArcEnvRunningMode = self.env.mode
         self.batch_size: int = options["batch"]["input"].shape[0]
         # Reward attributes - pixel-wise rewards
         self._reward_storage = TorchQueue(
@@ -144,10 +144,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             torch.Tensor: The difference between the current grid and the
             target grid.
         """
-        if not self.mode.is_train():
-            raise ValueError(
-                "get_difference should only be called during training mode"
-            )
         obs = self.get_wrapper_attr("observations")
         grid_grids = obs[StateKeys.GRID.value]
         target_grids = obs[StateKeys.TARGET.value]
@@ -275,16 +271,12 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             truncated: Whether the episode has been truncated.
             info: Additional information about the environment.
         """
-        if self.mode.is_train():
-            self.last_diffs = self.get_difference()
+        self.last_diffs = self.get_difference()
         obs, _, terminated, truncated, info = self.env.step(actions)
-        if self.mode.is_train():
-            self.grid_diffs = self.get_difference()
-            reward = self.reward(
-                self.last_diffs, self.grid_diffs, actions[ActionKeys.SUBMIT.value]
-            )
-        else:
-            reward = torch.zeros_like(self.last_reward)
+        self.grid_diffs = self.get_difference()
+        reward = self.reward(
+            self.last_diffs, self.grid_diffs, actions[ActionKeys.SUBMIT.value]
+        )
 
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(-1))
         self.last_reward = reward

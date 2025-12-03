@@ -43,9 +43,6 @@ from experiments.configs import (  # noqa: F401
 )
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.common.enums import RewardKeys
-from rlarcworld.environments.arc_batch_grid_env import (
-    ArcEnvRunningMode,
-)
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
@@ -161,7 +158,6 @@ class ArcD4PG:
             dataset_path=config.dataset_path,
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
-            env_mode=ArcEnvRunningMode.TRAIN,
             actor=self.actor,
             config=self.cuda_config,
             n_step_config=config.d4pg.n_step_config,
@@ -175,7 +171,6 @@ class ArcD4PG:
             dataset_path=config.dataset_path,
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
-            env_mode=ArcEnvRunningMode.TRAIN,
             actor=self.actor,
             config=self.cuda_config,
         )

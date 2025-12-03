@@ -4,7 +4,7 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.common.configs import NStepMinVMaxConfig
-from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
+from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.core import EnvStepper
@@ -197,7 +197,6 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         dataset_path="tests/test_data/",
         grid_size=grid_size,
         color_values=color_values,
-        env_mode=ArcEnvRunningMode.TRAIN,
         actor=actor,
         config={"device": device, "amp_enabled": False, "use_checkpointing": False},
         n_step_config=NStepMinVMaxConfig(
@@ -364,7 +363,6 @@ def test_env_stepper_step_stream_from_samples(device):
         dataset_path="tests/test_data/",
         grid_size=grid_size,
         color_values=color_values,
-        env_mode=ArcEnvRunningMode.TRAIN,
         actor=actor,
         config={"device": device, "amp_enabled": False, "use_checkpointing": False},
         n_step_config=NStepMinVMaxConfig(

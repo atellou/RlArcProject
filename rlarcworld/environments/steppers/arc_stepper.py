@@ -4,6 +4,7 @@ import logging
 from typing import Any, Callable, Tuple
 
 import torch
+from tensordict import TensorDict
 
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer, ComposeTransforms
 from rlarcworld.common.configs import NStepMinVMaxConfig
@@ -28,7 +29,6 @@ class PixelWiseArcStepper:
         dataset_path: str,
         grid_size: int,
         color_values: int,
-        env_mode: ArcEnvRunningMode,
         actor: ArcActorNetwork,
         config: CudaConfig,
         n_step_config: NStepMinVMaxConfig | None = None,
@@ -40,7 +40,6 @@ class PixelWiseArcStepper:
             dataset_path (str): Path to the dataset.
             grid_size (int): Size of the ARC grid.
             color_values (int): Number of possible colors.
-            env_mode (ArcEnvRunningMode): Environment running mode.
             actor (ArcActorNetwork): Actor network.
             config (dict): Configuration dictionary.
             n_step_config (NStepMinVMaxConfig | None):
@@ -48,7 +47,6 @@ class PixelWiseArcStepper:
         """
         # Initialize dataset and environment
         logger.info("Setting up dataset and environment...")
-        self.env_mode = env_mode
         self.device = config["device"]
         self.n_step_config = (
             n_step_config if n_step_config is not None else NStepMinVMaxConfig()
@@ -113,29 +111,54 @@ class PixelWiseArcStepper:
             sample: The sample from the dataset.
             **kwargs: Additional keyword arguments.
         """
-        options: dict = kwargs.setdefault("options", {"mode": self.env_mode.value})
-        running_mode = options.setdefault("mode", self.env_mode.value)
-        if running_mode != self.env_mode.value:
-            raise ValueError(f"Unsupported running mode: {running_mode}")
+        options: dict = kwargs.setdefault("options", {})
+        options["mode"] = ArcEnvRunningMode.TRAIN
 
-        # Accept single-sample outputs from dataset and add batch dim if needed
-        task = sample["task"]
-        examples = sample["examples"]
-        # Ensure 'input' and 'output' have shape (B, H, W)
-        inp = task["input"]
+        # Handle both dict samples and TensorDict states
+        if isinstance(sample, TensorDict):
+            # Sample is a state from replay buffer
+            # Extract grid as input (could be "grid" or "initial" key)
+            grid = sample.get("grid", sample.get("initial"))
+            if grid is None:
+                raise ValueError("Sample TensorDict must have 'grid' or 'initial' key")
+            inp = grid
+            # For TensorDict, target must be present for TRAIN mode
+            out = sample.get("target")
+            if out is None:
+                raise ValueError(
+                    "Sample TensorDict must have 'target' key for TRAIN mode. "
+                    "PixelWiseArcStepper requires target for pixel-wise reward."
+                )
+            examples = sample.get("examples")
+        else:
+            # Sample is a dict with task/examples structure
+            task: dict[str, torch.Tensor] = sample["task"]
+            examples = sample["examples"]
+            inp = task["input"]
+            out = task.get("output")
+            if out is None:
+                raise ValueError(
+                    "Sample task must have 'output' key for TRAIN mode. "
+                    "PixelWiseArcStepper requires target for pixel-wise reward."
+                )
+
+        # Ensure 'input' has shape (B, H, W)
         if inp.ndim == 2:
             inp = inp.unsqueeze(0)
-        batched_task = {"input": inp}
+        elif inp.ndim == 4:  # (B, C, H, W) -> (B, H, W)
+            inp = inp[:, 0, :, :]
 
-        if running_mode == ArcEnvRunningMode.TRAIN.value:
-            out = task["output"]
-            if out.ndim == 2:
-                out = out.unsqueeze(0)
-            batched_task["output"] = out
+        # Ensure 'output' has shape (B, H, W)
+        if out.ndim == 2:
+            out = out.unsqueeze(0)
+        elif out.ndim == 4:  # (B, C, H, W) -> (B, H, W)
+            out = out[:, 0, :, :]
+        batched_task = {"input": inp, "output": out}
 
         # Ensure examples have shape (B, E, 2, H, W)
-        if examples.ndim == 4:
+        if examples is not None and examples.ndim == 4:
             examples = examples.unsqueeze(0)
+
         args = {"batch": batched_task, "examples": examples}
         options.update(args)
         env.reset(**kwargs)
