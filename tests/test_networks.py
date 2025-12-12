@@ -7,10 +7,16 @@ from tensordict import TensorDict
 
 from rlarcworld.common.enums import (
     ActionKeys,
+    GridEncoderIdsType,
     RewardKeys,
     StateKeys,
 )
 from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.actor_vitarc import (
+    GridTokenizer,
+    ObjectIndexExtractor,
+    ViTARCActor,
+)
 from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.nn_modules import (
@@ -139,13 +145,241 @@ def test_train_arc_actor_network(batch_size: int):
     assert variability >= 0.5
 
 
-def test_train_arc_critic_network(batch_size: int):
-    """Validate the critic network is trainable by observing loss variability."""
-    losses = [train_arc_critic_network(batch_size) for _ in range(10)]
-    variability = sum(
-        [not torch.isclose(losses[i], losses[i + 1]) for i in range(len(losses) - 1)]
-    ) / max(1, (len(losses) - 1))
-    assert variability >= 0.5
+# ---------------- GridTokenizer Tests ----------------
+class TestGridTokenizer:
+    def test_grid_tokenizer_encode_grid(self):
+        """Test GridTokenizer.encode_grid produces correct shapes and values."""
+        logger.info("Testing GridTokenizer.encode_grid")
+        batch_size = 4
+        grid_size = 30
+        color_values = 11
+
+        tokenizer = GridTokenizer(grid_size=grid_size)
+
+        # Create random grid [B, 1, H, W]
+        grid = torch.randint(
+            0, color_values, size=(batch_size, 1, grid_size, grid_size)
+        )
+
+        input_ids, attention_mask, object_idx = tokenizer.encode_grid(grid)
+
+        # Check shapes
+        # Expected seq_len: (grid_size + 1) * (grid_size + 1) + 2 (BOS + grid + EOS)
+        expected_grid_tokens = (grid_size + 1) * (grid_size + 1)
+        expected_seq_len = 1 + expected_grid_tokens + 1  # BOS + grid + EOS
+
+        assert input_ids.shape == (batch_size, expected_seq_len)
+        assert attention_mask.shape == (batch_size, expected_seq_len)
+        assert object_idx is None  # No object extractor provided
+
+        # Check BOS and EOS tokens
+        assert torch.all(input_ids[:, 0] == GridEncoderIdsType.BOS_ID)
+        assert torch.all(input_ids[:, -1] == GridEncoderIdsType.EOS_ID)
+
+        # Check attention mask is 1 for non-padding
+        assert torch.all(attention_mask[input_ids != GridEncoderIdsType.PAD_ID] == 1)
+
+    def test_grid_tokenizer_with_object_extractor(self):
+        """Test GridTokenizer with ObjectIndexExtractor returns object_idx."""
+        logger.info("Testing GridTokenizer with ObjectIndexExtractor")
+        batch_size = 2
+        grid_size = 10  # Smaller for faster test
+        color_values = 11
+
+        object_extractor = ObjectIndexExtractor(padding_id=GridEncoderIdsType.PAD_ID)
+        tokenizer = GridTokenizer(
+            grid_size=grid_size, object_extractor=object_extractor
+        )
+
+        grid = torch.randint(
+            0, color_values, size=(batch_size, 1, grid_size, grid_size)
+        )
+
+        input_ids, attention_mask, object_idx = tokenizer.encode_grid(grid)
+
+        assert object_idx is not None
+        assert object_idx.shape == input_ids.shape
+        # Object IDs should be non-negative
+        assert torch.all(object_idx >= 0)
+
+    def test_grid_tokenizer_encode_temporal_grids(self):
+        """Test GridTokenizer.encode_temporal_grids with all grids."""
+        logger.info("Testing GridTokenizer.encode_temporal_grids")
+        batch_size = 2
+        grid_size = 10
+        color_values = 11
+
+        tokenizer = GridTokenizer(grid_size=grid_size)
+
+        current = torch.randint(
+            0, color_values, size=(batch_size, 1, grid_size, grid_size)
+        )
+        initial = torch.randint(
+            0, color_values, size=(batch_size, 1, grid_size, grid_size)
+        )
+        last_grid = torch.randint(
+            0, color_values, size=(batch_size, 1, grid_size, grid_size)
+        )
+
+        input_ids, attention_mask, temporal_ids, object_idx = (
+            tokenizer.encode_temporal_grids(
+                current=current,
+                initial=initial,
+                last_grid=last_grid,
+            )
+        )
+
+        # Check shapes match
+        assert input_ids.shape == attention_mask.shape
+        assert input_ids.shape == temporal_ids.shape
+
+        # Check temporal IDs: 0=initial, 1=last, 2=current
+        assert torch.all(temporal_ids >= 0)
+        assert torch.all(temporal_ids <= 2)
+
+        # Check BOS token
+        assert torch.all(input_ids[:, 0] == GridEncoderIdsType.BOS_ID)
+
+    def test_grid_tokenizer_encode_example_pair(self):
+        """Test GridTokenizer.encode_example_pair."""
+        logger.info("Testing GridTokenizer.encode_example_pair")
+        batch_size = 2
+        grid_size = 10
+        color_values = 11
+
+        tokenizer = GridTokenizer(grid_size=grid_size)
+
+        # Example pair: [B, 2, H, W] where dim 1 is (input, output)
+        example = torch.randint(
+            0, color_values, size=(batch_size, 2, grid_size, grid_size)
+        )
+
+        input_ids, attention_mask, object_idx = tokenizer.encode_example_pair(example)
+
+        # Check shapes
+        assert input_ids.shape == attention_mask.shape
+
+        # Check BOS and EOS
+        assert torch.all(input_ids[:, 0] == GridEncoderIdsType.BOS_ID)
+        assert torch.all(input_ids[:, -1] == GridEncoderIdsType.EOS_ID)
+
+        # Check SEP token exists (between input and output grids)
+        assert torch.any(input_ids == GridEncoderIdsType.SEP_ID)
+
+    def test_object_index_extractor(self):
+        """Test ObjectIndexExtractor produces valid object indices."""
+        logger.info("Testing ObjectIndexExtractor")
+        batch_size = 2
+        grid_size = 10
+
+        extractor = ObjectIndexExtractor(padding_id=0)
+
+        # Create grid with distinct colored regions
+        grid = torch.zeros(batch_size, grid_size, grid_size, dtype=torch.long)
+        # Add some colored objects
+        grid[:, 2:5, 2:5] = 1  # Red square
+        grid[:, 6:8, 6:8] = 2  # Blue square
+
+        object_idx = extractor(grid)
+
+        assert object_idx.shape == (batch_size, grid_size * grid_size)
+        # Background should be 0
+        # Objects should have positive IDs
+        assert torch.all(object_idx >= 0)
+
+
+# ---------------- ViTARCActor Tests ----------------
+
+
+class TestViTARCActor:
+    def test_vitarc_actor_forward(self):
+        """Test ViTARCActor forward pass produces valid action probabilities."""
+        logger.info("Testing ViTARCActor forward pass")
+        batch_size = 2
+        grid_size = 30
+        color_values = 11
+        num_examples = 3
+
+        # Create actor with minimal config for faster test
+        network = ViTARCActor(
+            grid_size=grid_size,
+            color_values=color_values,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,  # Disable OPE for faster test
+            grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+        )
+
+        input_sample = TensorDict(
+            {
+                StateKeys.LAST_GRID.value: torch.randint(
+                    0, color_values, size=(batch_size, 1, grid_size, grid_size)
+                ),
+                StateKeys.GRID.value: torch.randint(
+                    0, color_values, size=(batch_size, 1, grid_size, grid_size)
+                ),
+                StateKeys.EXAMPLES.value: torch.randint(
+                    0,
+                    color_values,
+                    size=(batch_size, num_examples, 2, grid_size, grid_size),
+                ),
+                StateKeys.INITIAL.value: torch.randint(
+                    0, color_values, size=(batch_size, 1, grid_size, grid_size)
+                ),
+                StateKeys.INDEX.value: torch.randint(
+                    0, grid_size, size=(batch_size, 1, grid_size, grid_size)
+                ),
+            }
+        )
+
+        output = network(input_sample)
+
+        # Check output keys
+        assert ActionKeys.X_LOCATION.value in output
+        assert ActionKeys.Y_LOCATION.value in output
+        assert ActionKeys.COLOR_VALUES.value in output
+        assert ActionKeys.SUBMIT.value in output
+
+        # Check shapes
+        assert output[ActionKeys.X_LOCATION.value].shape == (batch_size, grid_size)
+        assert output[ActionKeys.Y_LOCATION.value].shape == (batch_size, grid_size)
+        assert output[ActionKeys.COLOR_VALUES.value].shape == (batch_size, color_values)
+        assert output[ActionKeys.SUBMIT.value].shape == (batch_size, 2)
+
+        # Check probabilities sum to 1
+        for key, probs in output.items():
+            torch.testing.assert_close(
+                probs.sum(dim=-1),
+                torch.ones(batch_size, device=network.device),
+                atol=1e-5,
+                rtol=1e-5,
+            )
+            assert torch.all(probs >= 0), f"Negative probabilities for {key}"
+            assert torch.all(probs <= 1), f"Probabilities > 1 for {key}"
+
+    def test_train_vitarc_actor(self, batch_size: int):
+        """Validate ViTARCActor is trainable by observing loss variability."""
+        losses = [train_vitarc_actor(batch_size) for _ in range(5)]
+        variability = sum(
+            [
+                not torch.isclose(losses[i], losses[i + 1])
+                for i in range(len(losses) - 1)
+            ]
+        ) / max(1, (len(losses) - 1))
+        assert variability >= 0.3  # Lower threshold due to smaller model
+
+    def test_train_arc_critic_network(self, batch_size: int):
+        """Validate the critic network is trainable by observing loss variability."""
+        losses = [train_arc_critic_network(batch_size) for _ in range(10)]
+        variability = sum(
+            [
+                not torch.isclose(losses[i], losses[i + 1])
+                for i in range(len(losses) - 1)
+            ]
+        ) / max(1, (len(losses) - 1))
+        assert variability >= 0.5
 
 
 # ---------------- Helpers (former methods) ----------------
@@ -197,9 +431,6 @@ def train_arc_critic_network(batch_size: int):
             dc.pop(key)
             network.input_val(dc)
 
-    input_sample[StateKeys.EXAMPLE_MASK.value] = torch.randint(
-        0, 2, size=(batch_size, 10)
-    )
     action_probs = TensorDict(
         {
             ActionKeys.X_LOCATION.value: torch.softmax(
@@ -321,10 +552,6 @@ def train_arc_actor_network(batch_size: int):
             dc.pop(key)
             network.input_val(dc)
 
-    input_sample[StateKeys.EXAMPLE_MASK.value] = torch.randint(
-        0, 2, size=(batch_size, 10)
-    )
-
     to_zero = []
     for key in input_sample.keys():
         if torch.rand(1).item() < 0.2:
@@ -379,6 +606,95 @@ def train_arc_actor_network(batch_size: int):
             assert not torch.all(param.grad.abs().sum() == 0) or torch.all(
                 input_sample.get(key, torch.tensor(0)) == 0
             ), f"Gradient of zero for ArcActorNetwork for: {name}"
+    optimizer.step()
+    return loss
+
+
+def train_vitarc_actor(batch_size: int):
+    """Train ViTARCActor for one step and return loss."""
+    grid_size = 30
+    color_values = 11
+    num_examples = 2
+
+    logger.info(
+        "Testing ViTARCActor with batch size: %s, grid_size: %s",
+        batch_size,
+        grid_size,
+    )
+
+    # Use minimal config for faster training
+    network = ViTARCActor(
+        grid_size=grid_size,
+        color_values=color_values,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,
+        grids_to_encode=[StateKeys.GRID.value],
+    )
+
+    input_sample = TensorDict(
+        {
+            StateKeys.LAST_GRID.value: torch.randint(
+                0, color_values, size=(batch_size, 1, grid_size, grid_size)
+            ),
+            StateKeys.GRID.value: torch.randint(
+                0, color_values, size=(batch_size, 1, grid_size, grid_size)
+            ),
+            StateKeys.EXAMPLES.value: torch.randint(
+                0,
+                color_values,
+                size=(batch_size, num_examples, 2, grid_size, grid_size),
+            ),
+            StateKeys.INITIAL.value: torch.randint(
+                0, color_values, size=(batch_size, 1, grid_size, grid_size)
+            ),
+            StateKeys.INDEX.value: torch.randint(
+                0, grid_size, size=(batch_size, 1, grid_size, grid_size)
+            ),
+        }
+    )
+
+    output = network(input_sample)
+
+    # Use KLDivLoss since output is softmax probabilities, not logits
+    criterion = torch.nn.KLDivLoss(reduction="batchmean")
+    optimizer = torch.optim.Adam(network.parameters(), lr=1e-3)
+
+    target = TensorDict(
+        {
+            ActionKeys.X_LOCATION.value: torch.softmax(
+                torch.rand(size=(batch_size, grid_size)), dim=1
+            ),
+            ActionKeys.Y_LOCATION.value: torch.softmax(
+                torch.rand(size=(batch_size, grid_size)), dim=1
+            ),
+            ActionKeys.COLOR_VALUES.value: torch.softmax(
+                torch.rand(size=(batch_size, color_values)), dim=1
+            ),
+            ActionKeys.SUBMIT.value: torch.softmax(
+                torch.rand(size=(batch_size, 2)), dim=1
+            ),
+        }
+    ).to(network.device)
+
+    # KLDivLoss expects log-probabilities as input
+    loss = sum([criterion(output[k].log(), target[k]) for k in output.keys()])
+
+    assert not torch.isnan(loss), "Loss is NaN for ViTARCActor"
+
+    optimizer.zero_grad()
+    loss.backward()
+
+    # Check gradients flow
+    grad_count = 0
+    for name, param in network.named_parameters():
+        if param.grad is not None:
+            grad_count += 1
+
+    assert grad_count > 0, "No gradients flowing in ViTARCActor"
+
     optimizer.step()
     return loss
 
@@ -440,11 +756,6 @@ def train_reward_world_model(batch_size: int):
         with pytest.raises(AssertionError):
             dc.pop(key)
             network.input_val(dc)
-
-    # Add optional example mask
-    input_sample[StateKeys.EXAMPLE_MASK.value] = torch.randint(
-        0, 2, size=(batch_size, 10)
-    )
 
     # Forward pass
     optimizer = torch.optim.RMSprop(network.parameters())
