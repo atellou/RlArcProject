@@ -10,7 +10,7 @@ from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
-from rlarcworld.nn_modules import RlArcWorldViTARCConfig
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)

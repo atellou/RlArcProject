@@ -9,7 +9,7 @@ from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.common.enums import StateKeys
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.nn_modules import RlArcWorldViTARCConfig
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.logging_utils import configure_logger
 

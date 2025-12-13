@@ -15,7 +15,7 @@ import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import RewardKeys, StateKeys
-from rlarcworld.nn_modules import (
+from rlarcworld.models.nn_modules import (
     RewardHeadFromEncoder,
     RlArcWorldViTARC,
     RlArcWorldViTARCConfig,

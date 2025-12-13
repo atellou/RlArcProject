@@ -12,8 +12,8 @@ from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.common.protocols import ActorCriticCoreProto
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.models.actor import ViTARCActor
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
-from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)

@@ -17,8 +17,8 @@ from rlarcworld.environments.arc_batch_grid_env import (
 )
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
-from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 
 logger = logging.getLogger(__name__)
 

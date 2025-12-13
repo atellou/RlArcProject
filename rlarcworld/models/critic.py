@@ -23,7 +23,7 @@ from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys, StateKeys
 from rlarcworld.common.types import STATE_REQUIRED_KEYS
-from rlarcworld.nn_modules import (
+from rlarcworld.models.nn_modules import (
     CriticHeadFromEncoder,
     RlArcWorldViTARC,
     RlArcWorldViTARCConfig,

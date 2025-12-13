@@ -28,13 +28,13 @@ from tensordict import TensorDict
 
 from rlarcworld.common.enums import StateKeys
 from rlarcworld.common.types import ACTION_KEYS_SET, STATE_REQUIRED_KEYS
-from rlarcworld.models.vit_arc import (
-    ViTARCForConditionalGeneration,
-)
-from rlarcworld.nn_modules import (
+from rlarcworld.models.nn_modules import (
     ActionHeadFromEncoder,
     RlArcWorldViTARC,
     RlArcWorldViTARCConfig,
+)
+from rlarcworld.models.vit_arc import (
+    ViTARCForConditionalGeneration,
 )
 from rlarcworld.utils.device import enable_cuda
 

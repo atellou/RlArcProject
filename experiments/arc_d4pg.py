@@ -48,8 +48,8 @@ from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelSte
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
-from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
