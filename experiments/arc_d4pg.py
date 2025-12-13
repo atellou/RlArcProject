@@ -42,13 +42,14 @@ from experiments.configs import (  # noqa: F401
     WorldModelConfig,
 )
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.common.enums import RewardKeys, StateKeys
+from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.models.reward_world_model import RewardWorldModel
+from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
@@ -131,15 +132,23 @@ class ArcD4PG:
         # Initialize networks
         logger.info("Initializing actor and critic networks...")
         logger.info("Creating actor network...")
-        self.actor = ViTARCActor(
+
+        actor_config = RlArcWorldViTARCConfig(
             grid_size=config.env.grid_size,
-            color_values=config.env.color_values,
             d_model=64,
             d_ff=128,
             num_layers=2,
             num_heads=4,
-            use_ope=False,  # Disable OPE for faster test
-            grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+            dropout=0.1,
+            ape_type="SinusoidalAPE2D",
+            rpe_type="Two-slope-Alibi",
+            use_ope=False,
+            ape_mixer="default",
+        )
+
+        self.actor = ViTARCActor(
+            color_values=config.env.color_values,
+            rl_vit_arc_config=actor_config,
         )
         logger.info("Actor network created successfully")
 

@@ -346,15 +346,20 @@ def _build_simple_core(
     max_grad_norm: float = 0.0,
 ) -> D4PGCore:
     # Retained for the specialized AMP/grad-clipping test
-    actor = ViTARCActor(
+    from rlarcworld.nn_modules import RlArcWorldViTARCConfig
+
+    rl_vit_arc_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
-        color_values=color_values,
         d_model=64,
         d_ff=128,
         num_layers=2,
         num_heads=4,
         use_ope=False,  # Disable OPE for faster test
         grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    )
+    actor = ViTARCActor(
+        color_values=color_values,
+        rl_vit_arc_config=rl_vit_arc_config,
     ).to(device)
     critic = ArcCriticNetwork(
         grid_size=grid_size,

@@ -13,6 +13,7 @@ from rlarcworld.common.protocols import ActorCriticCoreProto
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.reward_world_model import RewardWorldModel
+from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
@@ -52,15 +53,22 @@ def config(device):
 @pytest.fixture
 def actor(grid_size, color_values, config):
     """Create an actor network for tests."""
-    actor = ViTARCActor(
+    actor_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
-        color_values=color_values,
         d_model=64,
         d_ff=128,
         num_layers=2,
         num_heads=4,
-        use_ope=False,  # Disable OPE for faster test
-        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+        dropout=0.1,
+        ape_type="SinusoidalAPE2D",
+        rpe_type="Two-slope-Alibi",
+        use_ope=False,
+        ape_mixer="default",
+    )
+
+    actor = ViTARCActor(
+        color_values=color_values,
+        rl_vit_arc_config=actor_config,
     ).to(config["device"])
     actor.eval()
     return actor

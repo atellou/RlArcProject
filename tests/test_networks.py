@@ -15,6 +15,7 @@ from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.models.grid_encoder import GridEncoder, ObjectIndexExtractor
 from rlarcworld.models.reward_world_model import RewardWorldModel
+from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 
 logger = logging.getLogger(__name__)
 
@@ -190,16 +191,19 @@ class TestViTARCActor:
         color_values = 11
         num_examples = 3
 
-        # Create actor with minimal config for faster test
-        network = ViTARCActor(
+        rl_vit_arc_config = RlArcWorldViTARCConfig(
             grid_size=grid_size,
-            color_values=color_values,
             d_model=64,
             d_ff=128,
             num_layers=2,
             num_heads=4,
-            use_ope=False,  # Disable OPE for faster test
-            grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+            use_ope=False,
+            grids_to_encode=[StateKeys.GRID.value],
+        )
+        # Create actor with minimal config for faster test
+        network = ViTARCActor(
+            color_values=color_values,
+            rl_vit_arc_config=rl_vit_arc_config,
         )
 
         input_sample = TensorDict(
@@ -415,16 +419,19 @@ def train_vitarc_actor(batch_size: int):
         grid_size,
     )
 
-    # Use minimal config for faster training
-    network = ViTARCActor(
+    rl_vit_arc_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
-        color_values=color_values,
         d_model=64,
         d_ff=128,
         num_layers=2,
         num_heads=4,
         use_ope=False,
         grids_to_encode=[StateKeys.GRID.value],
+    )
+    # Use minimal config for faster training
+    network = ViTARCActor(
+        color_values=color_values,
+        rl_vit_arc_config=rl_vit_arc_config,
     )
 
     input_sample = TensorDict(

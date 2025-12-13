@@ -16,6 +16,7 @@ from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.runners.core import Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
@@ -56,15 +57,23 @@ def batch_size() -> int:
 
 @pytest.fixture()
 def actor(device, grid_size, color_values) -> ViTARCActor:
-    return ViTARCActor(
+    config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
-        color_values=color_values,
         d_model=64,
         d_ff=128,
         num_layers=2,
         num_heads=4,
-        use_ope=False,  # Disable OPE for faster test
-        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+        use_ope=False,
+        grids_to_encode=[StateKeys.GRID.value],
+    )
+    return ViTARCActor(
+        color_values=color_values,
+        rl_vit_arc_config=config,
+        config={
+            "device": str(device),
+            "amp_enabled": False,
+            "use_checkpointing": False,
+        },
     )
 
 
