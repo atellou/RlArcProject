@@ -25,7 +25,6 @@ class ArcSampleTransformer:
     def __init__(
         self,
         output_size: tuple[int, int],
-        examples_stack_dim: int = 10,
         padding_constant_value: int = -1,
         zero_based_correction: int = 1,
     ):
@@ -34,8 +33,6 @@ class ArcSampleTransformer:
         Args:
             output_size (tuple[int, int]): Desired output size for the grids as
                 (height, width).
-            examples_stack_dim (int, optional): Dimension of the stack of
-                examples. Defaults to 10.
             padding_constant_value (int, optional): Constant value to pad the
                 grids. Defaults to -1.
             zero_based_correction (int, optional): Correction to make grid's
@@ -47,7 +44,6 @@ class ArcSampleTransformer:
         self.zero_based_correction = zero_based_correction
         self.constant_value = padding_constant_value
         self.output_size = output_size
-        self.examples_stack_dim = examples_stack_dim
 
     def pad_to_size(self, grid: torch.Tensor) -> torch.Tensor:
         """Pad the grid to the given size.

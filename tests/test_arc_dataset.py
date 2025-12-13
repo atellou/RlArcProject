@@ -22,10 +22,9 @@ def padding_constant_value():
 
 
 @pytest.fixture()
-def transform(grid_size, n_examples, padding_constant_value):
+def transform(grid_size, padding_constant_value):
     return ArcSampleTransformer(
         grid_size,
-        n_examples,
         padding_constant_value=padding_constant_value,
         zero_based_correction=0,
     )
@@ -83,7 +82,7 @@ def test_extraction_transformed_transform(transform, n_examples, grid_size):
     )
     assert len(dataset_t) == 4
     for d in dataset_t:
-        torch.testing.assert_close(d["examples"].shape, [n_examples, 2] + [*grid_size])
+        torch.testing.assert_close(d["examples"].shape[1:], [2] + [*grid_size])
         torch.testing.assert_close(d["task"]["input"].shape, [*grid_size])
         torch.testing.assert_close(d["task"]["output"].shape, [*grid_size])
         assert isinstance(d["examples"], torch.Tensor)
@@ -107,8 +106,9 @@ def test_loader(arc_dataset_dir):
         dataset_t, batch_size=batch_size, shuffle=True, num_workers=0
     )
     for sample_batched in dataloader:
+        torch.testing.assert_close(sample_batched["examples"].shape[0], batch_size)
         torch.testing.assert_close(
-            sample_batched["examples"].shape, [batch_size, n_examples, 2] + [*grid_size]
+            sample_batched["examples"].shape[2:], [2] + [*grid_size]
         )
         torch.testing.assert_close(
             sample_batched["task"]["input"].shape, [batch_size] + [*grid_size]
@@ -128,15 +128,14 @@ def test_extraction(dataset_one, dataset_two):
 
 def test_extraction_transformed(arc_dataset_dir):
     grid_size = (10, 10)
-    n_examples = 5
     dataset_t = ArcDataset(
         arc_dataset_dir=arc_dataset_dir,
         keep_in_memory=False,
-        transform=ArcSampleTransformer(grid_size, n_examples, zero_based_correction=0),
+        transform=ArcSampleTransformer(grid_size, zero_based_correction=0),
     )
     assert len(dataset_t) == 4
     for d in dataset_t:
-        torch.testing.assert_close(d["examples"].shape, [n_examples, 2] + [*grid_size])
+        torch.testing.assert_close(d["examples"].shape[1:], [2] + [*grid_size])
         torch.testing.assert_close(d["task"]["input"].shape, [*grid_size])
         torch.testing.assert_close(d["task"]["output"].shape, [*grid_size])
         assert isinstance(d["examples"], torch.Tensor)
@@ -233,9 +232,9 @@ def test_open_file_with_test_index(arc_dataset_dir, dataset_one):
 def test_transform_init_invalid_output_size_type():
     # output_size must be a tuple per implementation
     with pytest.raises(AssertionError):
-        ArcSampleTransformer(output_size=10, examples_stack_dim=5)
+        ArcSampleTransformer(output_size=10)
     with pytest.raises(AssertionError):
-        ArcSampleTransformer(output_size=[10, 10], examples_stack_dim=5)
+        ArcSampleTransformer(output_size=[10, 10])
 
 
 def test_pad_to_size_invalid_rank(transform):

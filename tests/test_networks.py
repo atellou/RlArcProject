@@ -13,7 +13,7 @@ from rlarcworld.common.enums import (
 )
 from rlarcworld.models.actor import ArcActorNetwork
 from rlarcworld.models.actor_vitarc import (
-    GridTokenizer,
+    GridEncoder,
     ObjectIndexExtractor,
     ViTARCActor,
 )
@@ -145,16 +145,16 @@ def test_train_arc_actor_network(batch_size: int):
     assert variability >= 0.5
 
 
-# ---------------- GridTokenizer Tests ----------------
-class TestGridTokenizer:
+# ---------------- GridEncoder Tests ----------------
+class TestGridEncoder:
     def test_grid_tokenizer_encode_grid(self):
-        """Test GridTokenizer.encode_grid produces correct shapes and values."""
-        logger.info("Testing GridTokenizer.encode_grid")
+        """Test GridEncoder.encode_grid produces correct shapes and values."""
+        logger.info("Testing GridEncoder.encode_grid")
         batch_size = 4
         grid_size = 30
         color_values = 11
 
-        tokenizer = GridTokenizer(grid_size=grid_size)
+        tokenizer = GridEncoder(grid_size=grid_size)
 
         # Create random grid [B, 1, H, W]
         grid = torch.randint(
@@ -180,16 +180,13 @@ class TestGridTokenizer:
         assert torch.all(attention_mask[input_ids != GridEncoderIdsType.PAD_ID] == 1)
 
     def test_grid_tokenizer_with_object_extractor(self):
-        """Test GridTokenizer with ObjectIndexExtractor returns object_idx."""
-        logger.info("Testing GridTokenizer with ObjectIndexExtractor")
+        """Test GridEncoder with ObjectIndexExtractor returns object_idx."""
+        logger.info("Testing GridEncoder with ObjectIndexExtractor")
         batch_size = 2
         grid_size = 10  # Smaller for faster test
         color_values = 11
 
-        object_extractor = ObjectIndexExtractor(padding_id=GridEncoderIdsType.PAD_ID)
-        tokenizer = GridTokenizer(
-            grid_size=grid_size, object_extractor=object_extractor
-        )
+        tokenizer = GridEncoder(grid_size=grid_size, use_ope=True)
 
         grid = torch.randint(
             0, color_values, size=(batch_size, 1, grid_size, grid_size)
@@ -203,13 +200,13 @@ class TestGridTokenizer:
         assert torch.all(object_idx >= 0)
 
     def test_grid_tokenizer_encode_temporal_grids(self):
-        """Test GridTokenizer.encode_temporal_grids with all grids."""
-        logger.info("Testing GridTokenizer.encode_temporal_grids")
+        """Test GridEncoder.encode_temporal_grids with all grids."""
+        logger.info("Testing GridEncoder.encode_temporal_grids")
         batch_size = 2
         grid_size = 10
         color_values = 11
 
-        tokenizer = GridTokenizer(grid_size=grid_size)
+        tokenizer = GridEncoder(grid_size=grid_size)
 
         current = torch.randint(
             0, color_values, size=(batch_size, 1, grid_size, grid_size)
@@ -241,13 +238,13 @@ class TestGridTokenizer:
         assert torch.all(input_ids[:, 0] == GridEncoderIdsType.BOS_ID)
 
     def test_grid_tokenizer_encode_example_pair(self):
-        """Test GridTokenizer.encode_example_pair."""
-        logger.info("Testing GridTokenizer.encode_example_pair")
+        """Test GridEncoder.encode_example_pair."""
+        logger.info("Testing GridEncoder.encode_example_pair")
         batch_size = 2
         grid_size = 10
         color_values = 11
 
-        tokenizer = GridTokenizer(grid_size=grid_size)
+        tokenizer = GridEncoder(grid_size=grid_size)
 
         # Example pair: [B, 2, H, W] where dim 1 is (input, output)
         example = torch.randint(

@@ -68,7 +68,6 @@ class PixelWiseArcStepper:
             [
                 ArcSampleTransformer(
                     output_size=(grid_size, grid_size),
-                    examples_stack_dim=10,
                     padding_constant_value=-1,
                     zero_based_correction=1,
                 ),

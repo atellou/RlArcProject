@@ -133,11 +133,11 @@ class ObjectIndexExtractor:
 
 
 # =============================================================================
-# Grid Tokenizer - Direct grid-to-token conversion (no text tokenizer needed)
+# Grid Encoder - Direct grid-to-token conversion (no text tokenizer needed)
 # =============================================================================
 
 
-class GridTokenizer:
+class GridEncoder:
     """Encodes ARC grids directly as token sequences.
 
     No text tokenizer needed - grid color values (0-10) are used directly
@@ -766,7 +766,8 @@ class ViTARCActor(nn.Module):
         use_ope = use_ope if use_ope is not None else self.BEST_USE_OPE
 
         # Grid encoder (direct grid values as tokens, no text tokenizer)
-        self.grid_encoder = GridTokenizer(grid_size, use_ope=use_ope)
+        self.grid_encoder = GridEncoder(grid_size, use_ope=use_ope)
+        self.encoder_ids = self.grid_encoder.encoder_ids
         self.use_ope = use_ope
 
         # Create T5Config for ViTARC
