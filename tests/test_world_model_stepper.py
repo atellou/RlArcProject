@@ -77,10 +77,18 @@ def actor(grid_size, color_values, config):
 @pytest.fixture
 def reward_model(grid_size, color_values, config):
     """Create a reward world model for tests."""
-    model = RewardWorldModel(
+    reward_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        dropout=0.1,
+        use_ope=False,
+    )
+    model = RewardWorldModel(
         color_values=color_values,
-        embedding_size=128,  # Must match internal CnnAttention dimensions
+        rl_vit_arc_config=reward_config,
         config=config,
     )
     return model

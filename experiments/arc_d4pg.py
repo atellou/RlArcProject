@@ -194,9 +194,8 @@ class ArcD4PG:
         if config.world_model.enabled:
             logger.info("Creating world model stepper...")
             reward_model = RewardWorldModel(
-                grid_size=config.env.grid_size,
                 color_values=config.env.color_values,
-                embedding_size=config.network.embedding_size,
+                rl_vit_arc_config=rl_vit_arc_config,
                 config=self.cuda_config,
             )
             self.world_model_stepper = ArcWorldModelStepper(
