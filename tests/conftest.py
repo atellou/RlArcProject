@@ -55,9 +55,10 @@ def batch_size() -> int:
 # ---------- Model fixtures ----------
 
 
-@pytest.fixture()
-def actor(device, grid_size, color_values) -> ViTARCActor:
-    config = RlArcWorldViTARCConfig(
+@pytest.fixture(scope="session")
+def rl_vit_arc_config(grid_size) -> RlArcWorldViTARCConfig:
+    """Shared ViTARC config for actor/critic tests."""
+    return RlArcWorldViTARCConfig(
         grid_size=grid_size,
         d_model=64,
         d_ff=128,
@@ -66,9 +67,13 @@ def actor(device, grid_size, color_values) -> ViTARCActor:
         use_ope=False,
         grids_to_encode=[StateKeys.GRID.value],
     )
+
+
+@pytest.fixture()
+def actor(device, color_values, rl_vit_arc_config) -> ViTARCActor:
     return ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=config,
+        rl_vit_arc_config=rl_vit_arc_config,
         config={
             "device": str(device),
             "amp_enabled": False,
@@ -78,22 +83,13 @@ def actor(device, grid_size, color_values) -> ViTARCActor:
 
 
 @pytest.fixture()
-def critic(device, grid_size, color_values) -> VitARCCritic:
-    config = RlArcWorldViTARCConfig(
-        grid_size=grid_size,
-        d_model=64,
-        d_ff=128,
-        num_layers=2,
-        num_heads=4,
-        use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
-    )
+def critic(device, color_values, rl_vit_arc_config) -> VitARCCritic:
     num_atoms = {RewardKeys.PIXEL_WISE.value: 51, RewardKeys.BINARY.value: 3}
     v_min = {RewardKeys.PIXEL_WISE.value: -40, RewardKeys.BINARY.value: 0}
     v_max = {RewardKeys.PIXEL_WISE.value: 2, RewardKeys.BINARY.value: 1}
     return VitARCCritic(
         color_values=color_values,
-        rl_vit_arc_config=config,
+        rl_vit_arc_config=rl_vit_arc_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,

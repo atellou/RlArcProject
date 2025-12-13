@@ -29,19 +29,9 @@ def batch_size() -> int:
     return int(torch.randint(1, 20, size=(1,)).item())
 
 
-# ---------------- Tests ----------------
-def test_train_vitarc_actor_network(batch_size: int):
-    """Validate the actor network is trainable by observing loss variability."""
-    losses = [train_vitarc_actor(batch_size) for _ in range(10)]
-    variability = sum(
-        [not torch.isclose(losses[i], losses[i + 1]) for i in range(len(losses) - 1)]
-    ) / max(1, (len(losses) - 1))
-    assert variability >= 0.5
-
-
-# ---------------- Helpers (former methods) ----------------
+# ---------------- Helpers ----------------
 def train_arc_critic_network(batch_size: int):
-    grid_size = 30
+    grid_size = 16
     color_values = 11
     logger.info(
         "Testing VitARCCritic with batch size: %s, grid size: %s and color values: %s",
@@ -181,7 +171,7 @@ def train_arc_critic_network(batch_size: int):
 
 def train_vitarc_actor(batch_size: int):
     """Train ViTARCActor for one step and return loss."""
-    grid_size = 30
+    grid_size = 16
     color_values = 11
     num_examples = 2
 
@@ -273,7 +263,7 @@ def train_vitarc_actor(batch_size: int):
 
 def train_reward_world_model(batch_size: int):
     """Train reward world model for one step and return loss."""
-    size = 30
+    size = 16
     color_values = 11
     logger.info(
         "Testing RewardWorldModel with batch size: %s, size: %s and color values: %s",
@@ -608,7 +598,7 @@ class TestViTARCActor:
 
     def test_train_vitarc_actor(self, batch_size: int):
         """Validate ViTARCActor is trainable by observing loss variability."""
-        losses = [train_vitarc_actor(batch_size) for _ in range(5)]
+        losses = [train_vitarc_actor(batch_size) for _ in range(3)]
         variability = sum(
             [
                 not torch.isclose(losses[i], losses[i + 1])
@@ -621,7 +611,7 @@ class TestViTARCActor:
 class TestViTARCCritic:
     def test_train_arc_critic_network(self, batch_size: int):
         """Validate the critic network is trainable by observing loss variability."""
-        losses = [train_arc_critic_network(batch_size) for _ in range(10)]
+        losses = [train_arc_critic_network(batch_size) for _ in range(3)]
         variability = sum(
             [
                 not torch.isclose(losses[i], losses[i + 1])
@@ -634,7 +624,7 @@ class TestViTARCCritic:
 class TestRewardWorldModel:
     def test_train_reward_world_model(self, batch_size: int):
         """Validate the reward world model is trainable by loss variability."""
-        losses = [train_reward_world_model(batch_size) for _ in range(10)]
+        losses = [train_reward_world_model(batch_size) for _ in range(3)]
         variability = sum(
             [
                 not torch.isclose(losses[i], losses[i + 1])

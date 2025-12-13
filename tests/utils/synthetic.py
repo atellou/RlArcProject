@@ -1,6 +1,51 @@
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.common.enums import StateKeys
+
+
+def make_state_tensordict(
+    batch_size: int,
+    grid_size: int,
+    color_values: int,
+    num_examples: int = 10,
+    device: torch.device | str = "cpu",
+) -> TensorDict:
+    """Create a synthetic state TensorDict for testing.
+
+    Args:
+        batch_size: Number of samples in batch.
+        grid_size: Size of the grid (H=W).
+        color_values: Number of color values.
+        num_examples: Number of example pairs.
+        device: Device to create tensors on.
+
+    Returns:
+        TensorDict with all required state keys.
+    """
+    return TensorDict(
+        {
+            StateKeys.LAST_GRID.value: torch.randint(
+                0, color_values, (batch_size, 1, grid_size, grid_size), device=device
+            ),
+            StateKeys.GRID.value: torch.randint(
+                0, color_values, (batch_size, 1, grid_size, grid_size), device=device
+            ),
+            StateKeys.EXAMPLES.value: torch.randint(
+                0,
+                color_values,
+                (batch_size, num_examples, 2, grid_size, grid_size),
+                device=device,
+            ),
+            StateKeys.INITIAL.value: torch.randint(
+                0, color_values, (batch_size, 1, grid_size, grid_size), device=device
+            ),
+            StateKeys.INDEX.value: torch.randint(
+                0, grid_size, (batch_size, 1, grid_size, grid_size), device=device
+            ),
+        }
+    )
+
 
 def make_synthetic_step_on_device(
     device: torch.device, grid_size: int, color_values: int
@@ -29,7 +74,7 @@ def make_synthetic_step_on_device(
                 "examples": torch.randint(
                     0,
                     color_values,
-                    (batch_size, 10, 2, grid_size, grid_size),
+                    (batch_size, 3, 2, grid_size, grid_size),
                     device=device,
                 ),
                 "initial": torch.randint(

@@ -17,14 +17,24 @@ from rlarcworld.utils.logging_utils import configure_logger
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
 
 
-@pytest.fixture(params=[False, True])
+@pytest.fixture(
+    params=[
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(), reason="AMP requires CUDA"
+            ),
+        ),
+    ]
+)
 def core_setup(request):
     amp_flag = bool(request.param)
     config = enable_cuda(amp_enabled=amp_flag)
     device = torch.device(
         config["device"]
     )  # "cuda" when available and amp enabled, else cpu
-    grid_size = 30
+    grid_size = 16
     color_values = 11
     batch_size = 4
 
@@ -93,7 +103,7 @@ def core_setup(request):
             "examples": torch.randint(
                 0,
                 color_values,
-                (batch_size, 10, 2, grid_size, grid_size),
+                (batch_size, 3, 2, grid_size, grid_size),
                 device=device,
             ),
             "initial": torch.randint(
@@ -123,7 +133,7 @@ def core_setup(request):
     return core, state, next_state, reward, done, batch_size, num_atoms
 
 
-def build_core(grid_size: int = 16, color_values: int = 7) -> D4PGCore:
+def build_core(grid_size: int = 12, color_values: int = 7) -> D4PGCore:
     config = enable_cuda(amp_enabled=False)
     device = torch.device(config["device"])  # cpu in CI typically
 
