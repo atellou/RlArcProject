@@ -30,6 +30,29 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+# NOTE (RlArcWorld customization):
+# This file contains a lightly adapted version of ViTARC for the RlArcWorld
+# project. Key changes relative to the original implementation include:
+# - Integration of Object-based Positional Encoding (OPE) driven by
+#   GridEncoder object indices (see CustomT5Stack.forward around
+#   L1000–L1150).
+# - Support for configurable, optionally trainable absolute positional
+#   embeddings via the RlArcWorldViTARCConfig.trainable_ape flag (see
+#   FixedAbsolutePositionalEmbedding at L75–L90 and CustomT5Stack.__init__
+#   around L780–L820).
+# - In the OPE encoder path, 2D positional indices (position_ids_x/y) are
+#   sliced to match the number of grid content tokens (object_idx without
+#   BOS/EOS) so that object_embeds and 2D position embeddings have aligned
+#   sequence lengths (see CustomT5Stack.forward around L1035–L1075).
+# - Introduction of ViTARCEmbedding to encapsulate the different APE mixer
+#   strategies (e.g. weighted_sum_no_norm_vec) used in the ablation study
+#   (see ViTARCEmbedding at L75–L150).
+# - Expansion of the ALiBi 2D distance matrix to a configurable number of
+#   grids (config.max_grids) so temporal grids and example sequences share a
+#   single, precomputed relative-position grid without shape mismatches (see
+#   CustomT5Stack.__init__ around L853–L883 and RlArcWorldViTARC in
+#   nn_modules.py around L640–L700).
 """
 
 import copy
@@ -195,18 +218,20 @@ class ViTARCEmbedding(nn.Module):
 class FixedAbsolutePositionalEmbedding(nn.Module):
     """Fixed absolute positional embedding."""
 
-    def __init__(self, dim):
+    def __init__(self, dim, trainable: bool = False):
         """Initialize fixed absolute positional embedding.
 
         Args:
             dim: Embedding dimension.
+            trainable: If True, positional embeddings are trainable.
+                Defaults to False (frozen sinusoidal embeddings).
         """
         super().__init__()
         inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
         t = torch.arange(16384).type_as(inv_freq)
         sinusoid_inp = torch.einsum("i , j -> i j", t, inv_freq)
         emb = torch.cat((sinusoid_inp.sin(), sinusoid_inp.cos()), dim=-1)
-        self.embed = nn.Embedding.from_pretrained(emb, freeze=True)
+        self.embed = nn.Embedding.from_pretrained(emb, freeze=not trainable)
 
     def forward(self, position_ids: torch.Tensor):
         """Forward pass.
@@ -785,6 +810,8 @@ class CustomT5Stack(T5Stack):
         self.rpe_abs = getattr(config, "rpe_abs", True)
         self.use_OPE = getattr(config, "use_OPE", True)
         self.ape_mixer_strategy = getattr(config, "ape_mixer", "default")
+        self.trainable_ape = getattr(config, "trainable_ape", False)
+        max_grids = getattr(config, "max_grids", 1)  # 1 to keep original behavior
 
         self.block = nn.ModuleList(
             [
@@ -804,51 +831,58 @@ class CustomT5Stack(T5Stack):
             self.wpe.weight.data.normal_(mean=0.0, std=config.initializer_factor * 1.0)
 
         elif self.ape_type == "SinusoidalAPE":
-            self.wpe = FixedAbsolutePositionalEmbedding(config.d_model)
+            self.wpe = FixedAbsolutePositionalEmbedding(
+                config.d_model, trainable=self.trainable_ape
+            )
 
         elif self.ape_type == "SinusoidalAPE2D":
             # 2D APE for encoder and cross attn
             if config.use_OPE:
                 # If with OPE, half enc is reserved for obj_idx
                 self.wpe_obj_enc = FixedAbsolutePositionalEmbedding(
-                    config.d_model / 2
+                    config.d_model / 2, trainable=self.trainable_ape
                 )  # 128/2 -> 64
                 self.wpe_x_enc = FixedAbsolutePositionalEmbedding(
-                    config.d_model / 4
+                    config.d_model / 4, trainable=self.trainable_ape
                 )  # 128/4 -> 32
                 self.wpe_y_enc = FixedAbsolutePositionalEmbedding(
-                    config.d_model / 4
+                    config.d_model / 4, trainable=self.trainable_ape
                 )  # 128/4 -> 32
 
             # Decoder is the same old 2D
             self.wpe_x = FixedAbsolutePositionalEmbedding(
-                config.d_model / 2
+                config.d_model / 2, trainable=self.trainable_ape
             )  # 128/2 -> 64
             self.wpe_y = FixedAbsolutePositionalEmbedding(
-                config.d_model / 2
+                config.d_model / 2, trainable=self.trainable_ape
             )  # 128/2 -> 64
 
             # 1D APE for decoder/ non-2d positions
-            self.wpe = FixedAbsolutePositionalEmbedding(config.d_model)
+            self.wpe = FixedAbsolutePositionalEmbedding(
+                config.d_model, trainable=self.trainable_ape
+            )
 
         if self.rpe_type in ["Four-diag-slope-Alibi", "Two-slope-Alibi"]:
             # Calculate relative positions for the 2D grid
             # Four different slopes for each diag
             # direction, top-left, top-right, down-left, down-right
-            grid_height = self.config.rows  # 33
-            grid_width = self.config.cols  # 34
-            large_dist = self.config.cols + 10  # 44
+            grid_height = self.config.rows
+            grid_width = self.config.cols
+            large_dist = self.config.cols + 10
 
-            # Calculate the x and y difference matrices
+            # Calculate the x and y difference matrices for a single grid
             relative_position_2d = self.calculate_2d_relative_positions(
                 grid_height, grid_width
             )
 
-            # Create distance matrices x_diff and y_diff including <s> and </s> tokens
-            total_length = grid_height * grid_width + 2  # +2 for <s> and </s>
+            # For RlArcWorld we may encode up to three grids in a temporal
+            # sequence (initial, last, current), plus BOS/EOS. Build a
+            # distance matrix large enough to cover this worst case so that
+            # real_seq_length/key_length never exceed total_length.
+            total_length = max_grids * grid_height * grid_width + 2
             distance_matrix = torch.full(
                 (total_length, total_length), fill_value=large_dist, dtype=torch.float
-            )  # 100 as a large distance
+            )
 
             # Assign the 2D relative positions to the correct part of the matrix
             distance_matrix[
@@ -1032,11 +1066,18 @@ class CustomT5Stack(T5Stack):
             if self.use_OPE and (not self.is_decoder):
                 # 2D + object embeddings
                 # e.g. self.wpe_obj_enc, self.wpe_x_enc, self.wpe_y_enc
+                # Strip BOS/EOS so that we only use grid content tokens for OPE
+                object_idx_content = object_idx[:, 1:-1]
+                content_len = object_idx_content.shape[1]
+
                 object_embeds = self.wpe_obj_enc(
-                    object_idx[:, 1:-1]
-                )  # shape [batch, some_len, embed_dim/2], for example
-                position_embeds_x = self.wpe_x_enc(position_ids_x)
-                position_embeds_y = self.wpe_y_enc(position_ids_y)
+                    object_idx_content
+                )  # [batch, content_len, d_model/2]
+
+                # Slice 2D position ids so that their sequence length matches
+                # the grid content tokens used for object_embeds
+                position_embeds_x = self.wpe_x_enc(position_ids_x[:, :content_len])
+                position_embeds_y = self.wpe_y_enc(position_ids_y[:, :content_len])
 
                 # Expand X, Y if needed
                 position_embeds_x = position_embeds_x.expand(
@@ -1115,14 +1156,16 @@ class CustomT5Stack(T5Stack):
             else:
                 # B) If not is_decoder => simpler approach for encoder or partial usage
                 # We might do something similar: fill [1 : grid_len-1]
+                max_2d = position_embeds_2d.size(1)
                 if p_seq_len >= grid_len:
-                    position_embeds[:, 1:grid_len] = position_embeds_2d[
-                        :, : (grid_len - 1)
+                    use_len = min(grid_len - 1, max_2d)
+                    position_embeds[:, 1 : 1 + use_len] = position_embeds_2d[
+                        :, :use_len
                     ]
                 else:
-                    # partial coverage
-                    position_embeds[:, 1:p_seq_len] = position_embeds_2d[
-                        :, : (p_seq_len - 1)
+                    use_len = min(p_seq_len - 1, max_2d)
+                    position_embeds[:, 1 : 1 + use_len] = position_embeds_2d[
+                        :, :use_len
                     ]
 
             # 4) Finally mix them into inputs_embeds using APE_mixer

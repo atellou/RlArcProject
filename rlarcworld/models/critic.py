@@ -102,7 +102,7 @@ class VitARCCritic(torch.nn.Module):
         total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         logger.info(
-            f"ViTARCActor initialized with best ViTARC config:\n"
+            f"ViTARCCritic initialized with best ViTARC config:\n"
             f"  - APE: {rl_vit_arc_config.ape_type}\n"
             f"  - RPE: {rl_vit_arc_config.rpe_type} (largest gain)\n"
             f"  - PEmixer: {rl_vit_arc_config.ape_mixer} (second largest gain)\n"

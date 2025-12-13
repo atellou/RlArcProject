@@ -66,9 +66,12 @@ class ObjectIndexExtractor:
         Returns:
             Object indices [H, W] where each pixel has its object ID.
         """
+        # Move to CPU for OpenCV processing, then restore to original device
+        original_device = grid.device
+
         height, width = grid.shape
         object_indices = torch.zeros((height, width), dtype=torch.int64)
-        background_id = torch.bincount(grid.view(-1))
+        background_id = torch.bincount(grid.reshape(-1))
 
         if self.padding_id is not None and background_id.argmax() == self.padding_id:
             background_id = torch.topk(background_id, k=2)[1][1]
@@ -83,8 +86,10 @@ class ObjectIndexExtractor:
             if color in (background_id, self.padding_id):  # Skip background
                 continue
 
-            # Create binary mask for this color
-            mask = np.where(grid == color, 1, 0).astype(np.uint8)
+            # Create binary mask for this color (use CPU tensor)
+            mask = np.where(grid.detach().cpu().numpy() == color.item(), 1, 0).astype(
+                np.uint8
+            )
 
             # Find contours (connected components of this color)
             contours, _ = cv2.findContours(
@@ -102,7 +107,7 @@ class ObjectIndexExtractor:
 
                 current_obj_id += 1
 
-        return object_indices.to(grid.device)
+        return object_indices.to(original_device)
 
     def __call__(self, grid: torch.Tensor) -> torch.Tensor:
         """Extract object indices from a batch of grids.

@@ -42,6 +42,7 @@ class RlArcWorldViTARCConfig:
         rpe_type: Type of relative position encoding ('none', 'learnable', 'sinusoidal')
         use_ope: Whether to use object position encoding.
         ape_mixer: Mixer type for absolute position encoding.
+        trainable_ape: Whether positional embeddings are trainable.
         grids_to_encode: List of grid keys to encode.
         color_values: Number of color values in the dataset.
     """
@@ -56,8 +57,52 @@ class RlArcWorldViTARCConfig:
     rpe_type: str | None = None
     use_ope: bool | None = None
     ape_mixer: str | None = None
+    trainable_ape: bool = False
     grids_to_encode: list[str] | None = None
     color_values: int | None = None
+
+    @classmethod
+    def best_config(
+        cls,
+        grid_size: int,
+        use_temporal: bool = False,
+        use_examples: bool = False,
+    ) -> "RlArcWorldViTARCConfig":
+        """Create a config with the best settings from the ViTARC paper.
+
+        Best configuration from ViTARC paper ablation study (arXiv:2410.06405):
+        - APE: SinusoidalAPE2D (2D sinusoidal absolute position encoding)
+        - RPE: Two-slope-Alibi (largest performance gain)
+        - PEmixer: weighted_sum_no_norm_vec (second largest gain)
+        - OPE: True (third largest gain, object-based positional encoding)
+
+        Args:
+            grid_size: Size of the input grid (height = width).
+            use_temporal: Whether to use temporal grids for encoding.
+            use_examples: Whether to use example grids for encoding.
+
+        Returns:
+            RlArcWorldViTARCConfig with best settings for training.
+        """
+        grid_to_encode = [StateKeys.GRID.value]
+        if use_temporal:
+            grid_to_encode.extend([StateKeys.LAST_GRID.value, StateKeys.INITIAL.value])
+        if use_examples:
+            grid_to_encode.append(StateKeys.EXAMPLES.value)
+        return cls(
+            grid_size=grid_size,
+            d_model=128,
+            d_ff=512,
+            num_layers=4,
+            num_heads=8,
+            dropout=0.1,
+            ape_type="SinusoidalAPE2D",
+            rpe_type="Two-slope-Alibi",
+            use_ope=True,
+            ape_mixer="weighted_sum_no_norm_vec",
+            trainable_ape=False,
+            grids_to_encode=grid_to_encode,
+        )
 
 
 @dataclass
@@ -591,7 +636,8 @@ class RlArcWorldViTARC(nn.Module):
         else:
             if not set(config.grids_to_encode).issubset(GRID_ENCODER_KEYS_SET):
                 raise ValueError(
-                    f"Grid encoder keys must be in {GRID_ENCODER_KEYS_SET}"
+                    f"Grid encoder keys must be in {GRID_ENCODER_KEYS_SET}."
+                    f"Keys found {set(config.grids_to_encode)}"
                 )
             if StateKeys.GRID.value not in config.grids_to_encode:
                 raise ValueError(f"{StateKeys.GRID.value} must be in grids_to_encode")
@@ -632,6 +678,7 @@ class RlArcWorldViTARC(nn.Module):
         self.t5_config.rpe_abs = True
         self.t5_config.use_OPE = use_ope
         self.t5_config.ape_mixer = ape_mixer
+        self.t5_config.trainable_ape = config.trainable_ape
         # rows/cols for 2D positional encoding grid dimensions
         self.t5_config.rows = config.grid_size + 3  # +3 for BOS/EOS tokens
         self.t5_config.cols = config.grid_size
@@ -658,6 +705,12 @@ class RlArcWorldViTARC(nn.Module):
             )
 
         # ViTARC encoder (using CustomT5Stack with all enhancements)
+        if self.use_temporal:
+            self.t5_config.max_grids = 3
+        elif self.use_examples:
+            self.t5_config.max_grids = 2
+        else:
+            self.t5_config.max_grids = 1
         encoder_config = T5Config(**self.t5_config.to_dict())
         encoder_config.is_decoder = False
         encoder_config.use_cache = False

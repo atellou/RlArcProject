@@ -133,18 +133,11 @@ class ArcD4PG:
         logger.info("Initializing actor and critic networks...")
         logger.info("Creating actor network...")
 
-        rl_vit_arc_config = RlArcWorldViTARCConfig(
-            grid_size=config.env.grid_size,
-            d_model=64,
-            d_ff=128,
-            num_layers=2,
-            num_heads=4,
-            dropout=0.1,
-            ape_type="SinusoidalAPE2D",
-            rpe_type="Two-slope-Alibi",
-            use_ope=False,
-            ape_mixer="default",
-        )
+        # Use config's rl_vit_arc_config or create one with best settings
+        if config.network.rl_vit_arc_config is not None:
+            rl_vit_arc_config = config.network.rl_vit_arc_config
+        else:
+            rl_vit_arc_config = RlArcWorldViTARCConfig.best_config(config.env.grid_size)
 
         self.actor = ViTARCActor(
             color_values=config.env.color_values,

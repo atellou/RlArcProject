@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from rlarcworld.common.configs import NStepMinVMaxConfig
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 
 
 @dataclass
@@ -28,9 +29,12 @@ class NetworkConfig:
 
     Attributes:
         embedding_size (int): Size of the embedding.
+        rl_vit_arc_config (RlArcWorldViTARCConfig | None): ViTARC encoder config.
+            If None, will be created from EnvConfig.grid_size using best_config().
     """
 
     embedding_size: int = 128
+    rl_vit_arc_config: RlArcWorldViTARCConfig | None = None
 
 
 @dataclass

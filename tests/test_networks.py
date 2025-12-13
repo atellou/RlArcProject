@@ -521,10 +521,426 @@ class TestGridEncoder:
         # Objects should have positive IDs
         assert torch.all(object_idx >= 0)
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_object_index_extractor_cuda(self):
+        """Test ObjectIndexExtractor works with CUDA tensors."""
+        logger.info("Testing ObjectIndexExtractor with CUDA tensors")
+        batch_size = 2
+        grid_size = 10
 
-# ---------------- ViTARCActor Tests ----------------
+        extractor = ObjectIndexExtractor(padding_id=0)
+
+        # Create grid with distinct colored regions on CUDA
+        grid = torch.zeros(
+            batch_size, grid_size, grid_size, dtype=torch.long, device="cuda"
+        )
+        # Add some colored objects
+        grid[:, 2:5, 2:5] = 1  # Red square
+        grid[:, 6:8, 6:8] = 2  # Blue square
+
+        object_idx = extractor(grid)
+
+        assert object_idx.shape == (batch_size, grid_size * grid_size)
+        # Result should be on the same device as input
+        assert object_idx.device.type == "cuda"
+        # Objects should have valid IDs
+        assert torch.all(object_idx >= 0)
 
 
+# ---------------- RlArcWorldViTARC Tests ----------------
+class TestRlArcWorldViTARC:
+    """Tests for the RlArcWorldViTARC encoder module."""
+
+    def test_init_with_default_config(self):
+        """Test RlArcWorldViTARC initialization with default best config."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        config = RlArcWorldViTARCConfig.best_config(grid_size=10)
+        model = RlArcWorldViTARC(config)
+
+        # Check default best config values are applied
+        assert model.use_ope == RlArcWorldViTARC.BEST_USE_OPE
+        assert model.t5_config.ape_type == RlArcWorldViTARC.BEST_APE_TYPE
+        assert model.t5_config.rpe_type == RlArcWorldViTARC.BEST_RPE_TYPE
+        assert model.t5_config.ape_mixer == RlArcWorldViTARC.BEST_APE_MIXER
+
+    def test_init_with_custom_config(self):
+        """Test RlArcWorldViTARC initialization with custom config."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=8,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            ape_type="SinusoidalAPE2D",
+            rpe_type="Two-slope-Alibi",
+            ape_mixer="default",
+        )
+        model = RlArcWorldViTARC(config)
+
+        assert model.use_ope is False
+        assert model.t5_config.d_model == 64
+        assert model.t5_config.num_layers == 2
+
+    def test_init_with_temporal_grids(self):
+        """Test RlArcWorldViTARC with temporal grid encoding enabled."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=8,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            grids_to_encode=[
+                StateKeys.GRID.value,
+                StateKeys.INITIAL.value,
+                StateKeys.LAST_GRID.value,
+            ],
+        )
+        model = RlArcWorldViTARC(config)
+
+        assert model.use_temporal is True
+        assert hasattr(model, "temporal_embed")
+
+    def test_init_with_examples(self):
+        """Test RlArcWorldViTARC with example cross-attention enabled."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=8,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            grids_to_encode=[StateKeys.GRID.value, StateKeys.EXAMPLES.value],
+        )
+        model = RlArcWorldViTARC(config)
+
+        assert model.use_examples is True
+        assert hasattr(model, "example_cross_attention")
+
+    def test_init_invalid_grids_to_encode(self):
+        """Test RlArcWorldViTARC raises error for invalid grids_to_encode."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=8,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            grids_to_encode=["invalid_key"],
+        )
+
+        with pytest.raises(ValueError, match="Grid encoder keys must be in"):
+            RlArcWorldViTARC(config)
+
+    def test_init_missing_grid_key(self):
+        """Test RlArcWorldViTARC raises error when grid key is missing."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=8,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            grids_to_encode=[StateKeys.INITIAL.value],  # Missing GRID
+        )
+
+        with pytest.raises(ValueError, match="must be in grids_to_encode"):
+            RlArcWorldViTARC(config)
+
+    def test_forward_single_grid(self):
+        """Test forward pass with single grid input."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC, ViTARCEncoderOutput
+
+        batch_size = 2
+        grid_size = 8
+        color_values = 11
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            grids_to_encode=[StateKeys.GRID.value],
+        )
+        model = RlArcWorldViTARC(config)
+
+        state = TensorDict(
+            {
+                StateKeys.GRID.value: torch.randint(
+                    0, color_values, (batch_size, 1, grid_size, grid_size)
+                ),
+            }
+        )
+
+        output = model(state)
+
+        assert isinstance(output, ViTARCEncoderOutput)
+        assert output.hidden_states is not None
+        assert output.hidden_states.shape[0] == batch_size
+        assert output.hidden_states.shape[2] == 64  # d_model
+        assert output.attention_mask is not None
+        assert output.temporal_ids is None  # No temporal encoding
+
+    def test_forward_with_temporal_grids(self):
+        """Test forward pass with temporal grid inputs."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC, ViTARCEncoderOutput
+
+        batch_size = 2
+        grid_size = 8
+        color_values = 11
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            grids_to_encode=[
+                StateKeys.GRID.value,
+                StateKeys.INITIAL.value,
+                StateKeys.LAST_GRID.value,
+            ],
+        )
+        model = RlArcWorldViTARC(config)
+
+        state = TensorDict(
+            {
+                StateKeys.GRID.value: torch.randint(
+                    0, color_values, (batch_size, 1, grid_size, grid_size)
+                ),
+                StateKeys.INITIAL.value: torch.randint(
+                    0, color_values, (batch_size, 1, grid_size, grid_size)
+                ),
+                StateKeys.LAST_GRID.value: torch.randint(
+                    0, color_values, (batch_size, 1, grid_size, grid_size)
+                ),
+            }
+        )
+
+        output = model(state)
+
+        assert isinstance(output, ViTARCEncoderOutput)
+        assert output.hidden_states is not None
+        assert output.temporal_ids is not None
+
+    def test_forward_with_examples(self):
+        """Test forward pass with example cross-attention."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC, ViTARCEncoderOutput
+
+        batch_size = 2
+        grid_size = 8
+        color_values = 11
+        num_examples = 3
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            grids_to_encode=[StateKeys.GRID.value, StateKeys.EXAMPLES.value],
+        )
+        model = RlArcWorldViTARC(config)
+
+        state = TensorDict(
+            {
+                StateKeys.GRID.value: torch.randint(
+                    0, color_values, (batch_size, 1, grid_size, grid_size)
+                ),
+                StateKeys.EXAMPLES.value: torch.randint(
+                    0, color_values, (batch_size, num_examples, 2, grid_size, grid_size)
+                ),
+            }
+        )
+
+        output = model(state)
+
+        assert isinstance(output, ViTARCEncoderOutput)
+        assert output.hidden_states is not None
+        assert output.example_hidden is not None
+        assert output.example_mask is not None
+
+    def test_trainable_ape_parameter_count(self):
+        """Test that trainable_ape affects parameter count."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        grid_size = 8
+
+        # Frozen APE
+        config_frozen = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            trainable_ape=False,
+        )
+        model_frozen = RlArcWorldViTARC(config_frozen)
+        trainable_frozen = sum(
+            p.numel() for p in model_frozen.parameters() if p.requires_grad
+        )
+
+        # Trainable APE
+        config_trainable = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            trainable_ape=True,
+        )
+        model_trainable = RlArcWorldViTARC(config_trainable)
+        trainable_trainable = sum(
+            p.numel() for p in model_trainable.parameters() if p.requires_grad
+        )
+
+        # Trainable APE should have more trainable parameters
+        assert trainable_trainable > trainable_frozen
+
+    def test_encoder_output_structure(self):
+        """Test that ViTARCEncoderOutput contains all expected fields."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        batch_size = 2
+        grid_size = 8
+        color_values = 11
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+        )
+        model = RlArcWorldViTARC(config)
+
+        state = TensorDict(
+            {
+                StateKeys.GRID.value: torch.randint(
+                    0, color_values, (batch_size, 1, grid_size, grid_size)
+                ),
+            }
+        )
+
+        output = model(state)
+
+        # Check all fields exist
+        assert hasattr(output, "hidden_states")
+        assert hasattr(output, "attention_mask")
+        assert hasattr(output, "encoder_outputs")
+        assert hasattr(output, "input_ids")
+        assert hasattr(output, "temporal_ids")
+        assert hasattr(output, "object_idx")
+        assert hasattr(output, "example_hidden")
+        assert hasattr(output, "example_mask")
+
+    def test_best_config_class_method(self):
+        """Test RlArcWorldViTARCConfig.best_config() creates valid config."""
+        config = RlArcWorldViTARCConfig.best_config(grid_size=10)
+
+        assert config.grid_size == 10
+        assert config.d_model == 128
+        assert config.d_ff == 512
+        assert config.num_layers == 4
+        assert config.num_heads == 8
+        assert config.ape_type == "SinusoidalAPE2D"
+        assert config.rpe_type == "Two-slope-Alibi"
+        assert config.use_ope is True
+        assert config.ape_mixer == "weighted_sum_no_norm_vec"
+        assert config.trainable_ape is False
+
+    def test_forward_with_ope(self):
+        """Test forward pass with OPE (Object Positional Encoding) enabled."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC, ViTARCEncoderOutput
+
+        batch_size = 2
+        grid_size = 8
+        color_values = 11
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=True,  # OPE enabled
+            grids_to_encode=[StateKeys.GRID.value],
+        )
+        model = RlArcWorldViTARC(config)
+
+        state = TensorDict(
+            {
+                StateKeys.GRID.value: torch.randint(
+                    0, color_values, (batch_size, 1, grid_size, grid_size)
+                ),
+            }
+        )
+
+        output = model(state)
+
+        assert isinstance(output, ViTARCEncoderOutput)
+        assert output.hidden_states is not None
+        assert output.object_idx is not None
+
+    def test_gradient_flow(self):
+        """Test that gradients flow through the model."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC
+
+        batch_size = 2
+        grid_size = 8
+        color_values = 11
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+        )
+        model = RlArcWorldViTARC(config)
+
+        state = TensorDict(
+            {
+                StateKeys.GRID.value: torch.randint(
+                    0, color_values, (batch_size, 1, grid_size, grid_size)
+                ),
+            }
+        )
+
+        output = model(state)
+
+        # Compute dummy loss and backprop
+        loss = output.hidden_states.mean()
+        loss.backward()
+
+        # Check gradients exist for trainable parameters
+        has_grad = False
+        for param in model.parameters():
+            if param.requires_grad and param.grad is not None:
+                has_grad = True
+                break
+        assert has_grad, "No gradients found in model parameters"
+
+
+# ---------------- ViTARCActor/Critic Tests ----------------
 class TestViTARCActor:
     def test_vitarc_actor_forward(self):
         """Test ViTARCActor forward pass produces valid action probabilities."""

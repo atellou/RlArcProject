@@ -57,9 +57,22 @@ class ArcEnvRunningMode(StrEnum):
 
 
 class GridEncoderIdsType(IntEnum):
-    """Grid encoder type."""
+    """Grid encoder type.
 
-    # Token IDs
+    Used to define token IDs for grid encoding in the ARC environment.
+    These IDs are used by the grid encoder to convert grid states into token sequences.
+
+    ID meanings:
+    - PAD_ID: Padding token
+    - COLOR_*_ID: Color token IDs (0-10)
+    - BOS_ID: Beginning of sequence
+    - EOS_ID: End of sequence
+    - ENDXGRID_ID, ENDYGRID_ID, ENDGRID_ID: Grid termination tokens
+    - SEP_ID: Separator token
+    - MASK_ID: Mask token for training
+    - EMPTY_ID: Empty cell token
+    """
+
     PAD_ID = 0
     COLOR_START_ID = 1
     COLOR_END_ID = 11
