@@ -190,10 +190,10 @@ def test_open_file(dataset_one, arc_dataset_dir):
     )
 
     torch.testing.assert_close(
-        result["test"][0]["input"], torch.tensor([[17, 18], [19, 20]])
+        result["test"][0]["input"], torch.tensor([[1, 2], [3, 4]])
     )
     torch.testing.assert_close(
-        result["test"][0]["output"], torch.tensor([[21, 22], [23, 24]])
+        result["test"][0]["output"], torch.tensor([[5, 6], [7, 8]])
     )
 
 
@@ -211,19 +211,15 @@ def test_open_file_with_test_index(arc_dataset_dir, dataset_one):
         result["train"][0]["output"], torch.tensor([[5, 6], [7, 8]])
     )
     torch.testing.assert_close(
-        result["train"][1]["input"], torch.tensor([[9, 10], [11, 12]])
+        result["train"][1]["input"], torch.tensor([[9, 10], [0, 1]])
     )
     torch.testing.assert_close(
-        result["train"][1]["output"], torch.tensor([[13, 14], [15, 16]])
+        result["train"][1]["output"], torch.tensor([[2, 3], [4, 5]])
     )
 
     assert isinstance(result["test"], dict)
-    torch.testing.assert_close(
-        result["test"]["input"], torch.tensor([[25, 26], [27, 28]])
-    )
-    torch.testing.assert_close(
-        result["test"]["output"], torch.tensor([[29, 30], [31, 32]])
-    )
+    torch.testing.assert_close(result["test"]["input"], torch.tensor([[8, 9], [10, 0]]))
+    torch.testing.assert_close(result["test"]["output"], torch.tensor([[1, 2], [3, 4]]))
 
 
 # ---------- Negative tests for ArcSampleTransformer ----------

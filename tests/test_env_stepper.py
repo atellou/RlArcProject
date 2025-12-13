@@ -4,12 +4,12 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.common.configs import NStepMinVMaxConfig
-from rlarcworld.common.enums import RewardKeys
+from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
@@ -20,11 +20,16 @@ def test_env_stepper_one_step(device):
     env = PixelAwareRewardWrapper(
         ArcBatchGridEnv(grid_size, color_values, device=device)
     )
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
-    )
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    ).to(device)
     actor.eval()
 
     # Create a simple sampler that yields one sample
@@ -94,11 +99,16 @@ def test_env_stepper_one_step_with_on_step(device):
     env = PixelAwareRewardWrapper(
         ArcBatchGridEnv(grid_size, color_values, device=device)
     )
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
-    )
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    ).to(device)
     actor.eval()
 
     # Create a simple sampler that yields one sample
@@ -172,11 +182,16 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         ArcBatchGridEnv(grid_size, color_values, n_steps=3, device=device),
         n_steps=3,
     )
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
-    )
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    ).to(device)
     actor.eval()
 
     # Create a simple sampler that yields one sample
@@ -260,11 +275,16 @@ def test_env_stepper_episode_stream(device):
         n_steps=2,
     )
 
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
-    )
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    ).to(device)
     actor.eval()
 
     # Create a simple sampler that yields one sample
@@ -351,11 +371,16 @@ def test_env_stepper_step_stream_from_samples(device):
     """Test the step stream from samples functionality."""
     grid_size, color_values = 8, 5
 
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
-    )
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    ).to(device)
     actor.eval()
 
     stepper = PixelWiseArcStepper(

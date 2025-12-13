@@ -6,7 +6,8 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.common.enums import StateKeys
+from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.logging_utils import configure_logger
@@ -26,15 +27,16 @@ def core_setup(request):
     color_values = 11
     batch_size = 4
 
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={
-            "device": str(device),
-            "amp_enabled": config["amp_enabled"],
-            "use_checkpointing": False,
-        },
-    )
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    ).to(device)
     actor.eval()
 
     num_atoms = {"pixel_wise": 50, "binary": 3}
@@ -116,14 +118,15 @@ def build_core(grid_size: int = 16, color_values: int = 7) -> D4PGCore:
     config = enable_cuda(amp_enabled=False)
     device = torch.device(config["device"])  # cpu in CI typically
 
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={
-            "device": str(device),
-            "amp_enabled": config["amp_enabled"],
-            "use_checkpointing": False,
-        },
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
     ).to(device)
     actor.eval()
 

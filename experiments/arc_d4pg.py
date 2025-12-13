@@ -42,11 +42,11 @@ from experiments.configs import (  # noqa: F401
     WorldModelConfig,
 )
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.common.enums import RewardKeys
+from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
@@ -66,7 +66,7 @@ class ArcD4PG:
 
     This class brings together all the decoupled components:
     - D4PGCore: Algorithm implementation
-    - ArcActorNetwork & ArcCriticNetwork: Neural networks
+    - ViTARCActor & ArcCriticNetwork: Neural networks
     - ArcBatchGridEnv: Environment wrapper
     - Trainer: Training loop orchestration
     """
@@ -131,11 +131,15 @@ class ArcD4PG:
         # Initialize networks
         logger.info("Initializing actor and critic networks...")
         logger.info("Creating actor network...")
-        self.actor = ArcActorNetwork(
+        self.actor = ViTARCActor(
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
-            embedding_size=config.network.embedding_size,
-            config=self.cuda_config,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,  # Disable OPE for faster test
+            grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
         )
         logger.info("Actor network created successfully")
 

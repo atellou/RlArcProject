@@ -9,7 +9,8 @@ from torchrl.data.replay_buffers import (
 )
 
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.common.enums import StateKeys
+from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.runners.core import OnStepContext, Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
@@ -345,11 +346,16 @@ def _build_simple_core(
     max_grad_norm: float = 0.0,
 ) -> D4PGCore:
     # Retained for the specialized AMP/grad-clipping test
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
-    )
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    ).to(device)
     critic = ArcCriticNetwork(
         grid_size=grid_size,
         color_values=color_values,

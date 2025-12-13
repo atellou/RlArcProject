@@ -29,7 +29,7 @@ class RewardWorldModel(nn.Module):
     """Reward world model for the ARC environment.
 
     The model takes an ARC state TensorDict (same structure as used by
-    ArcActorNetwork/ArcCriticNetwork) and predicts per-sample rewards
+    ViTARCActor/ViTARCCritic) and predicts per-sample rewards
     for different reward types. It is intended to be used by
     RewardWorldModelWrapper, which consumes a TensorDict with keys
     defined in RewardKeys (e.g. "binary", "pixel_wise").

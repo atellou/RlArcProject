@@ -11,10 +11,10 @@ from torchrl.data.replay_buffers import (
 
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
-from rlarcworld.common.enums import RewardKeys
+from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import ArcCriticNetwork
 from rlarcworld.runners.core import Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
@@ -55,15 +55,16 @@ def batch_size() -> int:
 
 
 @pytest.fixture()
-def actor(device, grid_size, color_values) -> ArcActorNetwork:
-    return ArcActorNetwork(
+def actor(device, grid_size, color_values) -> ViTARCActor:
+    return ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config={
-            "device": str(device),
-            "amp_enabled": False,
-            "use_checkpointing": False,
-        },
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
     )
 
 
@@ -87,7 +88,7 @@ def critic(device, grid_size, color_values) -> ArcCriticNetwork:
 
 
 @pytest.fixture()
-def d4pg_core(actor: ArcActorNetwork, critic: ArcCriticNetwork, device) -> D4PGCore:
+def d4pg_core(actor: ViTARCActor, critic: ArcCriticNetwork, device) -> D4PGCore:
     return D4PGCore(
         actor=actor,
         critic=critic,

@@ -13,6 +13,8 @@ import torch.nn.functional as F
 from tensordict import TensorDict
 from torchvision import models
 
+from rlarcworld.common.enums import ActionKeys
+
 logger = logging.getLogger(__name__)
 
 
@@ -467,3 +469,203 @@ class CrossAttentionClassifier(nn.Module):
         )
 
         return logits
+
+
+# =============================================================================
+# Example Cross-Attention - For conditioning on example pairs
+# =============================================================================
+
+
+class ExampleCrossAttention(nn.Module):
+    """Cross-attention module for conditioning grid encoding on examples.
+
+    Allows the grid representation to attend to encoded example pairs,
+    learning the transformation pattern demonstrated by the examples.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int = 8,
+        num_layers: int = 2,
+        dropout: float = 0.1,
+    ):
+        """Initialize example cross-attention.
+
+        Args:
+            d_model: Model hidden dimension.
+            num_heads: Number of attention heads.
+            num_layers: Number of cross-attention layers.
+            dropout: Dropout probability.
+        """
+        super().__init__()
+        self.d_model = d_model
+
+        # Cross-attention layers (grid attends to examples)
+        self.cross_attn_layers = nn.ModuleList(
+            [
+                nn.MultiheadAttention(
+                    d_model, num_heads, dropout=dropout, batch_first=True
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+        # Layer norms for each cross-attention
+        self.layer_norms = nn.ModuleList(
+            [nn.LayerNorm(d_model) for _ in range(num_layers)]
+        )
+
+        # Feed-forward after cross-attention
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model),
+            nn.Dropout(dropout),
+        )
+        self.ffn_norm = nn.LayerNorm(d_model)
+
+    def forward(
+        self,
+        grid_hidden: torch.Tensor,
+        example_hidden: torch.Tensor,
+        grid_mask: torch.Tensor | None = None,
+        example_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Apply cross-attention from grid to examples.
+
+        Args:
+            grid_hidden: Grid encoder output [B, grid_seq_len, d_model].
+            example_hidden: Example encoder output [B, num_ex * ex_seq_len, d_model].
+            grid_mask: Optional attention mask for grid [B, grid_seq_len].
+            example_mask: Optional attention mask for examples [B, num_ex * ex_seq_len].
+
+        Returns:
+            Updated grid hidden states [B, grid_seq_len, d_model].
+        """
+        # Convert masks to key_padding_mask format
+        example_key_padding_mask = None
+        if example_mask is not None:
+            example_key_padding_mask = ~example_mask.bool()
+
+        hidden = grid_hidden
+        for cross_attn, layer_norm in zip(
+            self.cross_attn_layers, self.layer_norms, strict=False
+        ):
+            # Cross-attention: grid queries attend to example keys/values
+            attn_out, _ = cross_attn(
+                query=hidden,
+                key=example_hidden,
+                value=example_hidden,
+                key_padding_mask=example_key_padding_mask,
+            )
+            hidden = layer_norm(hidden + attn_out)
+
+        # Feed-forward
+        hidden = self.ffn_norm(hidden + self.ffn(hidden))
+
+        return hidden
+
+
+class ActionHeadFromEncoder(nn.Module):
+    """Converts ViTARC encoder outputs to action distributions.
+
+    Uses cross-attention with learnable queries to extract action
+    information from the encoder hidden states.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        grid_size: int,
+        color_values: int,
+        num_heads: int = 4,
+        dropout: float = 0.1,
+    ):
+        """Initialize action heads.
+
+        Args:
+            hidden_size: ViTARC hidden dimension.
+            grid_size: Grid size for location actions.
+            color_values: Number of colors.
+            num_heads: Number of attention heads.
+            dropout: Dropout probability.
+        """
+        super().__init__()
+        self.hidden_size = hidden_size
+
+        # Learnable queries for each action type
+        self.action_queries = nn.ParameterDict(
+            {
+                ActionKeys.X_LOCATION.value: nn.Parameter(
+                    torch.randn(1, 1, hidden_size) * 0.02
+                ),
+                ActionKeys.Y_LOCATION.value: nn.Parameter(
+                    torch.randn(1, 1, hidden_size) * 0.02
+                ),
+                ActionKeys.COLOR_VALUES.value: nn.Parameter(
+                    torch.randn(1, 1, hidden_size) * 0.02
+                ),
+                ActionKeys.SUBMIT.value: nn.Parameter(
+                    torch.randn(1, 1, hidden_size) * 0.02
+                ),
+            }
+        )
+
+        # Cross-attention to extract action info from encoder states
+        self.cross_attention = nn.MultiheadAttention(
+            hidden_size, num_heads, dropout=dropout, batch_first=True
+        )
+
+        # Layer norm before classification
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+        # Classification heads
+        self.classifiers = nn.ModuleDict(
+            {
+                ActionKeys.X_LOCATION.value: nn.Linear(hidden_size, grid_size),
+                ActionKeys.Y_LOCATION.value: nn.Linear(hidden_size, grid_size),
+                ActionKeys.COLOR_VALUES.value: nn.Linear(hidden_size, color_values),
+                ActionKeys.SUBMIT.value: nn.Linear(hidden_size, 2),
+            }
+        )
+
+    def forward(
+        self, encoder_hidden_states: torch.Tensor, attention_mask: torch.Tensor | None
+    ) -> dict[str, torch.Tensor]:
+        """Compute action logits from encoder hidden states.
+
+        Args:
+            encoder_hidden_states: [B, seq_len, hidden_size].
+            attention_mask: Optional attention mask [B, seq_len].
+
+        Returns:
+            Dict mapping action keys to logit tensors.
+        """
+        batch_size = encoder_hidden_states.size(0)
+
+        # Convert attention mask to key_padding_mask format if provided
+        key_padding_mask = None
+        if attention_mask is not None:
+            key_padding_mask = ~attention_mask.bool()
+
+        action_logits = {}
+        for action_key, query in self.action_queries.items():
+            # Expand query for batch
+            q = query.expand(batch_size, -1, -1)
+
+            # Cross-attention: query attends to encoder states
+            attended, _ = self.cross_attention(
+                q,
+                encoder_hidden_states,
+                encoder_hidden_states,
+                key_padding_mask=key_padding_mask,
+            )
+
+            # Normalize and classify
+            attended = self.layer_norm(attended.squeeze(1))
+            logits = self.classifiers[action_key](attended)
+            action_logits[action_key] = logits
+
+        return action_logits

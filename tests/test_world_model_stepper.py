@@ -11,7 +11,7 @@ from rlarcworld.common.configs import NStepMinVMaxConfig
 from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.common.protocols import ActorCriticCoreProto
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.utils.logging_utils import configure_logger
 
@@ -52,11 +52,16 @@ def config(device):
 @pytest.fixture
 def actor(grid_size, color_values, config):
     """Create an actor network for tests."""
-    actor = ArcActorNetwork(
+    actor = ViTARCActor(
         grid_size=grid_size,
         color_values=color_values,
-        config=config,
-    )
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
+    ).to(config["device"])
     actor.eval()
     return actor
 
