@@ -11,7 +11,7 @@ from torchrl.data.replay_buffers import (
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.common.enums import StateKeys
 from rlarcworld.models.actor import ViTARCActor
-from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.models.critic import VitARCCritic
 from rlarcworld.runners.core import OnStepContext, Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
@@ -361,9 +361,9 @@ def _build_simple_core(
         color_values=color_values,
         rl_vit_arc_config=rl_vit_arc_config,
     ).to(device)
-    critic = ArcCriticNetwork(
-        grid_size=grid_size,
+    critic = VitARCCritic(
         color_values=color_values,
+        rl_vit_arc_config=rl_vit_arc_config,
         num_atoms={"pixel_wise": 51, "binary": 3},
         v_min={"pixel_wise": -40, "binary": 0},
         v_max={"pixel_wise": 2, "binary": 1},

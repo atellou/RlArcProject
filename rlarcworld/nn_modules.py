@@ -745,6 +745,144 @@ class ActionHeadFromEncoder(nn.Module):
 
 
 # =============================================================================
+# Critic head for ViTARC encoder (distributional Q-values)
+# =============================================================================
+
+
+class CriticHeadFromEncoder(nn.Module):
+    """Converts ViTARC encoder outputs + actions to distributional Q-values.
+
+    Uses learnable queries (one per reward type) that attend over the
+    encoder hidden states *plus* an appended action token, similar in
+    spirit to ``ActionHeadFromEncoder``.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        grid_size: int,
+        color_values: int,
+        num_atoms: dict[str, int],
+        num_heads: int = 4,
+        dropout: float = 0.1,
+    ) -> None:
+        """Initialize critic head from encoder.
+
+        Args:
+            hidden_size: Hidden dimension of the encoder.
+            grid_size: Size of the grid (used for x, y coordinates).
+            color_values: Number of possible color values.
+            num_atoms: Dictionary mapping reward type to number of atoms
+                for distributional Q-learning.
+            num_heads: Number of attention heads. Defaults to 4.
+            dropout: Dropout probability. Defaults to 0.1.
+
+        """
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_atoms = num_atoms
+
+        # Action features: concat x, y, color, submit probabilities
+        action_input_dim = (grid_size * 2) + color_values + 2
+        self.action_projection = nn.Linear(action_input_dim, hidden_size)
+
+        # Learnable queries for each reward type
+        self.value_queries = nn.ParameterDict(
+            {
+                key: nn.Parameter(torch.randn(1, 1, hidden_size) * 0.02)
+                for key in self.num_atoms.keys()
+            }
+        )
+
+        # Cross-attention: queries attend to encoder hidden states (+ action token)
+        self.cross_attention = nn.MultiheadAttention(
+            hidden_size, num_heads, dropout=dropout, batch_first=True
+        )
+
+        # Layer norm before classification
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+        # Classification heads for distributional Q-values
+        self.classifiers = nn.ModuleDict(
+            {key: nn.Linear(hidden_size, num) for key, num in self.num_atoms.items()}
+        )
+
+    def forward(
+        self,
+        encoder_output: ViTARCEncoderOutput,
+        action: TensorDict,
+    ) -> TensorDict:
+        """Compute per-reward distributions from encoder output and action.
+
+        Args:
+            encoder_output: ``ViTARCEncoderOutput`` with hidden states and mask.
+            action: TensorDict with action distributions for
+                ``x_location``, ``y_location``, ``color_values``, ``submit``.
+
+        Returns:
+            TensorDict mapping reward keys to probability distributions
+            over ``num_atoms[key]`` atoms.
+        """
+        hidden_states = encoder_output.hidden_states  # [B, seq_len, H]
+        attention_mask = encoder_output.attention_mask  # [B, seq_len] or None
+
+        batch_size = hidden_states.size(0)
+
+        # Concatenate action distributions in a fixed order and project to token
+        action_concat = torch.cat(
+            [
+                action[ActionKeys.X_LOCATION.value],
+                action[ActionKeys.Y_LOCATION.value],
+                action[ActionKeys.COLOR_VALUES.value],
+                action[ActionKeys.SUBMIT.value],
+            ],
+            dim=1,
+        )
+        action_embed = self.action_projection(action_concat).unsqueeze(1)
+
+        # Append action token to encoder sequence
+        hidden_states = torch.cat([hidden_states, action_embed], dim=1)
+
+        # Extend attention mask for action token if provided
+        if attention_mask is not None:
+            action_mask = torch.ones(
+                batch_size,
+                1,
+                device=attention_mask.device,
+                dtype=attention_mask.dtype,
+            )
+            attention_mask = torch.cat([attention_mask, action_mask], dim=1)
+
+        # Convert attention mask to key_padding_mask format
+        key_padding_mask = None
+        if attention_mask is not None:
+            key_padding_mask = ~attention_mask.bool()
+
+        # Cross-attention: one learnable query per reward type
+        q_logits: dict[str, torch.Tensor] = {}
+        for reward_key, query in self.value_queries.items():
+            q = query.expand(batch_size, -1, -1)  # [B, 1, H]
+
+            attended, _ = self.cross_attention(
+                q,
+                hidden_states,
+                hidden_states,
+                key_padding_mask=key_padding_mask,
+            )
+
+            attended = self.layer_norm(attended.squeeze(1))  # [B, H]
+            logits = self.classifiers[reward_key](attended)  # [B, num_atoms]
+            q_logits[reward_key] = logits
+
+        # Convert logits to probability distributions over atoms
+        q_dist = TensorDict(
+            {key: torch.softmax(logits, dim=-1) for key, logits in q_logits.items()}
+        )
+
+        return q_dist
+
+
+# =============================================================================
 # VitArc Adaptation for RlArcWorld
 # =============================================================================
 

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import StateKeys
@@ -99,6 +100,7 @@ class ViTARCActor(nn.Module):
             f"  - Params: {total_params:,} total, {trainable_params:,} trainable"
         )
 
+    @torch.jit.export
     def input_val(self, state: TensorDict) -> None:
         """Validate that the state contains exactly the required keys."""
         assert isinstance(state, TensorDict), TypeError(
@@ -108,6 +110,7 @@ class ViTARCActor(nn.Module):
             f"State keys must be {STATE_REQUIRED_KEYS}. Keys found {set(state.keys())}"
         )
 
+    @torch.jit.export
     def output_val(self, action: TensorDict) -> None:
         """Validate that the action dict contains exactly the expected heads."""
         assert isinstance(action, TensorDict), TypeError("Action must be a TensorDict")
@@ -138,8 +141,13 @@ class ViTARCActor(nn.Module):
 
         self.input_val(state)
 
-        # VitArc
-        vitarc_output = self.rl_vit_arc(state)
+        # Encode state using shared ViTARC encoder
+        if self.config.get("use_checkpointing"):
+            vitarc_output = checkpoint.checkpoint(
+                self.rl_vit_arc, state, use_reentrant=False
+            )
+        else:
+            vitarc_output = self.rl_vit_arc(state)
 
         # Extract action logits from encoder hidden states
         action_logits = self.action_heads(

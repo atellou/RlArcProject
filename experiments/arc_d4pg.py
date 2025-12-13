@@ -47,7 +47,7 @@ from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ViTARCActor
-from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.models.critic import VitARCCritic
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
@@ -67,7 +67,7 @@ class ArcD4PG:
 
     This class brings together all the decoupled components:
     - D4PGCore: Algorithm implementation
-    - ViTARCActor & ArcCriticNetwork: Neural networks
+    - ViTARCActor & VitARCCritic: Neural networks
     - ArcBatchGridEnv: Environment wrapper
     - Trainer: Training loop orchestration
     """
@@ -133,7 +133,7 @@ class ArcD4PG:
         logger.info("Initializing actor and critic networks...")
         logger.info("Creating actor network...")
 
-        actor_config = RlArcWorldViTARCConfig(
+        rl_vit_arc_config = RlArcWorldViTARCConfig(
             grid_size=config.env.grid_size,
             d_model=64,
             d_ff=128,
@@ -148,18 +148,17 @@ class ArcD4PG:
 
         self.actor = ViTARCActor(
             color_values=config.env.color_values,
-            rl_vit_arc_config=actor_config,
+            rl_vit_arc_config=rl_vit_arc_config,
         )
         logger.info("Actor network created successfully")
 
         logger.info("Creating critic network...")
-        self.critic = ArcCriticNetwork(
-            grid_size=config.env.grid_size,
+        self.critic = VitARCCritic(
             color_values=config.env.color_values,
+            rl_vit_arc_config=rl_vit_arc_config,
             num_atoms=config.distributional.num_atoms,
             v_min=config.distributional.v_min,
             v_max=config.distributional.v_max,
-            embedding_size=config.network.embedding_size,
             config=self.cuda_config,
         )
         logger.info("Critic network created successfully")

@@ -8,7 +8,7 @@ from tensordict import TensorDict
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.common.enums import StateKeys
 from rlarcworld.models.actor import ViTARCActor
-from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.models.critic import VitARCCritic
 from rlarcworld.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.logging_utils import configure_logger
@@ -51,9 +51,9 @@ def core_setup(request):
     num_atoms = {"pixel_wise": 50, "binary": 3}
     v_min = {"pixel_wise": -40, "binary": 0}
     v_max = {"pixel_wise": 2, "binary": 1}
-    critic = ArcCriticNetwork(
-        grid_size=grid_size,
+    critic = VitARCCritic(
         color_values=color_values,
+        rl_vit_arc_config=actor_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
@@ -149,9 +149,9 @@ def build_core(grid_size: int = 16, color_values: int = 7) -> D4PGCore:
     num_atoms = {"pixel_wise": 50, "binary": 3}
     v_min = {"pixel_wise": -40, "binary": 0}
     v_max = {"pixel_wise": 2, "binary": 1}
-    critic = ArcCriticNetwork(
-        grid_size=grid_size,
+    critic = VitARCCritic(
         color_values=color_values,
+        rl_vit_arc_config=actor_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
