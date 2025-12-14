@@ -774,6 +774,50 @@ class TestRlArcWorldViTARC:
         assert output.example_hidden is not None
         assert output.example_mask is not None
 
+    def test_forward_with_index_grid(self):
+        """Test forward pass when using the index grid (timestamp grid)."""
+        from rlarcworld.models.nn_modules import RlArcWorldViTARC, ViTARCEncoderOutput
+
+        batch_size = 2
+        grid_size = 8
+        color_values = 11
+
+        config = RlArcWorldViTARCConfig(
+            grid_size=grid_size,
+            d_model=64,
+            d_ff=128,
+            num_layers=2,
+            num_heads=4,
+            use_ope=False,
+            grids_to_encode=[StateKeys.GRID.value],
+            use_index_grid=True,
+        )
+        model = RlArcWorldViTARC(config)
+
+        # Build state with grid and matching index grid (timestamps)
+        grid = torch.randint(0, color_values, (batch_size, 1, grid_size, grid_size))
+        # Simple synthetic timestamp grid: increasing integers per cell
+        index_values = (
+            torch.arange(grid_size * grid_size)
+            .view(1, 1, grid_size, grid_size)
+            .repeat(batch_size, 1, 1, 1)
+        )
+
+        state = TensorDict(
+            {
+                StateKeys.GRID.value: grid,
+                StateKeys.INDEX.value: index_values,
+            }
+        )
+
+        output = model(state)
+
+        assert isinstance(output, ViTARCEncoderOutput)
+        assert output.hidden_states is not None
+        # index_ids present and aligned with input_ids when use_index_grid=True
+        assert output.index_ids is not None
+        assert output.index_ids.shape == output.input_ids.shape
+
     def test_trainable_ape_parameter_count(self):
         """Test that trainable_ape affects parameter count."""
         from rlarcworld.models.nn_modules import RlArcWorldViTARC

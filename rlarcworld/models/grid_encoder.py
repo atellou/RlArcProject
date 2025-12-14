@@ -219,6 +219,33 @@ class GridEncoder:
 
         return output.view(batch_size, -1)
 
+    def flatten_index_grid(self, index_grid: torch.Tensor) -> torch.Tensor:
+        """Flatten index/timestamp grid to match token layout.
+
+        This mirrors ``flatten_grid`` but stores integer timestamps instead of
+        color/token IDs. Special structural positions (row/column end markers
+        and the bottom-right corner) are filled with zeros.
+
+        Args:
+            index_grid: [B, H, W] integer timestamps.
+
+        Returns:
+            Tensor of shape [B, (H+1)*(W+1)] with zeros in structural
+            positions and timestamps in the content region.
+        """
+        batch_size, height, width = index_grid.shape
+        device = index_grid.device
+
+        out_h, out_w = height + 1, width + 1
+        output = torch.zeros(
+            (batch_size, out_h, out_w), dtype=torch.long, device=device
+        )
+
+        # Copy index values into the content region; structural positions stay 0
+        output[:, :height, :width] = index_grid.long()
+
+        return output.view(batch_size, -1)
+
     def encode_grid(
         self,
         grid: torch.Tensor,

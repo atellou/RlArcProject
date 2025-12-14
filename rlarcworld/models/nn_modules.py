@@ -19,7 +19,7 @@ from transformers.models.t5.configuration_t5 import T5Config
 from rlarcworld.common.enums import ActionKeys, RewardKeys, StateKeys
 from rlarcworld.common.types import ACTION_KEYS_SET, GRID_ENCODER_KEYS_SET
 from rlarcworld.models.grid_encoder import GridEncoder
-from rlarcworld.models.vit_arc import CustomT5Stack
+from rlarcworld.models.vit_arc import CustomT5Stack, FixedAbsolutePositionalEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,7 @@ class RlArcWorldViTARCConfig:
     ape_mixer: str | None = None
     trainable_ape: bool = False
     grids_to_encode: list[str] | None = None
+    use_index_grid: bool = True
     color_values: int | None = None
 
     @classmethod
@@ -122,6 +123,7 @@ class ViTARCEncoderOutput:
         object_idx: Optional object indices for object-aware processing.
         example_hidden: Optional example-level hidden states.
         example_mask: Optional example-level attention mask.
+        index_ids: Optional index/timestamp IDs aligned with input_ids.
     """
 
     hidden_states: torch.Tensor
@@ -132,6 +134,7 @@ class ViTARCEncoderOutput:
     object_idx: torch.Tensor | None
     example_hidden: torch.Tensor | None
     example_mask: torch.Tensor | None
+    index_ids: torch.Tensor | None
 
 
 # =============================================================================
@@ -655,6 +658,9 @@ class RlArcWorldViTARC(nn.Module):
         self.encoder_ids = self.grid_encoder.encoder_ids
         self.use_ope = use_ope
 
+        # Optional index grid usage (timestamps of cell modifications)
+        self.use_index_grid = config.use_index_grid
+
         # Create T5Config for ViTARC
         self.t5_config = T5Config(
             vocab_size=self.encoder_ids.VOCAB_SIZE,
@@ -685,6 +691,10 @@ class RlArcWorldViTARC(nn.Module):
 
         # Token embeddings
         self.embed_tokens = nn.Embedding(self.encoder_ids.VOCAB_SIZE, config.d_model)
+
+        # Index/timestamp embedding (same dimension as tokens so it can be added)
+        if self.use_index_grid:
+            self.index_embed = FixedAbsolutePositionalEmbedding(config.d_model)
 
         # Temporal embedding (0=initial, 1=last, 2=current)
         self.use_temporal = (
@@ -750,9 +760,11 @@ class RlArcWorldViTARC(nn.Module):
         initial = state.get(StateKeys.INITIAL.value)
         last_grid = state.get(StateKeys.LAST_GRID.value)
         examples = state.get(StateKeys.EXAMPLES.value)
+        index_grid = state.get(StateKeys.INDEX.value)
 
         example_hidden: torch.Tensor | None = None
         example_mask: torch.Tensor | None = None
+        index_ids: torch.Tensor | None = None
 
         # Encode temporal grids: <s> [initial] <sep> [last] <sep> [current] </s>
         if self.use_temporal:
@@ -771,6 +783,18 @@ class RlArcWorldViTARC(nn.Module):
             input_ids, attention_mask, object_idx = self.grid_encoder.encode_grid(grid)
             temporal_ids = None
 
+            # Build index_ids aligned with input_ids: <s> [index_grid] </s>
+            if self.use_index_grid and index_grid is not None:
+                # index_grid comes as [B, H, W]; flatten to match grid tokens
+                index_2d = (
+                    index_grid.squeeze(1) if index_grid.dim() == 4 else index_grid
+                )
+                index_tokens = self.grid_encoder.flatten_index_grid(index_2d)
+                batch_size = index_tokens.size(0)
+                device = index_tokens.device
+                zero_pad = torch.zeros((batch_size, 1), dtype=torch.long, device=device)
+                index_ids = torch.cat([zero_pad, index_tokens, zero_pad], dim=1)
+
         # Encode temporal grids with ViTARC encoder (2D APE + 2D RPE + OPE + PEmixer)
         encoder_outputs = self.encoder(
             input_ids=input_ids,
@@ -779,6 +803,10 @@ class RlArcWorldViTARC(nn.Module):
             return_dict=True,
         )
         hidden_states = encoder_outputs.last_hidden_state
+
+        # Add index embedding if enabled and available (Markov timestamp grid)
+        if self.use_index_grid and index_ids is not None:
+            hidden_states = hidden_states + self.index_embed(index_ids)
 
         # Add temporal embedding if using temporal grids
         if self.use_temporal and temporal_ids is not None:
@@ -827,4 +855,5 @@ class RlArcWorldViTARC(nn.Module):
             object_idx=object_idx,
             example_hidden=example_hidden,
             example_mask=example_mask,
+            index_ids=index_ids,
         )
