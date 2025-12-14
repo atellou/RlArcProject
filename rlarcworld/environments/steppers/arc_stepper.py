@@ -13,7 +13,7 @@ from rlarcworld.common.types import RewardDict
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.utils.augmentation import ArcAugmentationTransformer
 from rlarcworld.utils.device import CudaConfig
 
@@ -29,7 +29,7 @@ class PixelWiseArcStepper:
         dataset_path: str,
         grid_size: int,
         color_values: int,
-        actor: ArcActorNetwork,
+        actor: ViTARCActor,
         config: CudaConfig,
         n_step_config: NStepMinVMaxConfig | None = None,
     ) -> None:
@@ -40,7 +40,7 @@ class PixelWiseArcStepper:
             dataset_path (str): Path to the dataset.
             grid_size (int): Size of the ARC grid.
             color_values (int): Number of possible colors.
-            actor (ArcActorNetwork): Actor network.
+            actor (ViTARCActor): Actor network.
             config (dict): Configuration dictionary.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
@@ -68,7 +68,6 @@ class PixelWiseArcStepper:
             [
                 ArcSampleTransformer(
                     output_size=(grid_size, grid_size),
-                    examples_stack_dim=10,
                     padding_constant_value=-1,
                     zero_based_correction=1,
                 ),

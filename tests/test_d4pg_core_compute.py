@@ -6,8 +6,10 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.models.actor import ArcActorNetwork
-from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.common.enums import StateKeys
+from rlarcworld.models.actor import ViTARCActor
+from rlarcworld.models.critic import VitARCCritic
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.utils.device import enable_cuda
 from rlarcworld.utils.logging_utils import configure_logger
 
@@ -15,34 +17,53 @@ from rlarcworld.utils.logging_utils import configure_logger
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
 
 
-@pytest.fixture(params=[False, True])
+@pytest.fixture(
+    params=[
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(), reason="AMP requires CUDA"
+            ),
+        ),
+    ]
+)
 def core_setup(request):
     amp_flag = bool(request.param)
     config = enable_cuda(amp_enabled=amp_flag)
     device = torch.device(
         config["device"]
     )  # "cuda" when available and amp enabled, else cpu
-    grid_size = 30
+    grid_size = 16
     color_values = 11
     batch_size = 4
 
-    actor = ArcActorNetwork(
+    actor_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,
+        grids_to_encode=[StateKeys.GRID.value],
+    )
+    actor = ViTARCActor(
         color_values=color_values,
+        rl_vit_arc_config=actor_config,
         config={
             "device": str(device),
             "amp_enabled": config["amp_enabled"],
             "use_checkpointing": False,
         },
-    )
+    ).to(device)
     actor.eval()
 
     num_atoms = {"pixel_wise": 50, "binary": 3}
     v_min = {"pixel_wise": -40, "binary": 0}
     v_max = {"pixel_wise": 2, "binary": 1}
-    critic = ArcCriticNetwork(
-        grid_size=grid_size,
+    critic = VitARCCritic(
         color_values=color_values,
+        rl_vit_arc_config=actor_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
@@ -82,7 +103,7 @@ def core_setup(request):
             "examples": torch.randint(
                 0,
                 color_values,
-                (batch_size, 10, 2, grid_size, grid_size),
+                (batch_size, 3, 2, grid_size, grid_size),
                 device=device,
             ),
             "initial": torch.randint(
@@ -92,9 +113,6 @@ def core_setup(request):
                 0, grid_size, (batch_size, 1, grid_size, grid_size), device=device
             ),
             "terminated": torch.zeros((batch_size, 1), device=device, dtype=torch.long),
-            "example_mask": torch.randint(
-                0, 2, (batch_size, 10), device=device, dtype=torch.long
-            ),
         }
     ).to(device)
 
@@ -115,27 +133,35 @@ def core_setup(request):
     return core, state, next_state, reward, done, batch_size, num_atoms
 
 
-def build_core(grid_size: int = 16, color_values: int = 7) -> D4PGCore:
+def build_core(grid_size: int = 12, color_values: int = 7) -> D4PGCore:
     config = enable_cuda(amp_enabled=False)
     device = torch.device(config["device"])  # cpu in CI typically
 
-    actor = ArcActorNetwork(
+    actor_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        dropout=0.1,
+        ape_type="SinusoidalAPE2D",
+        rpe_type="Two-slope-Alibi",
+        use_ope=False,
+        ape_mixer="default",
+    )
+
+    actor = ViTARCActor(
         color_values=color_values,
-        config={
-            "device": str(device),
-            "amp_enabled": config["amp_enabled"],
-            "use_checkpointing": False,
-        },
-    ).to(device)
+        rl_vit_arc_config=actor_config,
+    ).to(config["device"])
     actor.eval()
 
     num_atoms = {"pixel_wise": 50, "binary": 3}
     v_min = {"pixel_wise": -40, "binary": 0}
     v_max = {"pixel_wise": 2, "binary": 1}
-    critic = ArcCriticNetwork(
-        grid_size=grid_size,
+    critic = VitARCCritic(
         color_values=color_values,
+        rl_vit_arc_config=actor_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,

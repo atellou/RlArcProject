@@ -1,3 +1,5 @@
+exclude: ^rlarcworld/models/vit_arc\.py$
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
@@ -26,6 +28,7 @@ repos:
     hooks:
       - id: mypy
         args: ["--config-file=pyproject.toml"]
+        exclude: ^rlarcworld/models/(vit_arc|actor_vitarc)\.py$
 
   - repo: https://github.com/econchick/interrogate
     rev: 1.7.0

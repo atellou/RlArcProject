@@ -22,6 +22,8 @@ dependencies = [
     "gcsfs",
     "google-cloud-logging",
     "python-json-logger",
+    "transformers>=4.57.3",
+    "opencv-python>=4.12.0.88",
 ]
 
 [dependency-groups]
@@ -61,6 +63,10 @@ warn_redundant_casts = true
 warn_unreachable = true
 show_error_codes = true
 pretty = true
+
+[[tool.mypy.overrides]]
+module = "rlarcworld.models.vit_arc"
+ignore_errors = true
 
 # Interrogate configuration (docstring coverage)
 [tool.interrogate]

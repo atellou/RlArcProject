@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 
 
 class StateKeys(StrEnum):
@@ -11,7 +11,6 @@ class StateKeys(StrEnum):
     LAST_GRID = "last_grid"
     GRID = "grid"
     EXAMPLES = "examples"
-    EXAMPLE_MASK = "example_mask"
     INITIAL = "initial"
     INDEX = "index"
     TERMINATED = "terminated"
@@ -55,3 +54,38 @@ class ArcEnvRunningMode(StrEnum):
     def is_train(self) -> bool:
         """Check if the current running mode is training."""
         return self == self.TRAIN
+
+
+class GridEncoderIdsType(IntEnum):
+    """Grid encoder type.
+
+    Used to define token IDs for grid encoding in the ARC environment.
+    These IDs are used by the grid encoder to convert grid states into token sequences.
+
+    ID meanings:
+    - PAD_ID: Padding token
+    - COLOR_*_ID: Color token IDs (0-10)
+    - BOS_ID: Beginning of sequence
+    - EOS_ID: End of sequence
+    - ENDXGRID_ID, ENDYGRID_ID, ENDGRID_ID: Grid termination tokens
+    - SEP_ID: Separator token
+    - MASK_ID: Mask token for training
+    - EMPTY_ID: Empty cell token
+    """
+
+    PAD_ID = 0
+    COLOR_START_ID = 1
+    COLOR_END_ID = 11
+    BOS_ID = 12
+    EOS_ID = 13
+    ENDXGRID_ID = 14
+    ENDYGRID_ID = 15
+    ENDGRID_ID = 16
+    SEP_ID = 17
+    MASK_ID = 18
+    EMPTY_ID = 19
+    VOCAB_SIZE = 20  # 0-10 colors + 10 special tokens
+
+    def valid_non_encoded_ids(self) -> list[int]:
+        """Get the valid non-encoded IDs."""
+        return list(range(self.COLOR_START_ID, self.COLOR_END_ID + 1)) + [self.PAD_ID]

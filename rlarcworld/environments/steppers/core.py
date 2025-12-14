@@ -11,7 +11,7 @@ import torch
 from gymnasium import Env
 from tensordict import TensorDict
 
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.utils.checkpointing import add_schema_and_class
 from rlarcworld.utils.device import AmpScaler
 
@@ -57,7 +57,7 @@ class EnvStepper:
 
     def __init__(
         self,
-        actor: ArcActorNetwork,
+        actor: ViTARCActor,
         device: str | torch.device,
         env: Env,
         sampler: Iterator[ResetSample] | None = None,

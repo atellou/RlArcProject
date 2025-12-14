@@ -25,7 +25,6 @@ class ArcSampleTransformer:
     def __init__(
         self,
         output_size: tuple[int, int],
-        examples_stack_dim: int = 10,
         padding_constant_value: int = -1,
         zero_based_correction: int = 1,
     ):
@@ -34,8 +33,6 @@ class ArcSampleTransformer:
         Args:
             output_size (tuple[int, int]): Desired output size for the grids as
                 (height, width).
-            examples_stack_dim (int, optional): Dimension of the stack of
-                examples. Defaults to 10.
             padding_constant_value (int, optional): Constant value to pad the
                 grids. Defaults to -1.
             zero_based_correction (int, optional): Correction to make grid's
@@ -47,7 +44,6 @@ class ArcSampleTransformer:
         self.zero_based_correction = zero_based_correction
         self.constant_value = padding_constant_value
         self.output_size = output_size
-        self.examples_stack_dim = examples_stack_dim
 
     def pad_to_size(self, grid: torch.Tensor) -> torch.Tensor:
         """Pad the grid to the given size.
@@ -123,30 +119,6 @@ class ArcSampleTransformer:
         """
         logger.debug(f"Perform {self.__class__.__name__} transformations...")
         sample["examples"] = self.concat_examples(sample["examples"])
-        n_examples = sample["examples"].shape[0]
-        if n_examples < self.examples_stack_dim:
-            pad_size = torch.zeros(len(sample["examples"].shape) * 2, dtype=int)
-            pad_size[-1] = self.examples_stack_dim - n_examples
-            sample["examples"] = (
-                torch.nn.functional.pad(
-                    sample["examples"], tuple(pad_size), value=self.constant_value
-                )
-                + self.zero_based_correction
-            )
-
-            assert sample["examples"].shape[0] == self.examples_stack_dim, ValueError(
-                (
-                    "The number of examples (second dimension) should be "
-                    "equal to examples_stack_dim. "
-                )
-                + "Train Examples shape: {},Padding size: {}".format(
-                    sample["examples"].shape, pad_size
-                )
-            )
-
-        # Create example mask (1=real, 0=padded)
-        sample["example_mask"] = torch.zeros(self.examples_stack_dim)
-        sample["example_mask"][:n_examples] = 1
 
         sample["task"]["input"] = (
             self.pad_to_size(torch.as_tensor(sample["task"]["input"]))

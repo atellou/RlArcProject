@@ -11,7 +11,8 @@ from rlarcworld.common.configs import NStepMinVMaxConfig
 from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.common.protocols import ActorCriticCoreProto
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
-from rlarcworld.models.actor import ArcActorNetwork
+from rlarcworld.models.actor import ViTARCActor
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.utils.logging_utils import configure_logger
 
@@ -52,11 +53,23 @@ def config(device):
 @pytest.fixture
 def actor(grid_size, color_values, config):
     """Create an actor network for tests."""
-    actor = ArcActorNetwork(
+    actor_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
-        color_values=color_values,
-        config=config,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        dropout=0.1,
+        ape_type="SinusoidalAPE2D",
+        rpe_type="Two-slope-Alibi",
+        use_ope=False,
+        ape_mixer="default",
     )
+
+    actor = ViTARCActor(
+        color_values=color_values,
+        rl_vit_arc_config=actor_config,
+    ).to(config["device"])
     actor.eval()
     return actor
 
@@ -64,10 +77,18 @@ def actor(grid_size, color_values, config):
 @pytest.fixture
 def reward_model(grid_size, color_values, config):
     """Create a reward world model for tests."""
-    model = RewardWorldModel(
+    reward_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        dropout=0.1,
+        use_ope=False,
+    )
+    model = RewardWorldModel(
         color_values=color_values,
-        embedding_size=128,  # Must match internal CnnAttention dimensions
+        rl_vit_arc_config=reward_config,
         config=config,
     )
     return model

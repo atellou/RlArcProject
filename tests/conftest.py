@@ -11,11 +11,12 @@ from torchrl.data.replay_buffers import (
 
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
-from rlarcworld.common.enums import RewardKeys
+from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
-from rlarcworld.models.actor import ArcActorNetwork
-from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.models.actor import ViTARCActor
+from rlarcworld.models.critic import VitARCCritic
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.runners.core import Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
@@ -54,11 +55,25 @@ def batch_size() -> int:
 # ---------- Model fixtures ----------
 
 
-@pytest.fixture()
-def actor(device, grid_size, color_values) -> ArcActorNetwork:
-    return ArcActorNetwork(
+@pytest.fixture(scope="session")
+def rl_vit_arc_config(grid_size) -> RlArcWorldViTARCConfig:
+    """Shared ViTARC config for actor/critic tests."""
+    return RlArcWorldViTARCConfig(
         grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,
+        grids_to_encode=[StateKeys.GRID.value],
+    )
+
+
+@pytest.fixture()
+def actor(device, color_values, rl_vit_arc_config) -> ViTARCActor:
+    return ViTARCActor(
         color_values=color_values,
+        rl_vit_arc_config=rl_vit_arc_config,
         config={
             "device": str(device),
             "amp_enabled": False,
@@ -68,13 +83,13 @@ def actor(device, grid_size, color_values) -> ArcActorNetwork:
 
 
 @pytest.fixture()
-def critic(device, grid_size, color_values) -> ArcCriticNetwork:
+def critic(device, color_values, rl_vit_arc_config) -> VitARCCritic:
     num_atoms = {RewardKeys.PIXEL_WISE.value: 51, RewardKeys.BINARY.value: 3}
     v_min = {RewardKeys.PIXEL_WISE.value: -40, RewardKeys.BINARY.value: 0}
     v_max = {RewardKeys.PIXEL_WISE.value: 2, RewardKeys.BINARY.value: 1}
-    return ArcCriticNetwork(
-        grid_size=grid_size,
+    return VitARCCritic(
         color_values=color_values,
+        rl_vit_arc_config=rl_vit_arc_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
@@ -87,7 +102,7 @@ def critic(device, grid_size, color_values) -> ArcCriticNetwork:
 
 
 @pytest.fixture()
-def d4pg_core(actor: ArcActorNetwork, critic: ArcCriticNetwork, device) -> D4PGCore:
+def d4pg_core(actor: ViTARCActor, critic: VitARCCritic, device) -> D4PGCore:
     return D4PGCore(
         actor=actor,
         critic=critic,

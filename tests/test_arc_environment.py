@@ -6,13 +6,18 @@ import pytest
 import torch
 from tensordict import TensorDict
 
-from rlarcworld.common.enums import ActionKeys, RewardKeys
+from rlarcworld.common.enums import (
+    ActionKeys,
+    RewardKeys,
+    StateKeys,
+)
 from rlarcworld.environments.arc_batch_grid_env import (
     ArcBatchGridEnv,
     ArcEnvRunningMode,
 )
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
 
 logger = logging.getLogger(__name__)
@@ -527,10 +532,18 @@ def test_reward_world_model_wrapper_basic():
     )
 
     # Create reward world model
-    model = RewardWorldModel(
+    reward_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,
+        grids_to_encode=[StateKeys.GRID.value],
+    )
+    model = RewardWorldModel(
         color_values=color_values,
-        embedding_size=128,
+        rl_vit_arc_config=reward_config,
     )
 
     # Wrap environment
@@ -610,7 +623,19 @@ def test_reward_world_model_wrapper_multi_step():
 
     # Create environment and model
     env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values, n_steps=1)
-    model = RewardWorldModel(grid_size=grid_size, color_values=color_values)
+    reward_config = RlArcWorldViTARCConfig(
+        grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,
+        grids_to_encode=[StateKeys.GRID.value],
+    )
+    model = RewardWorldModel(
+        color_values=color_values,
+        rl_vit_arc_config=reward_config,
+    )
 
     wrapped_env = RewardWorldModelWrapper(
         env=env,
@@ -672,7 +697,19 @@ def test_reward_world_model_wrapper_horizon_truncation():
     step_horizon = 3
 
     env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values)
-    model = RewardWorldModel(grid_size=grid_size, color_values=color_values)
+    reward_config = RlArcWorldViTARCConfig(
+        grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,
+        grids_to_encode=[StateKeys.GRID.value],
+    )
+    model = RewardWorldModel(
+        color_values=color_values,
+        rl_vit_arc_config=reward_config,
+    )
 
     wrapped_env = RewardWorldModelWrapper(
         env=env,
@@ -723,7 +760,19 @@ def test_reward_world_model_wrapper_caching():
 
     env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values)
     env2 = PixelAwareRewardWrapper(env, max_penalty=1.0, n_steps=4, gamma=0.95)
-    model = RewardWorldModel(grid_size=grid_size, color_values=color_values)
+    reward_config = RlArcWorldViTARCConfig(
+        grid_size=grid_size,
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,
+        grids_to_encode=[StateKeys.GRID.value],
+    )
+    model = RewardWorldModel(
+        color_values=color_values,
+        rl_vit_arc_config=reward_config,
+    )
 
     wrapped_env = RewardWorldModelWrapper(
         env=env2,

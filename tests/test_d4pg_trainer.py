@@ -9,9 +9,11 @@ from torchrl.data.replay_buffers import (
 )
 
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.models.actor import ArcActorNetwork
-from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.common.enums import StateKeys
+from rlarcworld.models.actor import ViTARCActor
+from rlarcworld.models.critic import VitARCCritic
 from rlarcworld.runners.core import OnStepContext, Trainer
+from tests.utils.buffers import MiniBuffer, TrackingMiniBuffer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
 """
@@ -43,38 +45,10 @@ def test_d4pg_trainer_training_updates_and_loss_ranges(
         if ctx.loss_critic is not None:
             losses_critic.append(ctx.loss_critic)
 
-    # Minimal replay buffer to return batches without adding an extra leading batch dim
-    class _MiniStorage:
-        def __init__(self):
-            self.max_size = 1
-            self._len = 0
-
-        def __len__(self):
-            return self._len
-
-    class _MiniBuffer:
-        def __init__(self):
-            self.storage = _MiniStorage()
-            self._last = None
-
-        def extend(self, batch):
-            # trainer provides batch with leading [1] dim; store squeezed batch
-            self._last = batch.squeeze(0)
-            self.storage._len = 1
-            return [0]
-
-        def sample(self, bs, return_info=False):
-            if return_info:
-                return self._last, {"index": torch.tensor([0])}
-            return self._last
-
-        def update_priority(self, indices, priorities):
-            pass
-
     trainer = Trainer(
         core=core,
         train_step_stream_factory=step_stream_factory,
-        replay_buffer=_MiniBuffer(),
+        replay_buffer=MiniBuffer(),
         batch_size=batch_size,
         warmup_buffer_ratio=0.0,
         on_train_step={"test": on_step},
@@ -345,14 +319,24 @@ def _build_simple_core(
     max_grad_norm: float = 0.0,
 ) -> D4PGCore:
     # Retained for the specialized AMP/grad-clipping test
-    actor = ArcActorNetwork(
+    from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
+
+    rl_vit_arc_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
-        color_values=color_values,
-        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
+        d_model=64,
+        d_ff=128,
+        num_layers=2,
+        num_heads=4,
+        use_ope=False,  # Disable OPE for faster test
+        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
     )
-    critic = ArcCriticNetwork(
-        grid_size=grid_size,
+    actor = ViTARCActor(
         color_values=color_values,
+        rl_vit_arc_config=rl_vit_arc_config,
+    ).to(device)
+    critic = VitARCCritic(
+        color_values=color_values,
+        rl_vit_arc_config=rl_vit_arc_config,
         num_atoms={"pixel_wise": 51, "binary": 3},
         v_min={"pixel_wise": -40, "binary": 0},
         v_max={"pixel_wise": 2, "binary": 1},
@@ -385,31 +369,12 @@ def test_d4pg_trainer_per_warmup_and_priority(
             done = step_idx == max_steps - 1
             yield done, step_idx, make_synthetic_step(batch_size, core.actor)
 
-    # Create PER buffer with priority tracking
-    class _PERBuffer:
-        def __init__(self):
-            self.storage = type("S", (), {"max_size": 10, "__len__": lambda self: 10})()
-            self.update_called = False
-            self._last = None
-
-        def extend(self, batch):
-            self._last = batch.squeeze(0)
-            return [0]
-
-        def sample(self, bs, return_info=False):
-            if return_info:
-                return self._last, {"index": torch.tensor([0])}
-            return self._last
-
-        def update_priority(self, indices, priorities):
-            self.update_called = True
-
-    per_buffer = _PERBuffer()
+    per_buffer = TrackingMiniBuffer(max_size=10)
 
     def replay_buffer_update_priority(
         ctx: OnStepContext,
         info: dict[str, torch.Tensor],
-        replay_buffer: _PERBuffer,
+        replay_buffer: TrackingMiniBuffer,
     ) -> None:
         if ctx.td_error is None or info is None:
             return
@@ -441,7 +406,7 @@ def test_d4pg_trainer_per_warmup_and_priority(
     trainer.train(epochs=1, max_steps_per_epoch=8)
 
     # Ensure priority update attempted
-    assert per_buffer.update_called is True
+    assert len(per_buffer.priority_calls) > 0
     # Training should have occurred after warmup threshold;
     # losses should be recorded and finite
     assert len(losses_actor) > 0 and len(losses_critic) > 0
@@ -452,7 +417,7 @@ def test_d4pg_trainer_per_warmup_and_priority(
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="AMP test requires CUDA")
 def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
     device = torch.device("cuda")
-    grid_size, color_values = 12, 5
+    grid_size, color_values = 10, 5
     # Enable AMP and gradient clipping
     core = _build_simple_core(
         grid_size, color_values, device, amp=True, max_grad_norm=0.1
@@ -466,26 +431,6 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
             done = step_idx == max_steps - 1
             yield done, step_idx, make_step(batch_size, core.actor)
 
-    # Simple buffer to bypass warmup
-    class _Buf:
-        def __init__(self):
-            self.storage = type("S", (), {"max_size": 1, "__len__": lambda self: 1})()
-
-        def extend(self, batch):
-            self._last = batch.squeeze(0)
-            return [0]
-
-        def sample(self, bs, return_info=False):
-            if return_info:
-                return self._last, {"index": torch.tensor([0])}
-            return self._last
-
-        def update_priority(self, indices, priorities):
-            pass
-
-        def __len__(self):
-            return 1
-
     losses_actor, losses_critic = [], []
 
     def on_step(ctx: OnStepContext):
@@ -497,7 +442,7 @@ def test_d4pg_trainer_amp_and_gradient_clipping(batch_size: int = 2):
     trainer = Trainer(
         core=core,
         train_step_stream_factory=step_stream_factory,
-        replay_buffer=_Buf(),
+        replay_buffer=MiniBuffer(),
         batch_size=batch_size,
         warmup_buffer_ratio=0.0,
         on_train_step=OrderedDict({"test": on_step}),
@@ -528,26 +473,6 @@ def test_d4pg_trainer_validation_process(d4pg_core, make_synthetic_step, batch_s
             done = step_idx == 4
             yield done, step_idx, make_synthetic_step(batch_size, d4pg_core.actor)
 
-    # Simple buffer to bypass warmup
-    class _Buf:
-        def __init__(self):
-            self.storage = type("S", (), {"max_size": 1, "__len__": lambda self: 1})()
-
-        def extend(self, batch):
-            self._last = batch.squeeze(0)
-            return [0]
-
-        def sample(self, bs, return_info=False):
-            if return_info:
-                return self._last, {"index": torch.tensor([0])}
-            return self._last
-
-        def update_priority(self, indices, priorities):
-            pass
-
-        def __len__(self):
-            return 1
-
     train_losses_actor, train_losses_critic = [], []
     val_losses_actor, val_losses_critic = [], []
 
@@ -567,7 +492,7 @@ def test_d4pg_trainer_validation_process(d4pg_core, make_synthetic_step, batch_s
         core=d4pg_core,
         train_step_stream_factory=train_step_stream_factory,
         validation_step_stream_factory=validation_step_stream_factory,
-        replay_buffer=_Buf(),
+        replay_buffer=MiniBuffer(),
         batch_size=batch_size,
         warmup_buffer_ratio=0.0,
         on_train_step=OrderedDict({"test": on_train_step}),

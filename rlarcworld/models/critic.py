@@ -23,27 +23,26 @@ from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys, StateKeys
 from rlarcworld.common.types import STATE_REQUIRED_KEYS
-from rlarcworld.nn_modules import (
-    CnnAttention,
-    CnnPreTrainedModule,
-    CrossAttentionClassifier,
+from rlarcworld.models.nn_modules import (
+    CriticHeadFromEncoder,
+    RlArcWorldViTARC,
+    RlArcWorldViTARCConfig,
 )
 from rlarcworld.utils.device import enable_cuda
 
 logger = logging.getLogger(__name__)
 
 
-class ArcCriticNetwork(torch.nn.Module):
+class VitARCCritic(torch.nn.Module):
     """Critic network for the ARC environment."""
 
     def __init__(
         self,
-        grid_size: int,
         color_values: int,
+        rl_vit_arc_config: RlArcWorldViTARCConfig,
         num_atoms: dict[str, int],
         v_min: dict[str, int],
         v_max: dict[str, int],
-        embedding_size: int = 128,
         config=None,
     ):
         """Initialize the critic network for the ARC environment.
@@ -55,12 +54,12 @@ class ArcCriticNetwork(torch.nn.Module):
                 for each reward type.
             v_min (Dict[str, int]): The minimum value for each reward type.
             v_max (Dict[str, int]): The maximum value for each reward type.
-            embedding_size (int, optional): The size of the embedding. Defaults to 128.
+            rl_vit_arc_config (RlArcWorldViTARCConfig): The ViTARC configuration.
             config (CudaConfig, optional): CUDA configuration. Defaults to None.
         """
         super().__init__()
         self.num_atoms = num_atoms
-        self.grid_size = grid_size
+        self.grid_size = rl_vit_arc_config.grid_size
         self.color_values = color_values
         self.v_min = v_min
         self.v_max = v_max
@@ -84,57 +83,32 @@ class ArcCriticNetwork(torch.nn.Module):
             ActionKeys.SUBMIT.value,
         ]
 
-        self.actions_mlp = torch.nn.Sequential(
-            torch.nn.Linear(
-                (self.grid_size * 2) + self.color_values + 2, embedding_size * 2
-            ),
-            torch.nn.ReLU(),
-            torch.nn.Linear(embedding_size * 2, embedding_size),
-        )
-        self.inputs_layers = torch.nn.ModuleDict(
-            {
-                StateKeys.LAST_GRID.value: CnnPreTrainedModule(
-                    embedding_size=embedding_size,
-                ),
-                StateKeys.GRID.value: CnnPreTrainedModule(
-                    embedding_size=embedding_size,
-                ),
-                StateKeys.EXAMPLES.value: CnnAttention(
-                    embedding_size=embedding_size, nheads=4, dropout=0.2, bias=True
-                ),
-                StateKeys.INITIAL.value: CnnPreTrainedModule(
-                    embedding_size=embedding_size,
-                ),
-                StateKeys.INDEX.value: CnnPreTrainedModule(
-                    embedding_size=embedding_size,
-                ),
-            }
-        )
+        # Shared ViTARC encoder for state processing
+        self.rl_vit_arc = RlArcWorldViTARC(rl_vit_arc_config)
 
-        self.cross_attention_classifier = torch.nn.Sequential(
-            torch.nn.LayerNorm(embedding_size),
-            CrossAttentionClassifier(
-                output_classes=self.num_atoms,
-                embedding_size=128,
-                nheads=4,
-                dropout=0.2,
-                bias=True,
-            ),
+        # Critic head that converts encoder output + actions into Q-distributions
+        self.critic_head = CriticHeadFromEncoder(
+            hidden_size=rl_vit_arc_config.d_model,
+            grid_size=self.grid_size,
+            color_values=self.color_values,
+            num_atoms=self.num_atoms,
+            num_heads=rl_vit_arc_config.num_heads,
+            dropout=rl_vit_arc_config.dropout,
         )
 
         self.to(self.device)
 
-    @torch.jit.export
-    def scale_arc_grids(self, x: torch.Tensor) -> torch.Tensor:
-        r"""Scales the input tensor by the number of color values.
-
-        Args:
-            x (torch.Tensor): The input tensor to scale.
-
-        Returns:
-            torch.Tensor: The scaled tensor.
-        """
-        return x / self.color_values
+        # Log configuration and parameter count
+        total_params = sum(p.numel() for p in self.parameters())
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        logger.info(
+            f"ViTARCCritic initialized with best ViTARC config:\n"
+            f"  - APE: {rl_vit_arc_config.ape_type}\n"
+            f"  - RPE: {rl_vit_arc_config.rpe_type} (largest gain)\n"
+            f"  - PEmixer: {rl_vit_arc_config.ape_mixer} (second largest gain)\n"
+            f"  - OPE: {rl_vit_arc_config.use_ope} (third largest gain)\n"
+            f"  - Params: {total_params:,} total, {trainable_params:,} trainable"
+        )
 
     @torch.jit.export
     def input_val(self, state: TensorDict):
@@ -203,70 +177,27 @@ class ArcCriticNetwork(torch.nn.Module):
             ValueError: If the state keys do not match the required keys.
             AssertionError: If a NaN is detected in the output.
         """
-        state = state.clone()
         current_device = next(self.parameters()).device
-        example_mask = state.pop(StateKeys.EXAMPLE_MASK.value, None)
-        if example_mask is not None:
-            example_mask = example_mask.to(current_device)
+        state = state.clone().to(current_device)
+
         # Only present in training
         state.pop(StateKeys.TERMINATED.value, None)
 
         # Validate input
         self.input_val(state)
-        state.update(action)
 
-        # Broadcast the state
-        action_keys = torch.cat(
-            tuple(state.pop(k) for k in self.no_scale_keys),
-            dim=1,
-        ).to(current_device)
-        action_keys = self.actions_mlp(action_keys).unsqueeze(1)
-
-        # Grid inputs
-        for key, value in state.items():
-            value = value.to(current_device)
-            if key == StateKeys.INDEX.value:
-                max_value = torch.max(value)
-                value = value.float() if max_value == 0 else value / max_value
-            else:
-                value = self.scale_arc_grids(value)
-
-            if self.config.get("use_checkpointing"):
-                state[key] = checkpoint.checkpoint(
-                    self.inputs_layers[key], value, use_reentrant=False
-                )
-            else:
-                state[key] = self.inputs_layers[key](value)
-
-            if key != StateKeys.EXAMPLES.value:
-                state[key] = state[key].unsqueeze(1)
-
-        # If there is an example mask, apply it to zero out padded examples
-        if example_mask is not None:
-            # mask: [batch_size, num_examples] -> [batch_size, num_examples, 1]
-            mask = example_mask.unsqueeze(-1)
-            state[StateKeys.EXAMPLES.value] = state[StateKeys.EXAMPLES.value] * mask
-
-        # Concatenate flattned states
-        state = torch.cat(
-            [*tuple(state.values()), action_keys],
-            dim=1,
-        )
-
+        # Encode state using shared ViTARC encoder
         if self.config.get("use_checkpointing"):
-            state = checkpoint.checkpoint(
-                self.cross_attention_classifier, state, use_reentrant=False
+            vitarc_output = checkpoint.checkpoint(
+                self.rl_vit_arc, state, use_reentrant=False
             )
         else:
-            state = self.cross_attention_classifier(state)
+            vitarc_output = self.rl_vit_arc(state)
 
-        # Apply softmax
-        state = TensorDict(
-            {
-                action_type: torch.softmax(logits, dim=-1)
-                for action_type, logits in state.items()
-            },
-        )
-        self.output_val(state)
+        # Use critic head to produce per-reward distributions
+        action = action.to(current_device)
+        q_dist = self.critic_head(vitarc_output, action)
 
-        return state.auto_batch_size_()
+        self.output_val(q_dist)
+
+        return q_dist.auto_batch_size_()

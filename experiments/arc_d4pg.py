@@ -46,8 +46,9 @@ from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
-from rlarcworld.models.actor import ArcActorNetwork
-from rlarcworld.models.critic import ArcCriticNetwork
+from rlarcworld.models.actor import ViTARCActor
+from rlarcworld.models.critic import VitARCCritic
+from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
@@ -66,7 +67,7 @@ class ArcD4PG:
 
     This class brings together all the decoupled components:
     - D4PGCore: Algorithm implementation
-    - ArcActorNetwork & ArcCriticNetwork: Neural networks
+    - ViTARCActor & VitARCCritic: Neural networks
     - ArcBatchGridEnv: Environment wrapper
     - Trainer: Training loop orchestration
     """
@@ -131,22 +132,26 @@ class ArcD4PG:
         # Initialize networks
         logger.info("Initializing actor and critic networks...")
         logger.info("Creating actor network...")
-        self.actor = ArcActorNetwork(
-            grid_size=config.env.grid_size,
+
+        # Use config's rl_vit_arc_config or create one with best settings
+        if config.network.rl_vit_arc_config is not None:
+            rl_vit_arc_config = config.network.rl_vit_arc_config
+        else:
+            rl_vit_arc_config = RlArcWorldViTARCConfig.best_config(config.env.grid_size)
+
+        self.actor = ViTARCActor(
             color_values=config.env.color_values,
-            embedding_size=config.network.embedding_size,
-            config=self.cuda_config,
+            rl_vit_arc_config=rl_vit_arc_config,
         )
         logger.info("Actor network created successfully")
 
         logger.info("Creating critic network...")
-        self.critic = ArcCriticNetwork(
-            grid_size=config.env.grid_size,
+        self.critic = VitARCCritic(
             color_values=config.env.color_values,
+            rl_vit_arc_config=rl_vit_arc_config,
             num_atoms=config.distributional.num_atoms,
             v_min=config.distributional.v_min,
             v_max=config.distributional.v_max,
-            embedding_size=config.network.embedding_size,
             config=self.cuda_config,
         )
         logger.info("Critic network created successfully")
@@ -182,9 +187,8 @@ class ArcD4PG:
         if config.world_model.enabled:
             logger.info("Creating world model stepper...")
             reward_model = RewardWorldModel(
-                grid_size=config.env.grid_size,
                 color_values=config.env.color_values,
-                embedding_size=config.network.embedding_size,
+                rl_vit_arc_config=rl_vit_arc_config,
                 config=self.cuda_config,
             )
             self.world_model_stepper = ArcWorldModelStepper(
