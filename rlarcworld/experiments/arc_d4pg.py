@@ -73,6 +73,7 @@ class ArcD4PG:
             **kwargs: Additional arguments passed to D4PGCore
         """
         # Store full config for reference
+        config = config.get_validated_config()
         self.exp_config = config
 
         # Set random seed
@@ -126,7 +127,6 @@ class ArcD4PG:
         rl_vit_arc_config = config.network or RlArcWorldViTARCConfig.best_config(
             config.env.grid_size
         )
-        rl_vit_arc_config.grid_size = config.env.grid_size
 
         self.actor = ViTARCActor(
             color_values=config.env.color_values,
@@ -154,6 +154,7 @@ class ArcD4PG:
             color_values=config.env.color_values,
             actor=self.actor,
             config=self.cuda_config,
+            max_penalty=config.env.max_penalty,
             n_step_config=config.d4pg.n_step_config,
         )
         logger.info("Training stepper created successfully")
@@ -167,6 +168,7 @@ class ArcD4PG:
             color_values=config.env.color_values,
             actor=self.actor,
             config=self.cuda_config,
+            max_penalty=config.env.max_penalty,
         )
         logger.info("Validation stepper created successfully")
 
@@ -187,6 +189,7 @@ class ArcD4PG:
                 config=self.cuda_config,
                 reward_model=reward_model,
                 reward_model_lr=config.world_model.learning_rate,
+                lr_scheduler_kwargs=config.world_model.lr_scheduler_kwargs,
                 step_horizon=config.world_model.imagination_horizon,
                 n_step_config=config.d4pg.n_step_config,
                 gamma=config.d4pg.gamma,
@@ -205,9 +208,16 @@ class ArcD4PG:
             critic_lr=config.d4pg.critic_lr,
             gamma=config.d4pg.gamma,
             tau=config.d4pg.tau,
+            lr_scheduler_kwargs=config.d4pg.lr_scheduler_kwargs,
             n_steps=config.d4pg.n_step_config.n_steps,
             config=self.cuda_config,
             amp_enabled=config.system.amp_enabled,
+            carsm=config.d4pg.carsm,
+            entropy_coef=config.d4pg.entropy_coef,
+            entropy_coef_decay=config.d4pg.entropy_coef_decay,
+            target_update_frequency=config.d4pg.target_update_frequency,
+            max_grad_norm=config.d4pg.max_grad_norm,
+            compute_td_error=config.d4pg.compute_td_error,
             **kwargs,
         )
 

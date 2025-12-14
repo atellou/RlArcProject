@@ -31,6 +31,7 @@ class PixelWiseArcStepper:
         color_values: int,
         actor: ViTARCActor,
         config: CudaConfig,
+        max_penalty: float = 1.0,
         n_step_config: NStepMinVMaxConfig | None = None,
     ) -> None:
         """Creates a stepper for the environment and dataset.
@@ -42,6 +43,7 @@ class PixelWiseArcStepper:
             color_values (int): Number of possible colors.
             actor (ViTARCActor): Actor network.
             config (dict): Configuration dictionary.
+            max_penalty (float): Maximum penalty for the environment reward.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
         """
@@ -82,11 +84,12 @@ class PixelWiseArcStepper:
             grid_size=grid_size,
             color_values=color_values,
             device=self.device,
+            max_penalty=max_penalty,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
         self.environment = PixelAwareRewardWrapper(
             base_env,
-            max_penalty=1.0,
+            max_penalty=max_penalty,
             n_steps=self.n_step_config.n_steps,
             gamma=base_env.gamma,
         )

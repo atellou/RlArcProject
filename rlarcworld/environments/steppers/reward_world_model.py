@@ -49,6 +49,7 @@ class ArcWorldModelStepper:
         # World model
         reward_model: RewardWorldModelProto,
         reward_model_lr: float = 1e-4,
+        lr_scheduler_kwargs: dict | None = None,
         # Imagination params
         step_horizon: int = 5,
         gamma: float = 0.99,
@@ -71,6 +72,7 @@ class ArcWorldModelStepper:
             config: Configuration dictionary.
             reward_model: RewardWorldModel to train and use for imagination.
             reward_model_lr: Learning rate for world model optimizer.
+            lr_scheduler_kwargs: Learning rate scheduler configuration.
             step_horizon: Planning horizon for imagined rollouts.
             gamma: Discount factor.
             n_step_config: N-step configuration.
@@ -139,6 +141,10 @@ class ArcWorldModelStepper:
         self.model_optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=reward_model_lr
         )
+        if lr_scheduler_kwargs is not None:
+            self.lr_scheduler = torch.optim.lr_scheduler.StepLR(
+                self.model_optimizer, **lr_scheduler_kwargs
+            )
 
     def _reset_env(self, env, sample, **kwargs):
         """Reset the environment with a sample.

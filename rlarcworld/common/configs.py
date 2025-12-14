@@ -48,11 +48,13 @@ class EnvConfig:
     Attributes:
         grid_size (int): Size of the grid.
         color_values (int): Number of color values.
+        max_penalty (float): Maximum penalty for the environment reward.
         batch_size (int): Batch size.
     """
 
     grid_size: int = 30
     color_values: int = 10
+    max_penalty: float = 1.0
     batch_size: int = 32
 
 
@@ -181,16 +183,30 @@ class D4PGConfig:
         critic_lr (float): Learning rate for the critic.
         gamma (float): Discount factor.
         tau (float): Soft update parameter.
-        n_steps (int): Number of steps to look ahead.
+        lr_scheduler (dict | None): Learning rate scheduler configuration.
+        n_step_config (NStepMinVMaxConfig): N-step return configuration.
+        compute_td_error (bool): Whether to compute TD error.
+        carsm (bool): Whether to use CARSM regularization.
+        entropy_coef (float): Entropy regularization coefficient.
+        entropy_coef_decay (float): Entropy coefficient decay rate.
+        target_update_frequency (int): Frequency of target network updates.
+        max_grad_norm (float): Maximum gradient norm for clipping.
     """
 
     policy_lr: float = 3e-4
     critic_lr: float = 3e-3
     gamma: float = 0.99
     tau: float = 0.005
+    lr_scheduler_kwargs: Optional[dict] = None
     n_step_config: NStepMinVMaxConfig = field(
         default_factory=lambda: NStepMinVMaxConfig(n_steps=1)
     )
+    compute_td_error: bool = True
+    carsm: bool = False
+    entropy_coef: float = 0.0
+    entropy_coef_decay: float = 1.0
+    target_update_frequency: int = 10
+    max_grad_norm: float = 0.0
 
 
 @dataclass
@@ -204,14 +220,52 @@ class DistributionalConfig:
     """
 
     num_atoms: dict[str, int] = field(
-        default_factory=lambda: {"pixel_wise": 51, "binary": 51}
+        default_factory=lambda: {"pixel_wise": 21, "binary": 21}
     )
     v_min: dict[str, int] = field(
-        default_factory=lambda: {"pixel_wise": -10, "binary": -1}
+        default_factory=lambda: {"pixel_wise": -1, "binary": -1}
     )
     v_max: dict[str, int] = field(
-        default_factory=lambda: {"pixel_wise": 10, "binary": 1}
+        default_factory=lambda: {"pixel_wise": 1, "binary": 1}
     )
+
+    def scale_by_penalty(self, penalty: float) -> "DistributionalConfig":
+        """Scale v_min, v_max, and num_atoms by the given penalty factor.
+
+        Args:
+            penalty (float): Penalty scaling factor (typically max_penalty value).
+                When max_penalty > 0, scales the support range and atom count
+                accordingly.
+
+        Returns:
+            DistributionalConfig: New config with scaled bounds and atoms.
+        """
+        if penalty <= 0:
+            return self
+
+        # Scale support bounds by penalty
+        scaled_v_min = {
+            "pixel_wise": int(self.v_min["pixel_wise"] * penalty),
+            "binary": int(self.v_min["binary"] * penalty),
+        }
+        scaled_v_max = {
+            "pixel_wise": int(self.v_max["pixel_wise"] * penalty),
+            "binary": int(self.v_max["binary"] * penalty),
+        }
+
+        # Scale atom count to maintain ~0.1 unit resolution per atom
+        # Original: 2-unit range / 21 atoms = 0.095 units/atom
+        # Scaled: (2*penalty)-unit range / (21*penalty) atoms = 0.095 units/atom
+        scaled_num_atoms = {
+            "pixel_wise": max(11, int(self.num_atoms["pixel_wise"] * penalty)),
+            "binary": max(11, int(self.num_atoms["binary"] * penalty)),
+        }
+
+        return DistributionalConfig(
+            num_atoms=scaled_num_atoms,
+            v_min=scaled_v_min,
+            v_max=scaled_v_max,
+        )
 
 
 @dataclass
@@ -257,6 +311,7 @@ class WorldModelConfig:
     Attributes:
         enabled (bool): Whether to enable the world model.
         learning_rate (float): Learning rate for the world model.
+        lr_scheduler_kwargs (dict | None): Learning rate scheduler configuration.
         imagination_horizon (int): Imagination horizon.
         imagination_ratio (int): Imagination ratio.
         imagination_frequency (int): Imagination frequency.
@@ -265,6 +320,7 @@ class WorldModelConfig:
 
     enabled: bool = False
     learning_rate: float = 1e-4
+    lr_scheduler_kwargs: dict | None = None
     imagination_horizon: int = 5
     imagination_ratio: int = 5
     imagination_frequency: int = 10
@@ -343,3 +399,9 @@ class ArcD4PGConfig:
     world_model: WorldModelConfig = field(default_factory=WorldModelConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     system: SystemConfig = field(default_factory=SystemConfig)
+
+    def get_validated_config(self) -> "ArcD4PGConfig":
+        """Get a validated version of the configuration."""
+        self.network.grid_size = self.env.grid_size
+        self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
+        return self
