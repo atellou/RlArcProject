@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from tensordict import TensorDict
 
+from rlarcworld.common.configs import RlArcWorldViTARCConfig
 from rlarcworld.common.enums import (
     ActionKeys,
     GridEncoderIdsType,
@@ -14,7 +15,6 @@ from rlarcworld.common.enums import (
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
 from rlarcworld.models.grid_encoder import GridEncoder, ObjectIndexExtractor
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
 
 logger = logging.getLogger(__name__)

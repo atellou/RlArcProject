@@ -11,12 +11,12 @@ from torchrl.data.replay_buffers import (
 
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
+from rlarcworld.common.configs import RlArcWorldViTARCConfig
 from rlarcworld.common.enums import RewardKeys, StateKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.runners.core import Trainer
 from tests.utils.synthetic import make_synthetic_step_on_device
 

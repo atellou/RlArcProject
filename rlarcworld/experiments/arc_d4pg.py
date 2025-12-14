@@ -28,27 +28,16 @@ from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
 )
 
-# Re-export config classes for convenient imports
-from experiments.configs import (  # noqa: F401
-    ArcD4PGConfig,
-    CheckpointConfig,
-    D4PGConfig,
-    DistributionalConfig,
-    EnvConfig,
-    NetworkConfig,
-    ReplayBufferConfig,
-    SystemConfig,
-    TrainingConfig,
-    WorldModelConfig,
-)
 from rlarcworld.algorithms.d4pg import D4PGCore
+
+# Re-export config classes for convenient imports
+from rlarcworld.common.configs import ArcD4PGConfig, RlArcWorldViTARCConfig
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
@@ -134,10 +123,10 @@ class ArcD4PG:
         logger.info("Creating actor network...")
 
         # Use config's rl_vit_arc_config or create one with best settings
-        if config.network.rl_vit_arc_config is not None:
-            rl_vit_arc_config = config.network.rl_vit_arc_config
-        else:
-            rl_vit_arc_config = RlArcWorldViTARCConfig.best_config(config.env.grid_size)
+        rl_vit_arc_config = config.network or RlArcWorldViTARCConfig.best_config(
+            config.env.grid_size
+        )
+        rl_vit_arc_config.grid_size = config.env.grid_size
 
         self.actor = ViTARCActor(
             color_values=config.env.color_values,
@@ -257,6 +246,24 @@ class ArcD4PG:
                     "entropy_coef": core_hp.get("entropy_coef", None),
                 }
             )
+
+        # Add ViTARC encoder hyperparameters
+        vcfg = self.actor.rl_vit_arc_config
+        hparams.update(
+            {
+                "vitarc_d_model": getattr(vcfg, "d_model", None),
+                "vitarc_d_ff": getattr(vcfg, "d_ff", None),
+                "vitarc_num_layers": getattr(vcfg, "num_layers", None),
+                "vitarc_num_heads": getattr(vcfg, "num_heads", None),
+                "vitarc_use_ope": getattr(vcfg, "use_ope", None),
+                "vitarc_use_index_grid": getattr(vcfg, "use_index_grid", None),
+                "vitarc_grids_to_encode": getattr(vcfg, "grids_to_encode", None),
+                "vitarc_ape_type": getattr(vcfg, "ape_type", None),
+                "vitarc_rpe_type": getattr(vcfg, "rpe_type", None),
+                "vitarc_ape_mixer": getattr(vcfg, "ape_mixer", None),
+                "vitarc_trainable_ape": getattr(vcfg, "trainable_ape", None),
+            }
+        )
 
         # Add world model hparams if enabled
         if isinstance(self.world_model_stepper, ArcWorldModelStepper):

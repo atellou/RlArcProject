@@ -6,6 +6,7 @@ import pytest
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.common.configs import RlArcWorldViTARCConfig
 from rlarcworld.common.enums import (
     ActionKeys,
     RewardKeys,
@@ -17,7 +18,6 @@ from rlarcworld.environments.arc_batch_grid_env import (
 )
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
 
 logger = logging.getLogger(__name__)

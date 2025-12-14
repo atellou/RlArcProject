@@ -319,7 +319,7 @@ def _build_simple_core(
     max_grad_norm: float = 0.0,
 ) -> D4PGCore:
     # Retained for the specialized AMP/grad-clipping test
-    from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
+    from rlarcworld.common.configs import RlArcWorldViTARCConfig
 
     rl_vit_arc_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
