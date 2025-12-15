@@ -633,6 +633,8 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
+            use_temporal=False,
+            use_examples=False,
         )
         model = RlArcWorldViTARC(config)
 
@@ -746,6 +748,8 @@ class TestRlArcWorldViTARC:
             num_heads=4,
             use_ope=False,
             use_index_grid=True,
+            use_temporal=False,
+            use_examples=False,
         )
         model = RlArcWorldViTARC(config)
 

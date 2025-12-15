@@ -53,6 +53,9 @@ SOFTWARE.
 #   single, precomputed relative-position grid without shape mismatches (see
 #   CustomT5Stack.__init__ around L853–L883 and RlArcWorldViTARC in
 #   nn_modules.py around L640–L700).
+# - Fixed CustomT5Stack 2D positional encoding to properly tile
+#   position_ids_x/y for temporal sequences spanning max_grids
+#   (around lines L1060-L1065 in CustomT5Stack)
 """
 
 import copy
@@ -811,7 +814,7 @@ class CustomT5Stack(T5Stack):
         self.use_OPE = getattr(config, "use_OPE", True)
         self.ape_mixer_strategy = getattr(config, "ape_mixer", "default")
         self.trainable_ape = getattr(config, "trainable_ape", False)
-        max_grids = getattr(config, "max_grids", 1)  # 1 to keep original behavior
+        self.max_grids = getattr(config, "max_grids", 1)  # 1 to keep original behavior
 
         self.block = nn.ModuleList(
             [
@@ -879,7 +882,7 @@ class CustomT5Stack(T5Stack):
             # sequence (initial, last, current), plus BOS/EOS. Build a
             # distance matrix large enough to cover this worst case so that
             # real_seq_length/key_length never exceed total_length.
-            total_length = max_grids * grid_height * grid_width + 2
+            total_length = self.max_grids * grid_height * grid_width + 2
             distance_matrix = torch.full(
                 (total_length, total_length), fill_value=large_dist, dtype=torch.float
             )
@@ -1053,8 +1056,16 @@ class CustomT5Stack(T5Stack):
 
             # X-coordinates => repeated row times,
             # Y-coordinates => repeat_interleave col times
-            position_ids_x = torch.arange(cols, device=device).repeat(rows)
-            position_ids_y = torch.arange(rows, device=device).repeat_interleave(cols)
+            # For a single grid: position_ids_x/y have length rows*cols
+            position_ids_x_single = torch.arange(cols, device=device).repeat(rows)
+            position_ids_y_single = torch.arange(rows, device=device).repeat_interleave(
+                cols
+            )
+
+            # Tile for temporal sequences (max_grids grids concatenated)
+            # Each grid segment gets the same 2D positional encoding pattern
+            position_ids_x = position_ids_x_single.repeat(self.max_grids)
+            position_ids_y = position_ids_y_single.repeat(self.max_grids)
 
             # Repeat for the batch
             batch_size = position_ids.shape[0]
@@ -1074,8 +1085,8 @@ class CustomT5Stack(T5Stack):
                     object_idx_content
                 )  # [batch, content_len, d_model/2]
 
-                # Slice 2D position ids so that their sequence length matches
-                # the grid content tokens used for object_embeds
+                # Slice 2D position ids to match object_embeds length
+                # (handles temporal sequences where content_len spans multiple grids)
                 position_embeds_x = self.wpe_x_enc(position_ids_x[:, :content_len])
                 position_embeds_y = self.wpe_y_enc(position_ids_y[:, :content_len])
 

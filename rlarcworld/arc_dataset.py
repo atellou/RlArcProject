@@ -96,15 +96,18 @@ class ArcSampleTransformer:
             (Examples, Stages, Grid Height, Grid Width).
         """
         logger.debug("Concat examples...")
-        return torch.cat(
-            [
-                self.concat_unsqueeze(
-                    self.pad_to_size(torch.as_tensor(example["input"])),
-                    self.pad_to_size(torch.as_tensor(example["output"])),
-                ).unsqueeze(0)
-                for example in train_examples
-            ],
-            dim=0,
+        return (
+            torch.cat(
+                [
+                    self.concat_unsqueeze(
+                        self.pad_to_size(torch.as_tensor(example["input"])),
+                        self.pad_to_size(torch.as_tensor(example["output"])),
+                    ).unsqueeze(0)
+                    for example in train_examples
+                ],
+                dim=0,
+            )
+            + self.zero_based_correction
         )
 
     def __call__(self, sample: dict) -> dict:
