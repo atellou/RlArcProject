@@ -69,10 +69,14 @@ class TensorBoardWriterManager:
     def on_train_step(self, ctx: OnStepContext) -> None:
         """Callback to log training-step metrics."""
         self._log_minimal_metrics(ctx, phase="train")
+        if ctx.warmup:
+            return
         self._maybe_log_medium_metrics(ctx, phase="train")
 
     def on_validation_step(self, ctx: OnStepContext) -> None:
         """Callback to log validation-step metrics."""
+        if ctx.warmup:
+            return
         self._log_minimal_metrics(ctx, phase="val")
         self._maybe_log_medium_metrics(ctx, phase="val")
 

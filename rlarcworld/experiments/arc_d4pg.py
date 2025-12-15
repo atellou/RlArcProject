@@ -317,12 +317,16 @@ class ArcD4PG:
             replay_buffer_update_priority=self._replay_buffer_update_priority,
             warmup_buffer_ratio=warmup_buffer_ratio,
             on_train_step=on_step_callbacks,
+            on_validation_step=self._on_validation_callbacks(),
             device=self.device,
             min_train_batch_size=self.min_train_batch_size,
         )
 
         # Attach TensorBoard callbacks (train and validation)
         try:
+            if not self.exp_config.logging.tensorboard_enabled:
+                logger.info("TensorBoard disabled in config, skipping setup")
+                return
             self.tb_manager, tb_train_cb, tb_val_cb = make_tensorboard_callbacks(
                 self.checkpoint_dir,
                 replay_buffer=self.replay_buffer,
@@ -375,6 +379,23 @@ class ArcD4PG:
                 info["index"], td_error.get(RewardKeys.PIXEL_WISE.value)
             )
 
+    def _on_validation_callbacks(
+        self,
+    ) -> OrderedDict[str, Callable[[OnStepContext], Any]]:
+        """Build validation step callbacks.
+
+        Returns:
+            Dictionary of callbacks for validation steps
+        """
+        if self.exp_config.checkpoint.improvement_mode == "validation":
+            logger.info("Improvement checkpoint saving enabled for validation")
+            return OrderedDict(
+                [
+                    ("improvement_ckpt", self._improvement_checkpoint),
+                ]
+            )
+        return OrderedDict()
+
     def _on_train_callbacks(
         self,
     ) -> OrderedDict[str, Callable[[OnStepContext], Any]]:
@@ -388,13 +409,18 @@ class ArcD4PG:
         self.best_loss_critic: torch.Tensor = torch.tensor(float("inf"))
 
         callbacks: OrderedDict[str, Callable[[OnStepContext], Any]] = OrderedDict(
-            {
-                "core_step": self.d4pg_core.on_step,
-                "logging": self._log_step,
-                "periodic_ckpt": self._periodic_checkpoint,
-                "improvement_ckpt": self._improvement_checkpoint,
-            }
+            {"core_step": self.d4pg_core.on_step, "logging": self._log_step}
         )
+
+        if self.ckpt_save_frequency > 0:
+            logger.info(
+                f"Periodic checkpoint enabled every {self.ckpt_save_frequency} steps"
+            )
+            callbacks["periodic_ckpt"] = self._periodic_checkpoint
+
+        if self.exp_config.checkpoint.improvement_mode == "train":
+            logger.info("Improvement checkpoint saving enabled for training")
+            callbacks["improvement_ckpt"] = self._improvement_checkpoint
 
         # Add world model callback if enabled
         if isinstance(self.world_model_stepper, ArcWorldModelStepper):
@@ -408,7 +434,10 @@ class ArcD4PG:
         Args:
             ctx: Step ctx containing training information
         """
-        if ctx.iteration % 100 == 0 and ctx.loss_actor is not None:
+        if (
+            ctx.iteration % self.exp_config.logging.log_frequency == 0
+            and ctx.loss_actor is not None
+        ):
             msg = (
                 f"Epoch {ctx.epoch}, Step {ctx.step_idx}, "
                 f"Iteration {ctx.iteration}: "
@@ -433,9 +462,11 @@ class ArcD4PG:
         Args:
             ctx: Step ctx containing training information
         """
-        if self.ckpt_save_frequency <= 0:
-            return
-        if ctx.iteration <= 0 or ctx.iteration % self.ckpt_save_frequency != 0:
+        if (
+            ctx.warmup
+            or ctx.iteration <= 0
+            or ctx.iteration % self.ckpt_save_frequency != 0
+        ):
             return
         fname = os.path.join(
             self.checkpoint_dir,
@@ -474,9 +505,12 @@ class ArcD4PG:
             improved = True
         if not improved:
             return
+        if self.exp_config.checkpoint.improvement_mode is None:
+            raise ValueError("Improvement mode not configured")
         fname = os.path.join(
             self.checkpoint_dir,
-            "checkpoints/best/d4pg_cp-best_i_{:06d}-la_{:.4f}-lc_{:.4f}.pth".format(
+            "checkpoints/best/{}/d4pg_cp-best_i_{:06d}-la_{:.4f}-lc_{:.4f}.pth".format(
+                self.exp_config.checkpoint.improvement_mode,
                 int(ctx.iteration),
                 ctx.loss_actor.item(),
                 ctx.loss_critic.item(),
@@ -508,8 +542,8 @@ class ArcD4PG:
                 validation_steps_frequency=self.validation_steps_frequency,
             )
             logger.info("Training completed successfully")
-
-            self.tb_manager.log_hparams(self._get_hparams())
+            if hasattr(self, "tb_manager") and self.tb_manager is not None:
+                self.tb_manager.log_hparams(self._get_hparams())
         except Exception as e:
             logger.error(f"Training failed with error: {e}")
             failed = True

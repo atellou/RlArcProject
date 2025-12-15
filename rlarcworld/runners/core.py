@@ -8,6 +8,7 @@ validation, and checkpointing.
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Tuple
 
 import torch
@@ -19,6 +20,7 @@ from rlarcworld.utils.checkpointing import add_schema_and_class
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class OnStepContext:
     """ctx object containing all information about a training step."""
 
@@ -33,6 +35,7 @@ class OnStepContext:
         td_error: TensorDict | None,
         core: ActorCriticCoreProto,
         hyperparameters: dict,
+        warmup: bool,
     ):
         """Initialize step ctx.
 
@@ -46,6 +49,7 @@ class OnStepContext:
             td_error: TD error (None if no training occurred)
             core: Algorithm core containing networks and methods
             hyperparameters: Hyperparameters of the algorithm
+            warmup: Whether the training is in warmup phase
         """
         self.epoch = epoch
         self.step_idx = step_idx
@@ -56,6 +60,7 @@ class OnStepContext:
         self.td_error = td_error
         self.core = core
         self.hyperparameters = hyperparameters
+        self.warmup = warmup
 
 
 class Trainer:
@@ -214,6 +219,14 @@ class Trainer:
 
         return None, None
 
+    def _is_warmup_phase(self) -> bool:
+        """Check if the current training is in warmup phase."""
+        if self.replay_buffer is None:
+            return False
+        storage_len = len(self.replay_buffer.storage)
+        storage_cap = self.replay_buffer.storage.max_size
+        return storage_len <= storage_cap * self.warmup_buffer_ratio
+
     # ---------------- Public API ----------------
     def _run(
         self,
@@ -346,6 +359,7 @@ class Trainer:
                         td_error=td_error,
                         core=self.core,
                         hyperparameters=self.hyperparameters,
+                        warmup=self._is_warmup_phase(),
                     )
 
                     if (
@@ -363,12 +377,6 @@ class Trainer:
                     # Call step callback
                     if on_step and batch is not None:
                         for callback_name, callback_step in on_step.items():
-                            logger.debug(
-                                "Calling {} on_step {}".format(
-                                    "training" if training else "validation",
-                                    callback_name,
-                                )
-                            )
                             callback_step(ctx)
 
                     if (
@@ -397,6 +405,7 @@ class Trainer:
                 td_error=td_error,
                 core=self.core,
                 hyperparameters=self.hyperparameters,
+                warmup=self._is_warmup_phase(),
             )
             if self.on_exception is not None:
                 for (

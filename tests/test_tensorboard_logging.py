@@ -129,6 +129,7 @@ def sample_context(mock_core):
         td_error=td_error,
         core=mock_core,
         hyperparameters={"gamma": 0.99, "tau": 0.005},
+        warmup=False,
     )
 
 
@@ -361,6 +362,7 @@ class TestMinimalMetricsLogging:
             td_error=None,
             core=mock_core,
             hyperparameters={},
+            warmup=False,
         )
 
         manager = TensorBoardWriterManager(temp_experiment_path)
@@ -381,6 +383,7 @@ class TestMinimalMetricsLogging:
             td_error=None,
             core=mock_core,
             hyperparameters={},
+            warmup=False,
         )
 
         manager = TensorBoardWriterManager(temp_experiment_path)

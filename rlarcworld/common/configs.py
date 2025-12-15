@@ -331,10 +331,23 @@ class CheckpointConfig:
     Attributes:
         save_frequency (int): Frequency for saving checkpoints.
         checkpoint_dir (Optional[str | Path]): Directory to save checkpoints.
+        improvement_mode (Optional[str]): Mode to track for improvement
+            "train": Track training loss for improvement-based saving
+            "validation": Track validation loss for improvement-based saving
+            If None, no improvement-based saving is used.
     """
 
-    save_frequency: int = 1000
+    save_frequency: int = -1
     checkpoint_dir: Optional[str | Path] = None
+    improvement_mode: Optional[str] = None
+
+
+@dataclass
+class LoggingConfig:
+    """Logging configuration."""
+
+    tensorboard_enabled: bool = False
+    log_frequency: int = 100
 
 
 @dataclass
@@ -395,10 +408,15 @@ class ArcD4PGConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     world_model: WorldModelConfig = field(default_factory=WorldModelConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     system: SystemConfig = field(default_factory=SystemConfig)
 
     def get_validated_config(self) -> "ArcD4PGConfig":
         """Get a validated version of the configuration."""
         self.network.grid_size = self.env.grid_size
         self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
+        if self.checkpoint.improvement_mode not in {"train", "val", None}:
+            raise ValueError(
+                "checkpoint.improvement_mode must be 'train', 'val', or None"
+            )
         return self
