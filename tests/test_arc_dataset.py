@@ -222,6 +222,15 @@ def test_open_file_with_test_index(arc_dataset_dir, dataset_one):
     torch.testing.assert_close(result["test"]["output"], torch.tensor([[1, 2], [3, 4]]))
 
 
+def test_extraction_multiple_dirs():
+    """Test that the transformed dataset works with multiple directories."""
+    dataset_t = ArcDataset(
+        arc_dataset_dir=["tests/test_data", "tests/test_data2"],
+        keep_in_memory=False,
+    )
+    assert len(dataset_t) == 8
+
+
 # ---------- Negative tests for ArcSampleTransformer ----------
 
 

@@ -164,7 +164,7 @@ class ArcDataset(Dataset):
 
     def __init__(
         self,
-        arc_dataset_dir: str,
+        arc_dataset_dir: str | list[str],
         keep_in_memory: bool = False,
         transform: Callable[[dict], dict] | None = None,
     ):
@@ -219,6 +219,18 @@ class ArcDataset(Dataset):
         ]
         return {"train": sample["train"], "test": sample["test"]}
 
+    def get_files_from_dir(self, dir_path: str) -> list[str]:
+        """Get all JSON files from a directory."""
+        iterator = []
+        if os.path.isfile(dir_path):
+            iterator = [dir_path]
+        elif os.path.isdir(dir_path):
+            iterator = [os.path.join(dir_path, f) for f in os.listdir(dir_path)]
+        else:
+            raise ValueError(f"Invalid arc_dir: {self.arc_dir}")
+
+        return [f for f in iterator if f.endswith(".json")]
+
     def load_dataset(self):
         """Creates a dictionary of file location or samples from the dataset.
 
@@ -234,12 +246,17 @@ class ArcDataset(Dataset):
         Returns:
             None
         """
-        # Get training file indexes
-        logger.debug("Load Dataset")
-        iterator = map(
-            lambda f: os.path.join(self.arc_dir, f), os.listdir(self.arc_dir)
-        )
-        iterator = filter(lambda f: f.endswith(".json"), iterator)
+        if isinstance(self.arc_dir, str):
+            logger.info("Load Dataset from %s", self.arc_dir)
+            iterator = self.get_files_from_dir(self.arc_dir)
+        else:
+            logger.info("Loading dataset from multiple directories")
+            iterator = []
+            for dir_path in self.arc_dir:
+                iterator.extend(self.get_files_from_dir(dir_path))
+
+        if not iterator:
+            raise ValueError("No files found in the specified directories.")
 
         self.samples = {}
         for i, file in enumerate(iterator):
@@ -251,6 +268,10 @@ class ArcDataset(Dataset):
                 else:
                     self.samples[key] = file
         self.file_ids = list(self.samples.keys())
+        logger.info(
+            f"Loaded{' IN MEMORY ' if self.keep_in_memory else ' LAZY '}dataset "
+            f"with {len(self.samples)} samples from {len(iterator)} files"
+        )
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
@@ -265,7 +286,6 @@ class ArcDataset(Dataset):
         Returns:
             dict: The transformed sample.
         """
-        logger.debug(f"Sample index: {idx}")
         if isinstance(idx, torch.Tensor):
             idx = int(idx.item())
 
@@ -280,7 +300,6 @@ class ArcDataset(Dataset):
         sample.setdefault("examples", sample.pop("train", None))
         sample.setdefault("task", sample.pop("test", None))
         if self.transform is not None:
-            logger.debug("Transform data")
             if self.keep_in_memory and file_id not in self.transformed:
                 sample = self.transform(sample)
                 self.transformed.add(file_id)

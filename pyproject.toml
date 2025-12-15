@@ -13,12 +13,12 @@ dependencies = [
     "gymnasium",
     "numpy",
     "torchrl",
-    "tensorboard",
     "torchvision",
     "pyyaml",
     "python-json-logger",
     "transformers>=4.57.3",
     "opencv-python>=4.12.0.88",
+    "tensorboard>=2.20.0",
 ]
 
 [dependency-groups]
