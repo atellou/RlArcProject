@@ -16,7 +16,7 @@ from transformers.models.t5.configuration_t5 import T5Config
 
 from rlarcworld.common.configs import RlArcWorldViTARCConfig, ViTARCEncoderOutput
 from rlarcworld.common.enums import ActionKeys, RewardKeys, StateKeys
-from rlarcworld.common.types import ACTION_KEYS_SET, GRID_ENCODER_KEYS_SET
+from rlarcworld.common.types import ACTION_KEYS_SET
 from rlarcworld.models.grid_encoder import GridEncoder
 from rlarcworld.models.vit_arc import CustomT5Stack, FixedAbsolutePositionalEmbedding
 
@@ -519,17 +519,6 @@ class RlArcWorldViTARC(nn.Module):
             verbose: Whether to print initialization parameter information.
         """
         super().__init__()
-        if config.grids_to_encode is None:
-            config.grids_to_encode = [StateKeys.GRID.value]
-        else:
-            if not set(config.grids_to_encode).issubset(GRID_ENCODER_KEYS_SET):
-                raise ValueError(
-                    f"Grid encoder keys must be in {GRID_ENCODER_KEYS_SET}."
-                    f"Keys found {set(config.grids_to_encode)}"
-                )
-            if StateKeys.GRID.value not in config.grids_to_encode:
-                raise ValueError(f"{StateKeys.GRID.value} must be in grids_to_encode")
-        self.grids_to_encode = config.grids_to_encode
         self.action_head_keys = set(ACTION_KEYS_SET)
 
         # Use best config from paper if not specified
@@ -582,15 +571,12 @@ class RlArcWorldViTARC(nn.Module):
             self.index_embed = FixedAbsolutePositionalEmbedding(config.d_model)
 
         # Temporal embedding (0=initial, 1=last, 2=current)
-        self.use_temporal = (
-            StateKeys.INITIAL.value in self.grids_to_encode
-            or StateKeys.LAST_GRID.value in self.grids_to_encode
-        )
+        self.use_temporal = config.use_temporal
         if self.use_temporal:
             self.temporal_embed = nn.Embedding(3, config.d_model)
 
         # Example cross-attention (if examples are used)
-        self.use_examples = StateKeys.EXAMPLES.value in self.grids_to_encode
+        self.use_examples = config.use_examples
         if self.use_examples:
             self.example_cross_attention = ExampleCrossAttention(
                 d_model=config.d_model,
@@ -655,13 +641,7 @@ class RlArcWorldViTARC(nn.Module):
         if self.use_temporal:
             input_ids, attention_mask, temporal_ids, object_idx = (
                 self.grid_encoder.encode_temporal_grids(
-                    current=grid,
-                    initial=initial
-                    if StateKeys.INITIAL.value in self.grids_to_encode
-                    else None,
-                    last_grid=last_grid
-                    if StateKeys.LAST_GRID.value in self.grids_to_encode
-                    else None,
+                    current=grid, initial=initial, last_grid=last_grid
                 )
             )
         else:

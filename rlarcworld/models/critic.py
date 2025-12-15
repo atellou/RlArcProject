@@ -43,7 +43,7 @@ class VitARCCritic(torch.nn.Module):
         num_atoms: dict[str, int],
         v_min: dict[str, int],
         v_max: dict[str, int],
-        config=None,
+        device_config=None,
     ):
         """Initialize the critic network for the ARC environment.
 
@@ -55,16 +55,17 @@ class VitARCCritic(torch.nn.Module):
             v_min (Dict[str, int]): The minimum value for each reward type.
             v_max (Dict[str, int]): The maximum value for each reward type.
             rl_vit_arc_config (RlArcWorldViTARCConfig): The ViTARC configuration.
-            config (CudaConfig, optional): CUDA configuration. Defaults to None.
+            device_config (CudaConfig, optional): CUDA configuration. Defaults to None.
         """
         super().__init__()
         self.num_atoms = num_atoms
+        self.rl_vit_arc_config = rl_vit_arc_config
         self.grid_size = rl_vit_arc_config.grid_size
         self.color_values = color_values
         self.v_min = v_min
         self.v_max = v_max
-        self.config = enable_cuda() if config is None else config
-        self.device = self.config["device"]
+        self.device_config = enable_cuda() if device_config is None else device_config
+        self.device = self.device_config["device"]
         for key, min_val in v_min.items():
             assert min_val < self.v_max[key], (
                 f"v_min[{key}]={min_val} is not lower"
@@ -187,7 +188,7 @@ class VitARCCritic(torch.nn.Module):
         self.input_val(state)
 
         # Encode state using shared ViTARC encoder
-        if self.config.get("use_checkpointing"):
+        if self.device_config.get("use_checkpointing"):
             vitarc_output = checkpoint.checkpoint(
                 self.rl_vit_arc, state, use_reentrant=False
             )

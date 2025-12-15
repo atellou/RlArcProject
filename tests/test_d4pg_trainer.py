@@ -9,7 +9,6 @@ from torchrl.data.replay_buffers import (
 )
 
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.common.enums import StateKeys
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
 from rlarcworld.runners.core import OnStepContext, Trainer
@@ -328,7 +327,6 @@ def _build_simple_core(
         num_layers=2,
         num_heads=4,
         use_ope=False,  # Disable OPE for faster test
-        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
     )
     actor = ViTARCActor(
         color_values=color_values,
@@ -340,7 +338,11 @@ def _build_simple_core(
         num_atoms={"pixel_wise": 51, "binary": 3},
         v_min={"pixel_wise": -40, "binary": 0},
         v_max={"pixel_wise": 2, "binary": 1},
-        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
+        device_config={
+            "device": str(device),
+            "amp_enabled": amp,
+            "use_checkpointing": False,
+        },
     )
     core = D4PGCore(
         actor=actor,

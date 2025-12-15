@@ -104,20 +104,18 @@ class ArcD4PG:
         self.validation_steps_frequency = config.training.validation_steps_frequency
 
         # Checkpoint policies
-        self.periodic_ckpt_interval = config.checkpoint.periodic_interval
-        if config.checkpoint.experiment_path is None:
-            self.experiment_path = Path(
+        self.ckpt_save_frequency = config.checkpoint.save_frequency
+        if config.checkpoint.checkpoint_dir is None:
+            self.checkpoint_dir = Path(
                 "./experiments/{}-{}/".format(
                     self.__class__.__name__,
                     datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
                 )
             )
         else:
-            self.experiment_path = Path(config.checkpoint.experiment_path)
+            self.checkpoint_dir = Path(config.checkpoint.checkpoint_dir)
 
-        logger.info(
-            "Experiment outputs will be written to: %s", self.experiment_path.resolve()
-        )
+        logger.info("Checkpoints will be saved to: %s", self.checkpoint_dir.resolve())
 
         # Initialize networks
         logger.info("Initializing actor and critic networks...")
@@ -131,6 +129,7 @@ class ArcD4PG:
         self.actor = ViTARCActor(
             color_values=config.env.color_values,
             rl_vit_arc_config=rl_vit_arc_config,
+            device_config=self.cuda_config,
         )
         logger.info("Actor network created successfully")
 
@@ -141,7 +140,7 @@ class ArcD4PG:
             num_atoms=config.distributional.num_atoms,
             v_min=config.distributional.v_min,
             v_max=config.distributional.v_max,
-            config=self.cuda_config,
+            device_config=self.cuda_config,
         )
         logger.info("Critic network created successfully")
 
@@ -267,7 +266,8 @@ class ArcD4PG:
                 "vitarc_num_heads": getattr(vcfg, "num_heads", None),
                 "vitarc_use_ope": getattr(vcfg, "use_ope", None),
                 "vitarc_use_index_grid": getattr(vcfg, "use_index_grid", None),
-                "vitarc_grids_to_encode": getattr(vcfg, "grids_to_encode", None),
+                "vitarc_use_temporal": getattr(vcfg, "use_temporal", None),
+                "vitarc_use_examples": getattr(vcfg, "use_examples", None),
                 "vitarc_ape_type": getattr(vcfg, "ape_type", None),
                 "vitarc_rpe_type": getattr(vcfg, "rpe_type", None),
                 "vitarc_ape_mixer": getattr(vcfg, "ape_mixer", None),
@@ -324,7 +324,7 @@ class ArcD4PG:
         # Attach TensorBoard callbacks (train and validation)
         try:
             self.tb_manager, tb_train_cb, tb_val_cb = make_tensorboard_callbacks(
-                self.experiment_path,
+                self.checkpoint_dir,
                 replay_buffer=self.replay_buffer,
                 warmup_buffer_ratio=warmup_buffer_ratio,
             )
@@ -427,18 +427,18 @@ class ArcD4PG:
     def _periodic_checkpoint(self, ctx: OnStepContext):
         """Periodic lightweight checkpoint: core + trainer + config + provenance.
 
-        This runs frequently (every self.periodic_ckpt_interval steps) and avoids
+        This runs frequently (every self.save_frequency steps) and avoids
         saving large components such as environment, stepper and replay buffer.
 
         Args:
             ctx: Step ctx containing training information
         """
-        if self.periodic_ckpt_interval <= 0:
+        if self.ckpt_save_frequency <= 0:
             return
-        if ctx.iteration <= 0 or ctx.iteration % self.periodic_ckpt_interval != 0:
+        if ctx.iteration <= 0 or ctx.iteration % self.ckpt_save_frequency != 0:
             return
         fname = os.path.join(
-            self.experiment_path,
+            self.checkpoint_dir,
             "checkpoints/periodic/d4pg_cp-per_i_{:06d}.pth".format(ctx.iteration),
         )
         # Save minimal components for fast, small checkpoint files
@@ -475,7 +475,7 @@ class ArcD4PG:
         if not improved:
             return
         fname = os.path.join(
-            self.experiment_path,
+            self.checkpoint_dir,
             "checkpoints/best/d4pg_cp-best_i_{:06d}-la_{:.4f}-lc_{:.4f}.pth".format(
                 int(ctx.iteration),
                 ctx.loss_actor.item(),
@@ -517,7 +517,7 @@ class ArcD4PG:
         finally:
             self.save_checkpoint(
                 os.path.join(
-                    self.experiment_path,
+                    self.checkpoint_dir,
                     "checkpoints/{}/d4pg_cp-failed-{}.pth".format(
                         "failure" if failed else "success",
                         datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),

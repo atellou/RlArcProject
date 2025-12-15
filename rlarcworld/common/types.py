@@ -71,13 +71,3 @@ ACTION_KEYS_SET = frozenset(
         ActionKeys.SUBMIT.value,
     }
 )
-
-GRID_ENCODER_KEYS_SET = frozenset(
-    {
-        StateKeys.GRID.value,
-        StateKeys.EXAMPLES.value,
-        StateKeys.INITIAL.value,
-        StateKeys.LAST_GRID.value,
-        StateKeys.INDEX.value,
-    }
-)

@@ -7,8 +7,6 @@ from typing import Optional
 import torch
 from transformers.modeling_outputs import BaseModelOutput
 
-from rlarcworld.common.enums import StateKeys
-
 
 @dataclass
 class NStepMinVMaxConfig:
@@ -77,7 +75,9 @@ class RlArcWorldViTARCConfig:
         use_ope: Whether to use object position encoding.
         ape_mixer: Mixer type for absolute position encoding.
         trainable_ape: Whether positional embeddings are trainable.
-        grids_to_encode: List of grid keys to encode.
+        use_index_grid: Whether to use index grid.
+        use_temporal: Whether to use temporal encoding.
+        use_examples: Whether to use examples.
         color_values: Number of color values in the dataset.
     """
 
@@ -92,8 +92,9 @@ class RlArcWorldViTARCConfig:
     use_ope: bool | None = None
     ape_mixer: str | None = None
     trainable_ape: bool = False
-    grids_to_encode: list[str] | None = None
     use_index_grid: bool = True
+    use_temporal: bool = False
+    use_examples: bool = False
     color_values: int | None = None
 
     @classmethod
@@ -121,11 +122,6 @@ class RlArcWorldViTARCConfig:
         Returns:
             RlArcWorldViTARCConfig with best settings for training.
         """
-        grid_to_encode = [StateKeys.GRID.value]
-        if use_temporal:
-            grid_to_encode.extend([StateKeys.LAST_GRID.value, StateKeys.INITIAL.value])
-        if use_examples:
-            grid_to_encode.append(StateKeys.EXAMPLES.value)
         return cls(
             grid_size=grid_size,
             d_model=128,
@@ -138,8 +134,9 @@ class RlArcWorldViTARCConfig:
             use_ope=True,
             ape_mixer="weighted_sum_no_norm_vec",
             trainable_ape=False,
-            grids_to_encode=grid_to_encode,
             use_index_grid=use_index_grid,
+            use_temporal=use_temporal,
+            use_examples=use_examples,
         )
 
 
@@ -332,12 +329,12 @@ class CheckpointConfig:
     """Checkpointing configuration.
 
     Attributes:
-        periodic_interval (int): Periodic interval for checkpointing.
-        experiment_path (Optional[str | Path]): Path to the experiment directory.
+        save_frequency (int): Frequency for saving checkpoints.
+        checkpoint_dir (Optional[str | Path]): Directory to save checkpoints.
     """
 
-    periodic_interval: int = 1000
-    experiment_path: Optional[str | Path] = None
+    save_frequency: int = 1000
+    checkpoint_dir: Optional[str | Path] = None
 
 
 @dataclass

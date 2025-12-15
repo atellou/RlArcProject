@@ -4,7 +4,7 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.common.configs import NStepMinVMaxConfig, RlArcWorldViTARCConfig
-from rlarcworld.common.enums import RewardKeys, StateKeys
+from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.core import EnvStepper
@@ -23,12 +23,11 @@ def _make_actor(grid_size: int, color_values: int, device: torch.device) -> ViTA
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     actor = ViTARCActor(
         color_values=color_values,
         rl_vit_arc_config=actor_config,
-        config={
+        device_config={
             "device": str(device),
             "amp_enabled": False,
             "use_checkpointing": False,

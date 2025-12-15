@@ -53,7 +53,6 @@ def train_arc_critic_network(batch_size: int):
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     network = VitARCCritic(color_values, rl_vit_arc_config, num_atoms, v_min, v_max)
 
@@ -188,7 +187,6 @@ def train_vitarc_actor(batch_size: int):
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     # Use minimal config for faster training
     network = ViTARCActor(
@@ -279,7 +277,6 @@ def train_reward_world_model(batch_size: int):
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
 
     network = RewardWorldModel(
@@ -596,11 +593,7 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
-            grids_to_encode=[
-                StateKeys.GRID.value,
-                StateKeys.INITIAL.value,
-                StateKeys.LAST_GRID.value,
-            ],
+            use_temporal=True,
         )
         model = RlArcWorldViTARC(config)
 
@@ -618,44 +611,12 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
-            grids_to_encode=[StateKeys.GRID.value, StateKeys.EXAMPLES.value],
+            use_examples=True,
         )
         model = RlArcWorldViTARC(config)
 
         assert model.use_examples is True
         assert hasattr(model, "example_cross_attention")
-
-    def test_init_invalid_grids_to_encode(self):
-        """Test RlArcWorldViTARC raises error for invalid grids_to_encode."""
-        from rlarcworld.models.nn_modules import RlArcWorldViTARC
-
-        config = RlArcWorldViTARCConfig(
-            grid_size=8,
-            d_model=64,
-            d_ff=128,
-            num_layers=2,
-            num_heads=4,
-            grids_to_encode=["invalid_key"],
-        )
-
-        with pytest.raises(ValueError, match="Grid encoder keys must be in"):
-            RlArcWorldViTARC(config)
-
-    def test_init_missing_grid_key(self):
-        """Test RlArcWorldViTARC raises error when grid key is missing."""
-        from rlarcworld.models.nn_modules import RlArcWorldViTARC
-
-        config = RlArcWorldViTARCConfig(
-            grid_size=8,
-            d_model=64,
-            d_ff=128,
-            num_layers=2,
-            num_heads=4,
-            grids_to_encode=[StateKeys.INITIAL.value],  # Missing GRID
-        )
-
-        with pytest.raises(ValueError, match="must be in grids_to_encode"):
-            RlArcWorldViTARC(config)
 
     def test_forward_single_grid(self):
         """Test forward pass with single grid input."""
@@ -672,7 +633,6 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
-            grids_to_encode=[StateKeys.GRID.value],
         )
         model = RlArcWorldViTARC(config)
 
@@ -708,11 +668,7 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
-            grids_to_encode=[
-                StateKeys.GRID.value,
-                StateKeys.INITIAL.value,
-                StateKeys.LAST_GRID.value,
-            ],
+            use_temporal=True,
         )
         model = RlArcWorldViTARC(config)
 
@@ -752,7 +708,7 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
-            grids_to_encode=[StateKeys.GRID.value, StateKeys.EXAMPLES.value],
+            use_examples=True,
         )
         model = RlArcWorldViTARC(config)
 
@@ -789,7 +745,6 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
-            grids_to_encode=[StateKeys.GRID.value],
             use_index_grid=True,
         )
         model = RlArcWorldViTARC(config)
@@ -925,7 +880,6 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=True,  # OPE enabled
-            grids_to_encode=[StateKeys.GRID.value],
         )
         model = RlArcWorldViTARC(config)
 
@@ -1001,7 +955,6 @@ class TestViTARCActor:
             num_layers=2,
             num_heads=4,
             use_ope=False,
-            grids_to_encode=[StateKeys.GRID.value],
         )
         # Create actor with minimal config for faster test
         network = ViTARCActor(

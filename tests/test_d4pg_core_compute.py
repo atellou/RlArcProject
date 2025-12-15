@@ -7,7 +7,6 @@ from tensordict import TensorDict
 
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.common.configs import RlArcWorldViTARCConfig
-from rlarcworld.common.enums import StateKeys
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
 from rlarcworld.utils.device import enable_cuda
@@ -45,12 +44,11 @@ def core_setup(request):
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     actor = ViTARCActor(
         color_values=color_values,
         rl_vit_arc_config=actor_config,
-        config={
+        device_config={
             "device": str(device),
             "amp_enabled": config["amp_enabled"],
             "use_checkpointing": False,
@@ -67,7 +65,7 @@ def core_setup(request):
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
-        config={
+        device_config={
             "device": str(device),
             "amp_enabled": config["amp_enabled"],
             "use_checkpointing": False,
@@ -165,7 +163,7 @@ def build_core(grid_size: int = 12, color_values: int = 7) -> D4PGCore:
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
-        config={
+        device_config={
             "device": str(device),
             "amp_enabled": config["amp_enabled"],
             "use_checkpointing": False,

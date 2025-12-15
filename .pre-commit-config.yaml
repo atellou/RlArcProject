@@ -28,6 +28,8 @@ repos:
     hooks:
       - id: mypy
         args: ["--config-file=pyproject.toml"]
+        additional_dependencies:
+          - types-PyYAML
         exclude: ^rlarcworld/models/(vit_arc|actor_vitarc)\.py$
 
   - repo: https://github.com/econchick/interrogate

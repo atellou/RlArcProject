@@ -1,0 +1,196 @@
+# Experiment configurations
+# Each experiment inherits from base and overrides specific values
+# Run with: python -m rlarcworld.experiments.run_experiment --config experiments/configs/experiments.yaml --experiment <name>
+
+# =============================================================================
+# EXPLORATION EXPERIMENTS
+# Testing different exploration strategies
+# =============================================================================
+
+exploration_high_entropy:
+  description: "High entropy for maximum exploration"
+  d4pg:
+    entropy_coef: 0.1
+    entropy_coef_decay: 0.9999  # Slow decay over training
+
+exploration_decaying_entropy:
+  description: "Start with high exploration, decay to exploitation"
+  d4pg:
+    entropy_coef: 0.05
+    entropy_coef_decay: 0.999
+
+# =============================================================================
+# LEARNING RATE EXPERIMENTS
+# Testing different learning rate configurations
+# =============================================================================
+
+lr_conservative:
+  description: "Conservative learning rates for stability"
+  d4pg:
+    policy_lr: 1e-4
+    critic_lr: 1e-3
+    lr_scheduler_kwargs:
+      step_size: 5000
+      gamma: 0.5
+
+lr_aggressive:
+  description: "Aggressive learning rates for faster convergence"
+  d4pg:
+    policy_lr: 1e-3
+    critic_lr: 1e-2
+    max_grad_norm: 1.0  # Clip gradients for stability
+
+lr_warmup_decay:
+  description: "Higher initial LR with scheduled decay"
+  d4pg:
+    policy_lr: 5e-4
+    critic_lr: 5e-3
+    lr_scheduler_kwargs:
+      step_size: 2000
+      gamma: 0.7
+
+# =============================================================================
+# N-STEP EXPERIMENTS
+# Testing different temporal credit assignment
+# =============================================================================
+
+nstep_5:
+  description: "5-step returns for reduced variance"
+  d4pg:
+    n_step_config:
+      n_steps: 5
+
+nstep_15:
+  description: "15-step returns to account for middle size grids"
+  d4pg:
+    n_step_config:
+      n_steps: 15
+
+nstep_30:
+  description: "20-step returns for even longer credit assignment"
+  d4pg:
+    n_step_config:
+      n_steps: 30
+
+nstep_50:
+  description: "50-step returns for very long-term credit assignment"
+  d4pg:
+    n_step_config:
+      n_steps: 50
+
+nstep_100:
+  description: "100-step returns for extremely long-term credit assignment"
+  d4pg:
+    n_step_config:
+      n_steps: 100
+
+# =============================================================================
+# TARGET NETWORK EXPERIMENTS
+# Testing different target update strategies
+# =============================================================================
+
+target_slow:
+  description: "Slow target updates for stability"
+  d4pg:
+    tau: 0.001
+    target_update_frequency: 20
+
+target_fast:
+  description: "Fast target updates for quicker adaptation"
+  d4pg:
+    tau: 0.01
+    target_update_frequency: 5
+
+# =============================================================================
+# PENALTY EXPERIMENTS
+# Testing different reward scaling
+# =============================================================================
+
+penalty_high:
+  description: "High penalty for incorrect submissions"
+  env:
+    max_penalty: 5.0
+  # Note: distributional config will auto-scale via get_validated_config()
+
+penalty_moderate:
+  description: "Moderate penalty"
+  env:
+    max_penalty: 3.0
+
+# =============================================================================
+# WORLD MODEL EXPERIMENTS
+# Testing model-based augmentation
+# =============================================================================
+
+world_model_basic:
+  description: "Enable world model with default settings"
+  world_model:
+    enabled: true
+
+world_model_aggressive:
+  description: "Aggressive imagination for sample efficiency"
+  world_model:
+    enabled: true
+    imagination_horizon: 10
+    imagination_ratio: 10
+    imagination_frequency: 5
+
+# =============================================================================
+# COMBINED EXPERIMENTS
+# Best practices combinations
+# =============================================================================
+
+test:
+  description: "Test configuration for quick experimentation"
+  env:
+    grid_size: 6
+    color_values: 5
+    batch_size: 4
+  replay_buffer:
+    warmup_ratio: 0.0
+  training:
+    max_steps_per_epoch: 5
+    min_train_batch_size: 2
+  world_model:
+    enabled: true
+    imagination_horizon: 3
+    imagination_ratio: 2
+    imagination_frequency: 2
+    model_update_frequency: 2
+  system:
+    amp_enabled: false
+  checkpoint:
+    checkpoint_dir: ./tmp_ckpt
+    save_frequency: 1
+
+stable_baseline:
+  description: "Conservative, stable training baseline"
+  d4pg:
+    policy_lr: 1e-4
+    critic_lr: 1e-3
+    tau: 0.001
+    target_update_frequency: 20
+    max_grad_norm: 1.0
+    n_step_config:
+      n_steps: 3
+
+exploration_focused:
+  description: "Focus on exploration with entropy and world model"
+  d4pg:
+    entropy_coef: 0.05
+    entropy_coef_decay: 0.9995
+    n_step_config:
+      n_steps: 3
+  world_model:
+    enabled: true
+    imagination_horizon: 5
+
+fast_iteration:
+  description: "Quick experiments with smaller buffer and frequent updates"
+  replay_buffer:
+    size: 10000
+  training:
+    max_steps_per_epoch: 500
+    update_frequency: 1
+  d4pg:
+    target_update_frequency: 5

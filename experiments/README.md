@@ -56,8 +56,9 @@ Configures the ViTARC encoder used by both actor and critic networks.
 | `use_ope` | bool | True | Enable object position encoding. Helps model understand object-level spatial relationships in the grid. |
 | `ape_mixer` | str | "weighted_sum_no_norm_vec" | Method for mixing absolute position encodings. Affects how positional information is integrated. |
 | `trainable_ape` | bool | False | Whether absolute position embeddings are trainable. Set to True for task-specific position learning. |
-| `grids_to_encode` | list[str] | [GRID, LAST_GRID, INITIAL, EXAMPLES] | Which grid types to encode. Options: GRID, LAST_GRID, INITIAL, EXAMPLES. More grids provide richer context but increase computation. |
 | `use_index_grid` | bool | True | Include index/timestamp grid in encoding. Helps model track temporal progression. |
+| `use_temporal` | bool | True | Include temporal grids (current, last, initial). Enables sequence modeling. |
+| `use_examples` | bool | True | Include example grids in the input. Enables few-shot learning capabilities. |
 | `color_values` | int | 10 | Number of color values. Must match `EnvConfig.color_values`. |
 
 ### Quick Configuration
@@ -85,7 +86,7 @@ Controls the D4PG (Distributed Distributional Deterministic Policy Gradient) alg
 | `critic_lr` | float | 3e-3 | Learning rate for the critic (value) network. Typically 10x higher than policy_lr. Affects how quickly value estimates improve. |
 | `gamma` | float | 0.99 | Discount factor (0.0-1.0). Controls how much future rewards are valued. Higher values (0.99) emphasize long-term rewards; lower values (0.9) emphasize immediate rewards. |
 | `tau` | float | 0.005 | Soft update parameter for target networks. Controls the rate of target network updates. Lower values (0.005) provide stability; higher values (0.01) allow faster adaptation. |
-| `lr_scheduler` | dict \| None | None | Learning rate scheduler configuration. Pass dict with `step_size` and `gamma` keys for StepLR scheduler. Example: `{"step_size": 1000, "gamma": 0.5}`. None disables scheduling. |
+| `lr_scheduler_kwargs` | dict \| None | None | Learning rate scheduler configuration. Pass dict with `step_size` and `gamma` keys for StepLR scheduler. Example: `{"step_size": 1000, "gamma": 0.5}`. None disables scheduling. |
 | `n_step_config` | NStepMinVMaxConfig | n_steps=1 | N-step return configuration (see below). |
 
 ### Advanced D4PG Parameters
@@ -216,7 +217,7 @@ Controls checkpointing behavior.
 
 | Parameter | Type | Default | Impact |
 |-----------|------|---------|--------|
-| `periodic_interval` | int | 1000 | Save checkpoint every N training steps. Smaller intervals (100) provide more recovery points but use more disk space. Set to 0 to disable. |
+| `save_frequency` | int | 1000 | Save checkpoint every N training steps. Smaller intervals (100) provide more recovery points but use more disk space. Set to 0 to disable. |
 | `experiment_path` | str \| Path | None | Directory to save checkpoints and logs. If None, creates timestamped directory. Useful for organizing multiple experiments. |
 
 **Impact**: Checkpointing enables:
