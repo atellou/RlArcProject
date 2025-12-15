@@ -10,7 +10,7 @@ Usage:
 import argparse
 import logging
 
-from rlarcworld.experiments.arc_d4pg import ArcD4PG
+from rlarcworld.trainers.arc_d4pg import ArcD4PG
 from rlarcworld.utils.config_loader import list_experiments, load_experiment
 
 logging.basicConfig(

@@ -21,8 +21,8 @@ network:
   ape_mixer: "weighted_sum_no_norm_vec"
   trainable_ape: false
   use_index_grid: true
-  use_temporal: false
-  use_examples: false
+  use_temporal: true
+  use_examples: true
 
 
 d4pg:

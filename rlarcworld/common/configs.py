@@ -93,8 +93,8 @@ class RlArcWorldViTARCConfig:
     ape_mixer: str | None = None
     trainable_ape: bool = False
     use_index_grid: bool = True
-    use_temporal: bool = False
-    use_examples: bool = False
+    use_temporal: bool = True
+    use_examples: bool = True
     color_values: int | None = None
 
     @classmethod
