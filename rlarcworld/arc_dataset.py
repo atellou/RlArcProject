@@ -7,7 +7,6 @@ from typing import Callable, Dict, List
 
 import numpy as np
 import torch
-from google.cloud import storage
 from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
@@ -168,7 +167,6 @@ class ArcDataset(Dataset):
         arc_dataset_dir: str,
         keep_in_memory: bool = False,
         transform: Callable[[dict], dict] | None = None,
-        gcs_bucket_name: str | None = None,
     ):
         """Creates a Torch Dataset from the ARC dataset.
 
@@ -178,24 +176,11 @@ class ArcDataset(Dataset):
                 memory.
             transform (callable, optional): Optional transform to be applied
                 on a sample.
-            gcs_bucket_name (string, optional): GCS bucket name.
         """
-        if arc_dataset_dir.startswith("gs://"):
-            arc_dataset_dir = arc_dataset_dir.split("gs://")[-1]
-            parts = arc_dataset_dir.split("/")
-            gcs_bucket_name = parts[0]
-            arc_dataset_dir = "/".join(parts[1:])
-
         self.arc_dir = arc_dataset_dir
         self.keep_in_memory = keep_in_memory
         self.transform = transform
         self.transformed: set[tuple[str, int]] = set()
-        self.gcs_bucket_name = gcs_bucket_name
-        if self.gcs_bucket_name is not None:
-            self.storage_client = storage.Client(os.environ["ML_PROJECT_ID"])
-            self.bucket = self.storage_client.bucket(self.gcs_bucket_name)
-        else:
-            self.bucket = None
         self.load_dataset()
 
     def open_file(self, file_key: str, test_index: int | None = None) -> dict:
@@ -210,13 +195,8 @@ class ArcDataset(Dataset):
         """
         logger.debug(f"Open file: {file_key}")
 
-        if self.bucket is not None:
-            blob = self.bucket.blob(file_key)
-            file_contents = blob.download_as_string()
-            sample = json.loads(file_contents)
-        else:
-            with open(file_key) as file:
-                sample = json.load(file)
+        with open(file_key) as file:
+            sample = json.load(file)
         if test_index is not None:
             sample["test"] = {
                 "input": torch.as_tensor(sample["test"][test_index]["input"]),
@@ -256,14 +236,9 @@ class ArcDataset(Dataset):
         """
         # Get training file indexes
         logger.debug("Load Dataset")
-        if self.gcs_bucket_name is not None:
-            iterator = map(
-                lambda blob: blob.name, self.bucket.list_blobs(prefix=self.arc_dir)
-            )
-        else:
-            iterator = map(
-                lambda f: os.path.join(self.arc_dir, f), os.listdir(self.arc_dir)
-            )
+        iterator = map(
+            lambda f: os.path.join(self.arc_dir, f), os.listdir(self.arc_dir)
+        )
         iterator = filter(lambda f: f.endswith(".json"), iterator)
 
         self.samples = {}
