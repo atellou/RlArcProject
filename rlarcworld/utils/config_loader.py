@@ -153,7 +153,7 @@ def dict_to_config(config_dict: dict) -> ArcD4PGConfig:
     system_config = SystemConfig(**system_dict)
 
     return ArcD4PGConfig(
-        dataset_path=config_dict.get("dataset_path", ""),
+        dataset=config_dict.get("dataset", ""),
         env=env_config,
         network=network_config,
         d4pg=d4pg_config,

@@ -16,6 +16,7 @@ from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
 from rlarcworld.models.grid_encoder import GridEncoder, ObjectIndexExtractor
 from rlarcworld.models.reward_world_model import RewardWorldModel
+from rlarcworld.utils.device import CudaConfig
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,12 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture()
 def batch_size() -> int:
-    # Randomize to keep test variability but cast to int
-    return int(torch.randint(1, 20, size=(1,)).item())
+    # Randomize to keep test variability but cap at 8 to avoid OOM on smaller GPUs
+    return int(torch.randint(1, 9, size=(1,)).item())
 
 
 # ---------------- Helpers ----------------
-def train_arc_critic_network(batch_size: int):
+def train_arc_critic_network(batch_size: int, device: str = "cpu"):
     grid_size = 16
     color_values = 11
     logger.info(
@@ -54,7 +55,15 @@ def train_arc_critic_network(batch_size: int):
         num_heads=4,
         use_ope=False,
     )
-    network = VitARCCritic(color_values, rl_vit_arc_config, num_atoms, v_min, v_max)
+    device_config = {"device": device, "amp_enabled": False, "use_checkpointing": False}
+    network = VitARCCritic(
+        color_values,
+        rl_vit_arc_config,
+        num_atoms,
+        v_min,
+        v_max,
+        device_config=device_config,
+    )
 
     input_sample = TensorDict(
         {
@@ -168,7 +177,7 @@ def train_arc_critic_network(batch_size: int):
     return loss
 
 
-def train_vitarc_actor(batch_size: int):
+def train_vitarc_actor(batch_size: int, device: str = "cpu"):
     """Train ViTARCActor for one step and return loss."""
     grid_size = 16
     color_values = 11
@@ -188,10 +197,14 @@ def train_vitarc_actor(batch_size: int):
         num_heads=4,
         use_ope=False,
     )
+    device_config = CudaConfig(
+        device=device, amp_enabled=False, use_checkpointing=False
+    )
     # Use minimal config for faster training
     network = ViTARCActor(
         color_values=color_values,
         rl_vit_arc_config=rl_vit_arc_config,
+        device_config=device_config,
     )
 
     input_sample = TensorDict(
@@ -259,7 +272,7 @@ def train_vitarc_actor(batch_size: int):
     return loss
 
 
-def train_reward_world_model(batch_size: int):
+def train_reward_world_model(batch_size: int, device: str = "cpu"):
     """Train reward world model for one step and return loss."""
     grid_size = 16
     color_values = 11
@@ -278,10 +291,13 @@ def train_reward_world_model(batch_size: int):
         num_heads=4,
         use_ope=False,
     )
-
+    device_config = CudaConfig(
+        device=device, amp_enabled=False, use_checkpointing=False
+    )
     network = RewardWorldModel(
         color_values=color_values,
         rl_vit_arc_config=rl_vit_arc_config,
+        device_config=device_config,
     )
 
     # Create input state
@@ -948,7 +964,7 @@ class TestViTARCActor:
         """Test ViTARCActor forward pass produces valid action probabilities."""
         logger.info("Testing ViTARCActor forward pass")
         batch_size = 2
-        grid_size = 30
+        grid_size = 16  # Reduced from 30 to avoid OOM on smaller GPUs
         color_values = 11
         num_examples = 3
 

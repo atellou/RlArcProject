@@ -45,7 +45,7 @@ class ArcWorldModelStepper:
         grid_size: int,
         color_values: int,
         actor: ViTARCActor,
-        config: CudaConfig,
+        device_config: CudaConfig,
         # World model
         reward_model: RewardWorldModelProto,
         reward_model_lr: float = 1e-4,
@@ -69,7 +69,7 @@ class ArcWorldModelStepper:
             grid_size: Size of the grid.
             color_values: Number of possible colors.
             actor: Actor network (shared with D4PGCore).
-            config: Configuration dictionary.
+            device_config: Device configuration.
             reward_model: RewardWorldModel to train and use for imagination.
             reward_model_lr: Learning rate for world model optimizer.
             lr_scheduler_kwargs: Learning rate scheduler configuration.
@@ -84,7 +84,7 @@ class ArcWorldModelStepper:
             imagination_frequency: Run imagination every N training steps.
         """
         self.model = reward_model
-        self.device = config["device"]
+        self.device = device_config["device"]
         self.model_update_frequency = model_update_frequency
         self.imagination_ratio = imagination_ratio
         self.imagination_frequency = imagination_frequency
@@ -133,7 +133,7 @@ class ArcWorldModelStepper:
             sampler=None,
             max_steps=step_horizon,
             env_sample_reset=self._reset_env,
-            amp_enabled=config.get("amp_enabled", True),
+            amp_enabled=device_config.get("amp_enabled", True),
             on_step=self._get_on_step_rewards(),
         )
 

@@ -36,7 +36,7 @@ class OnStepContext:
         core: ActorCriticCoreProto,
         hyperparameters: dict,
         warmup: bool,
-        buffer_warmup: float | None,
+        buffer_warmup: float | None = None,
     ):
         """Initialize step ctx.
 
@@ -441,6 +441,23 @@ class Trainer:
                 except Exception:
                     pass
 
+    def _validate_train_buffer(self, epochs: int, max_steps_per_epoch: int) -> None:
+        """Validate that the replay buffer has enough data for training."""
+        if self.replay_buffer is not None and self.warmup_buffer_ratio > 0:
+            storage_cap = self.replay_buffer.storage.max_size
+            warmup_buffer_size = int(self.warmup_buffer_ratio * storage_cap)
+            if epochs <= 0:
+                raise ValueError("epochs must be greater than 0")
+            if max_steps_per_epoch == 0:
+                raise ValueError("max_steps_per_epoch must be different from 0")
+            training_steps_required = max_steps_per_epoch * epochs
+            if max_steps_per_epoch > 0 and training_steps_required < warmup_buffer_size:
+                raise ValueError(
+                    f"Warmup size ({warmup_buffer_size}) is greater than "
+                    f"required training duration ({training_steps_required} steps). "
+                    "Increase training steps or reduce warmup_buffer_ratio."
+                )
+
     def train(
         self,
         epochs: int,
@@ -456,9 +473,10 @@ class Trainer:
             max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
             validation_epochs (int): Number of epochs to validate for.
             validation_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
-            validation_epochs_frequency (int): Frequency of validation epochs.
             validation_steps_frequency (int): Frequency of validation steps.
         """
+        self._validate_train_buffer(epochs, max_steps_per_epoch)
+
         self._run(
             step_stream_factory=self.train_step_stream_factory,
             on_step=self.on_train_step,

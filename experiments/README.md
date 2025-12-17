@@ -8,7 +8,7 @@ The `ArcD4PGConfig` is the main configuration object that groups all sub-configu
 
 ```python
 config = ArcD4PGConfig(
-    dataset_path="path/to/dataset",
+    dataset="path/to/dataset",
     env=EnvConfig(...),
     network=RlArcWorldViTARCConfig(...),
     d4pg=D4PGConfig(...),
@@ -177,7 +177,6 @@ Controls the training loop parameters.
 | `max_steps_per_epoch` | int | 1000 | Maximum environment steps per training epoch. Larger values provide more data per epoch but increase epoch duration. |
 | `validation_epochs` | int | 1 | Number of validation epochs to run. Each validation epoch evaluates on validation data. |
 | `validation_steps_per_epoch` | int | 100 | Maximum steps per validation epoch. Controls validation thoroughness vs. speed. |
-| `validation_epochs_frequency` | int | 1 | Run validation every N training epochs. Lower values (1) validate frequently; higher values (10) validate less often. |
 | `validation_steps_frequency` | int | 100 | Run quick validation every N training steps. Provides frequent feedback without full validation. |
 | `min_train_batch_size` | int | 2 | Minimum batch size for training. Ensures sufficient gradient information. Must be ≤ `batch_size`. |
 
@@ -248,7 +247,7 @@ Controls system-level parameters.
 from rlarcworld.common.configs import ArcD4PGConfig
 
 config = ArcD4PGConfig(
-    dataset_path="/path/to/arc/dataset",
+    dataset="/path/to/arc/dataset",
 )
 
 experiment = ArcD4PG(config)
@@ -259,7 +258,7 @@ experiment.train(epochs=10)
 
 ```python
 config = ArcD4PGConfig(
-    dataset_path="/path/to/arc/dataset",
+    dataset="/path/to/arc/dataset",
     env=EnvConfig(grid_size=30, color_values=10, batch_size=64),
     network=RlArcWorldViTARCConfig.best_config(
         grid_size=30,
@@ -274,7 +273,6 @@ config = ArcD4PGConfig(
     ),
     training=TrainingConfig(
         max_steps_per_epoch=2000,
-        validation_epochs_frequency=2,
     ),
 )
 
@@ -286,7 +284,7 @@ experiment.train(epochs=20)
 
 ```python
 config = ArcD4PGConfig(
-    dataset_path="/path/to/arc/dataset",
+    dataset="/path/to/arc/dataset",
     env=EnvConfig(batch_size=32),
     d4pg=D4PGConfig(
         policy_lr=3e-4,
@@ -320,7 +318,7 @@ experiment.train(epochs=50)
 
 ```python
 config = ArcD4PGConfig(
-    dataset_path="/path/to/arc/dataset",
+    dataset="/path/to/arc/dataset",
     env=EnvConfig(grid_size=20, batch_size=16),
     network=RlArcWorldViTARCConfig.best_config(
         grid_size=20,
@@ -329,7 +327,6 @@ config = ArcD4PGConfig(
     ),
     training=TrainingConfig(
         max_steps_per_epoch=500,
-        validation_epochs_frequency=5,
         validation_steps_frequency=200,
     ),
     checkpoint=CheckpointConfig(
@@ -340,43 +337,6 @@ config = ArcD4PGConfig(
 experiment = ArcD4PG(config)
 experiment.train(epochs=5)
 ```
-
----
-
-## Hyperparameter Tuning Guide
-
-### For Faster Training
-
-- Reduce `grid_size` (20 instead of 30)
-- Reduce `batch_size` (16 instead of 32)
-- Reduce `num_layers` (2 instead of 4)
-- Reduce `d_model` (64 instead of 128)
-- Increase `validation_epochs_frequency` (5 instead of 1)
-- Disable `world_model` (enabled=False)
-
-### For Better Performance
-
-- Increase `batch_size` (64 instead of 32)
-- Increase `replay_buffer.size` (200000 instead of 100000)
-- Decrease `validation_epochs_frequency` (1 for frequent validation)
-- Enable `world_model` for improved sample efficiency
-- Increase `max_steps_per_epoch` (2000 instead of 1000)
-
-### For Better Stability
-
-- Decrease `policy_lr` (1e-4 instead of 3e-4)
-- Increase `tau` (0.01 instead of 0.005)
-- Increase `dropout` (0.2 instead of 0.1)
-- Increase `replay_buffer.alpha` (0.8 instead of 0.6)
-
-### For Better Generalization
-
-- Increase `dropout` (0.15-0.2)
-- Decrease `batch_size` (16 instead of 32)
-- Increase `replay_buffer.warmup_ratio` (0.3 instead of 0.2)
-- Enable `world_model` for synthetic data augmentation
-
----
 
 ## Important Notes
 

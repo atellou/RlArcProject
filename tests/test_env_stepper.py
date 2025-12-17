@@ -219,7 +219,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
 
     stepper = PixelWiseArcStepper(
         max_steps_per_epoch=2,
-        dataset_path="tests/test_data/",
+        dataset="tests/test_data/",
         grid_size=grid_size,
         color_values=color_values,
         actor=actor,
@@ -409,7 +409,7 @@ def test_env_stepper_step_stream_from_samples(device):
 
     stepper = PixelWiseArcStepper(
         max_steps_per_epoch=2,
-        dataset_path="tests/test_data/",
+        dataset="tests/test_data/",
         grid_size=grid_size,
         color_values=color_values,
         actor=actor,

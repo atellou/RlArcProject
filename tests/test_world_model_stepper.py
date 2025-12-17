@@ -13,6 +13,7 @@ from rlarcworld.common.protocols import ActorCriticCoreProto
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.reward_world_model import RewardWorldModel
+from rlarcworld.utils.device import CudaConfig
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
@@ -42,11 +43,11 @@ def color_values():
 @pytest.fixture
 def config(device):
     """Return a config dict for tests."""
-    return {
-        "device": device,
-        "amp_enabled": False,
-        "use_checkpointing": False,
-    }
+    return CudaConfig(
+        device=device,
+        amp_enabled=False,
+        use_checkpointing=False,
+    )
 
 
 @pytest.fixture
@@ -88,7 +89,7 @@ def reward_model(grid_size, color_values, config):
     model = RewardWorldModel(
         color_values=color_values,
         rl_vit_arc_config=reward_config,
-        config=config,
+        device_config=config,
     )
     return model
 
@@ -100,7 +101,7 @@ def stepper(grid_size, color_values, actor, reward_model, config):
         grid_size=grid_size,
         color_values=color_values,
         actor=actor,
-        config=config,
+        device_config=config,
         reward_model=reward_model,
         reward_model_lr=1e-4,
         step_horizon=3,

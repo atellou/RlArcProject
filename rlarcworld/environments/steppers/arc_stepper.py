@@ -26,7 +26,7 @@ class PixelWiseArcStepper:
     def __init__(
         self,
         max_steps_per_epoch: int,
-        dataset_path: str,
+        dataset: str | list[str],
         grid_size: int,
         color_values: int,
         actor: ViTARCActor,
@@ -38,7 +38,7 @@ class PixelWiseArcStepper:
 
         Args:
             max_steps_per_epoch (int): Maximum steps per epoch.
-            dataset_path (str): Path to the dataset.
+            dataset (str | list[str]): Path to the dataset.
             grid_size (int): Size of the ARC grid.
             color_values (int): Number of possible colors.
             actor (ViTARCActor): Actor network.
@@ -77,7 +77,7 @@ class PixelWiseArcStepper:
             ]
         )
         self.dataset: ArcDataset = ArcDataset(
-            dataset_path, keep_in_memory=False, transform=transform
+            dataset, keep_in_memory=False, transform=transform
         )
 
         base_env = ArcBatchGridEnv(

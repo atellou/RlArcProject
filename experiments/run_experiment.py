@@ -61,6 +61,12 @@ def main() -> None:
         default=None,
         help="Override dataset path",
     )
+    parser.add_argument(
+        "--samples-path-list",
+        type=str,
+        default=None,
+        help="Path to a text file containing sample paths (one per line)",
+    )
 
     args = parser.parse_args()
 
@@ -79,11 +85,20 @@ def main() -> None:
     logger.info(f"Loading experiment: {args.experiment}")
     config = load_experiment(args.experiment, args.config, args.base)
 
-    if args.dataset:
-        config.dataset_path = args.dataset
+    if args.dataset and args.samples_path_list:
+        raise ValueError("Cannot specify both --dataset and --samples-path-list")
+    elif args.dataset:
+        config.dataset = args.dataset
+    elif args.samples_path_list:
+        with open(args.samples_path_list, "r") as f:
+            paths = [line.strip() for line in f if line.strip()]
+        config.dataset = paths
+        logger.info(f"Using dataset paths from file: {len(paths)} paths loaded")
+    else:
+        logger.info(f"Using default dataset configuration: {config.dataset}")
 
     logger.info("Configuration loaded:")
-    logger.info(f"  - Dataset: {config.dataset_path}")
+    logger.info(f"  - Dataset: {config.dataset}")
     logger.info(f"  - Grid size: {config.env.grid_size}")
     logger.info(f"  - Batch size: {config.env.batch_size}")
     logger.info(f"  - Policy LR: {config.d4pg.policy_lr}")

@@ -370,7 +370,7 @@ class ArcD4PGConfig:
     Groups all sub-configurations into a single config object.
 
     Attributes:
-        dataset_path (str): Path to the dataset.
+        dataset (str | list[str]): Path to the dataset.
         env (EnvConfig): Environment configuration.
         network (NetworkConfig): Network configuration.
         d4pg (D4PGConfig): D4PG configuration.
@@ -384,7 +384,7 @@ class ArcD4PGConfig:
     Example:
         ```python
         config = ArcD4PGConfig(
-            dataset_path="path/to/dataset",
+            dataset="path/to/dataset",
             env=EnvConfig(grid_size=6, color_values=5),
             training=TrainingConfig(max_steps_per_epoch=100),
             world_model=WorldModelConfig(enabled=True),
@@ -393,7 +393,7 @@ class ArcD4PGConfig:
         ```
     """
 
-    dataset_path: str
+    dataset: str | list[str]
     env: EnvConfig = field(default_factory=EnvConfig)
     network: RlArcWorldViTARCConfig = field(
         default_factory=lambda: RlArcWorldViTARCConfig.best_config(

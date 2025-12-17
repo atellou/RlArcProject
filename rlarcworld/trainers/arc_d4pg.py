@@ -147,7 +147,7 @@ class ArcD4PG:
         logger.info("Creating training stepper...")
         self.training_stepper = PixelWiseArcStepper(
             max_steps_per_epoch=self.max_steps_per_epoch,
-            dataset_path=config.dataset_path,
+            dataset=config.dataset,
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
             actor=self.actor,
@@ -161,7 +161,7 @@ class ArcD4PG:
         logger.info("Creating validation stepper...")
         self.validation_stepper = PixelWiseArcStepper(
             max_steps_per_epoch=self.validation_steps_per_epoch,
-            dataset_path=config.dataset_path,
+            dataset=config.dataset,
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
             actor=self.actor,
@@ -178,13 +178,13 @@ class ArcD4PG:
             reward_model = RewardWorldModel(
                 color_values=config.env.color_values,
                 rl_vit_arc_config=rl_vit_arc_config,
-                config=self.cuda_config,
+                device_config=self.cuda_config,
             )
             self.world_model_stepper = ArcWorldModelStepper(
                 grid_size=config.env.grid_size,
                 color_values=config.env.color_values,
                 actor=self.actor,
-                config=self.cuda_config,
+                device_config=self.cuda_config,
                 reward_model=reward_model,
                 reward_model_lr=config.world_model.learning_rate,
                 lr_scheduler_kwargs=config.world_model.lr_scheduler_kwargs,
@@ -656,7 +656,7 @@ class ArcD4PG:
                 "device": self.device,
                 "amp_enabled": getattr(self, "amp_enabled", True),
                 "seed": getattr(self, "seed", None),
-                "dataset_path": getattr(self, "dataset_path", None),
+                "dataset": getattr(self, "dataset", None),
                 "use_world_model": self.use_world_model,
             }
             if include_config

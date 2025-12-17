@@ -1,7 +1,7 @@
 # Base configuration for ArcD4PG experiments
 # All other configs can inherit from this and override specific values
 
-dataset_path: "/home/andresftu/Documents/Repos/RlArcProject/tests/test_data"
+dataset: "/home/andresftu/Documents/Repos/RlArcProject/tests/test_data"
 
 env:
   grid_size: 30

@@ -34,6 +34,20 @@ def _set_log_level_env(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _clear_cuda_cache():
+    """Clear CUDA cache before and after each test to prevent OOM errors."""
+    import gc
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    yield
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 # ---------- Basic dimension fixtures ----------
 
 

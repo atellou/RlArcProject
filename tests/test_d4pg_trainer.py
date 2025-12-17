@@ -502,8 +502,7 @@ def test_d4pg_trainer_validation_process(d4pg_core, make_synthetic_step, batch_s
         device=d4pg_core.device,
     )
 
-    # Run training (with validation_epochs_frequency=0 to disable auto-validation)
-    trainer.train(epochs=1, validation_epochs_frequency=0)
+    trainer.train(epochs=1)
 
     # Run validation explicitly
     trainer.validate(epochs=1)
