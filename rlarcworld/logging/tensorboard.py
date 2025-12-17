@@ -34,6 +34,7 @@ class TensorBoardWriterManager:
         replay_buffer: ReplayBufferProto | None = None,
         warmup_buffer_ratio: float = 0.2,
         medium_frequency: int = 100,
+        minimal_frequency: int = 10,
     ) -> None:
         """Create a manager and underlying SummaryWriter.
 
@@ -43,7 +44,9 @@ class TensorBoardWriterManager:
             replay_buffer: Replay buffer to log stats from.
             warmup_buffer_ratio: Ratio used to display buffer warmup threshold.
             medium_frequency: Frequency at which to log medium-tier metrics.
+            minimal_frequency: Frequency at which to log minimal metrics.
         """
+        self.minimal_frequency = minimal_frequency
         self.root = Path(experiment_path)
         self.root.mkdir(parents=True, exist_ok=True)
         self.logdir = self.root / logdir_name
@@ -110,6 +113,14 @@ class TensorBoardWriterManager:
         if step <= 0:
             # Avoid writing at step 0 for nicer charts
             step = 1
+
+        # Always log step progress (cheap scalar, useful for monitoring)
+        self.writer.add_scalar(f"{phase}/progress/step", step, step)
+        if hasattr(ctx, "epoch") and ctx.epoch is not None:
+            self.writer.add_scalar(f"{phase}/progress/epoch", int(ctx.epoch), step)
+
+        if ctx.iteration % self.minimal_frequency != 0:
+            return
 
         # Losses (if available)
         try:
@@ -223,7 +234,7 @@ class TensorBoardWriterManager:
 
         # Ensure periodic flush for visibility without too much overhead
         try:
-            if step % 100 == 0:
+            if step % self.medium_frequency == 0:
                 self.writer.flush()
         except Exception:
             logger.debug("Failed to flush TensorBoard writer")

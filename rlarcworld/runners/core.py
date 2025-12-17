@@ -36,6 +36,7 @@ class OnStepContext:
         core: ActorCriticCoreProto,
         hyperparameters: dict,
         warmup: bool,
+        buffer_warmup: float | None,
     ):
         """Initialize step ctx.
 
@@ -50,6 +51,7 @@ class OnStepContext:
             core: Algorithm core containing networks and methods
             hyperparameters: Hyperparameters of the algorithm
             warmup: Whether the training is in warmup phase
+            buffer_warmup: Buffer warmup percentage (None if not applicable)
         """
         self.epoch = epoch
         self.step_idx = step_idx
@@ -61,6 +63,7 @@ class OnStepContext:
         self.core = core
         self.hyperparameters = hyperparameters
         self.warmup = warmup
+        self.buffer_warmup = buffer_warmup
 
 
 class Trainer:
@@ -219,13 +222,15 @@ class Trainer:
 
         return None, None
 
-    def _is_warmup_phase(self) -> bool:
-        """Check if the current training is in warmup phase."""
+    def warmup_info(self) -> tuple[float, bool]:
+        """Get warmup information including phase status and percentage."""
         if self.replay_buffer is None:
-            return False
+            return 0.0, False
         storage_len = len(self.replay_buffer.storage)
         storage_cap = self.replay_buffer.storage.max_size
-        return storage_len <= storage_cap * self.warmup_buffer_ratio
+        is_warmup = storage_len <= storage_cap * self.warmup_buffer_ratio
+        percentage = (storage_len / storage_cap) * 100.0
+        return percentage, is_warmup
 
     # ---------------- Public API ----------------
     def _run(
@@ -238,7 +243,6 @@ class Trainer:
         max_steps_per_epoch: int = -1,
         validation_epochs: int = 1,
         validation_steps_per_epoch: int = -1,
-        validation_epochs_frequency: int = 1,
         validation_steps_frequency: int = -1,
     ) -> None:
         """Run a training loop using the provided step stream and hooks.
@@ -256,7 +260,6 @@ class Trainer:
             validation_epochs (int): Number of epochs to validate for.
             validation_steps_per_epoch (int):
                 Max steps per epoch on validation (-1 for no limit).
-            validation_epochs_frequency (int): Frequency of validation epochs.
             validation_steps_frequency (int): Frequency of validation steps.
         """
         # Initialize variables for exception safety
@@ -277,15 +280,6 @@ class Trainer:
             except Exception:
                 pass
         try:
-            # continue from stored iteration when resuming
-            if (
-                self.validation_step_stream_factory is not None
-                and epochs > 0
-                and validation_epochs_frequency > 0
-                and epochs % validation_epochs_frequency == 0
-                and training
-            ):
-                self.validate(validation_epochs_frequency)
             for epoch in range(self._epoch, self._epoch + epochs):
                 loss_actor, loss_critic, td_error = (
                     torch.tensor(0.0),
@@ -294,8 +288,6 @@ class Trainer:
                 )
 
                 for _done, step_idx, step_state in step_stream_factory():
-                    iteration += 1
-
                     # Store transition and maybe sample batch
                     if training:
                         batch, info = self._maybe_store_and_sample(step_state)
@@ -349,6 +341,7 @@ class Trainer:
                         loss_actor, loss_critic, td_error = None, None, None
 
                     # Create step ctx
+                    buffer_warmup, warmup = self.warmup_info()
                     ctx = OnStepContext(
                         epoch=epoch,
                         step_idx=step_idx,
@@ -359,7 +352,8 @@ class Trainer:
                         td_error=td_error,
                         core=self.core,
                         hyperparameters=self.hyperparameters,
-                        warmup=self._is_warmup_phase(),
+                        warmup=warmup,
+                        buffer_warmup=buffer_warmup,
                     )
 
                     if (
@@ -369,13 +363,15 @@ class Trainer:
                         and training
                     ):
                         if info is None:
-                            raise ValueError("info is None")
+                            raise ValueError(
+                                "Info is None - cannot update replay buffer priorities"
+                            )
                         self.replay_buffer_update_priority(
                             ctx, info, self.replay_buffer
                         )
 
                     # Call step callback
-                    if on_step and batch is not None:
+                    if on_step is not None:
                         for callback_name, callback_step in on_step.items():
                             callback_step(ctx)
 
@@ -383,6 +379,7 @@ class Trainer:
                         self.validation_step_stream_factory is not None
                         and validation_steps_frequency > 0
                         and iteration % validation_steps_frequency == 0
+                        and not warmup
                         and training
                     ):
                         self.validate(validation_epochs, validation_steps_per_epoch)
@@ -390,11 +387,19 @@ class Trainer:
                     # Early termination
                     if max_steps_per_epoch > 0 and step_idx >= max_steps_per_epoch - 1:
                         break
+
+                    iteration += 1
                 # update stored epoch at end of epoch loop iteration
                 self._epoch = epoch + 1
             # persist iteration counter
             self._iteration = iteration
         except Exception as e:
+            msg = f"Exception during training step iteration {iteration}: {e}"
+            buffer_warmup, warmup = self.warmup_info()
+            if warmup:
+                logger.info(f"Re-raising exception during warmup: {msg}")
+                raise
+            logger.exception(msg)
             ctx = OnStepContext(
                 epoch=epoch,
                 step_idx=step_idx,
@@ -405,7 +410,8 @@ class Trainer:
                 td_error=td_error,
                 core=self.core,
                 hyperparameters=self.hyperparameters,
-                warmup=self._is_warmup_phase(),
+                warmup=warmup,
+                buffer_warmup=buffer_warmup,
             )
             if self.on_exception is not None:
                 for (
@@ -434,6 +440,52 @@ class Trainer:
                         self.core.critic.eval()
                 except Exception:
                     pass
+
+    def train(
+        self,
+        epochs: int,
+        max_steps_per_epoch: int = -1,
+        validation_epochs: int = 1,
+        validation_steps_per_epoch: int = -1,
+        validation_steps_frequency: int = -1,
+    ) -> None:
+        """Run the training loop.
+
+        Args:
+            epochs (int): Number of epochs to train for.
+            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
+            validation_epochs (int): Number of epochs to validate for.
+            validation_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
+            validation_epochs_frequency (int): Frequency of validation epochs.
+            validation_steps_frequency (int): Frequency of validation steps.
+        """
+        self._run(
+            step_stream_factory=self.train_step_stream_factory,
+            on_step=self.on_train_step,
+            training=True,
+            epochs=epochs,
+            max_steps_per_epoch=max_steps_per_epoch,
+            validation_epochs=validation_epochs,
+            validation_steps_per_epoch=validation_steps_per_epoch,
+            validation_steps_frequency=validation_steps_frequency,
+        )
+
+    def validate(self, epochs: int, max_steps_per_epoch: int = -1) -> None:
+        """Run the validation loop.
+
+        Args:
+            epochs (int): Number of epochs to validate for.
+            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
+        """
+        if self.validation_step_stream_factory is None:
+            raise ValueError("Validation step stream factory is not set")
+        self._run(
+            step_stream_factory=self.validation_step_stream_factory,
+            on_step=self.on_validation_step,
+            training=False,
+            epochs=epochs,
+            max_steps_per_epoch=max_steps_per_epoch,
+        )
 
     # ---------------- Checkpoint API ----------------
     def checkpoint(self) -> dict:
@@ -472,52 +524,4 @@ class Trainer:
         )
         self.min_train_batch_size = int(
             state.get("min_train_batch_size", self.min_train_batch_size)
-        )
-
-    def train(
-        self,
-        epochs: int,
-        max_steps_per_epoch: int = -1,
-        validation_epochs: int = 1,
-        validation_steps_per_epoch: int = -1,
-        validation_epochs_frequency: int = 1,
-        validation_steps_frequency: int = -1,
-    ) -> None:
-        """Run the training loop.
-
-        Args:
-            epochs (int): Number of epochs to train for.
-            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
-            validation_epochs (int): Number of epochs to validate for.
-            validation_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
-            validation_epochs_frequency (int): Frequency of validation epochs.
-            validation_steps_frequency (int): Frequency of validation steps.
-        """
-        self._run(
-            step_stream_factory=self.train_step_stream_factory,
-            on_step=self.on_train_step,
-            training=True,
-            epochs=epochs,
-            max_steps_per_epoch=max_steps_per_epoch,
-            validation_epochs=validation_epochs,
-            validation_steps_per_epoch=validation_steps_per_epoch,
-            validation_epochs_frequency=validation_epochs_frequency,
-            validation_steps_frequency=validation_steps_frequency,
-        )
-
-    def validate(self, epochs: int, max_steps_per_epoch: int = -1) -> None:
-        """Run the validation loop.
-
-        Args:
-            epochs (int): Number of epochs to validate for.
-            max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
-        """
-        if self.validation_step_stream_factory is None:
-            raise ValueError("Validation step stream factory is not set")
-        self._run(
-            step_stream_factory=self.validation_step_stream_factory,
-            on_step=self.on_validation_step,
-            training=False,
-            epochs=epochs,
-            max_steps_per_epoch=max_steps_per_epoch,
         )

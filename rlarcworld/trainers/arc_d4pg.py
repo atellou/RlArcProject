@@ -100,7 +100,6 @@ class ArcD4PG:
 
         # Validation policies
         self.validation_epochs = config.training.validation_epochs
-        self.validation_epochs_frequency = config.training.validation_epochs_frequency
         self.validation_steps_frequency = config.training.validation_steps_frequency
 
         # Checkpoint policies
@@ -434,23 +433,31 @@ class ArcD4PG:
         Args:
             ctx: Step ctx containing training information
         """
-        if (
-            ctx.iteration % self.exp_config.logging.log_frequency == 0
-            and ctx.loss_actor is not None
-        ):
-            msg = (
-                f"Epoch {ctx.epoch}, Step {ctx.step_idx}, "
-                f"Iteration {ctx.iteration}: "
-                f"Actor Loss: {ctx.loss_actor:.4f}, "
-                f"Critic Loss: {ctx.loss_critic:.4f}"
+        if ctx.iteration % self.exp_config.logging.log_frequency == 0:
+            msg = f"Epoch {ctx.epoch}, Step {ctx.step_idx}, " + (
+                f"Buffer Warmup: {ctx.buffer_warmup:.1f}%, "
+                if ctx.buffer_warmup is not None
+                else ""
             )
-            # Add world model metrics if enabled
-            if isinstance(self.world_model_stepper, ArcWorldModelStepper):
-                wm_losses = self.world_model_stepper.get_average_model_losses()
-                if wm_losses:
-                    wm_str = ", ".join(f"{k}: {v:.4f}" for k, v in wm_losses.items())
-                    msg += f", RWM Loss: [{wm_str}]"
-                msg += f", Imaginations: {self.world_model_stepper.imagination_count}"
+            if ctx.warmup:
+                msg += " (Warmup), "
+            if ctx.loss_actor is not None:
+                msg += (
+                    f"Iteration {ctx.iteration}: "
+                    f"Actor Loss: {ctx.loss_actor:.4f}, "
+                    f"Critic Loss: {ctx.loss_critic:.4f}"
+                )
+                # Add world model metrics if enabled
+                if isinstance(self.world_model_stepper, ArcWorldModelStepper):
+                    wm_losses = self.world_model_stepper.get_average_model_losses()
+                    if wm_losses:
+                        wm_str = ", ".join(
+                            f"{k}: {v:.4f}" for k, v in wm_losses.items()
+                        )
+                        msg += f", RWM Loss: [{wm_str}]"
+                    msg += (
+                        f", Imaginations: {self.world_model_stepper.imagination_count}"
+                    )
             logger.info(msg)
 
     def _periodic_checkpoint(self, ctx: OnStepContext):
@@ -538,7 +545,6 @@ class ArcD4PG:
                 max_steps_per_epoch=self.max_steps_per_epoch,
                 validation_epochs=self.validation_epochs,
                 validation_steps_per_epoch=self.validation_steps_per_epoch,
-                validation_epochs_frequency=self.validation_epochs_frequency,
                 validation_steps_frequency=self.validation_steps_frequency,
             )
             logger.info("Training completed successfully")
@@ -549,6 +555,11 @@ class ArcD4PG:
             failed = True
             raise
         finally:
+            _buffer_warmup, warmup = self.trainer.warmup_info()
+            if warmup:
+                logger.warning("Skipping final checkpoint during warmup period")
+                return
+            logger.info("Saving final checkpoint...")
             self.save_checkpoint(
                 os.path.join(
                     self.checkpoint_dir,

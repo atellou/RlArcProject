@@ -90,6 +90,7 @@ def main() -> None:
     logger.info(f"  - Critic LR: {config.d4pg.critic_lr}")
     logger.info(f"  - Entropy coef: {config.d4pg.entropy_coef}")
     logger.info(f"  - World model enabled: {config.world_model.enabled}")
+    logger.info(f"  - World model LR: {config.world_model.learning_rate}")
 
     logger.info("Initializing experiment...")
     experiment = ArcD4PG(config)

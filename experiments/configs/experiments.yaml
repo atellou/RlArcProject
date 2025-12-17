@@ -27,8 +27,8 @@ exploration_decaying_entropy:
 lr_conservative:
   description: "Conservative learning rates for stability"
   d4pg:
-    policy_lr: 1e-4
-    critic_lr: 1e-3
+    policy_lr: 1.0e-4
+    critic_lr: 1.0e-3
     lr_scheduler_kwargs:
       step_size: 5000
       gamma: 0.5
@@ -36,15 +36,15 @@ lr_conservative:
 lr_aggressive:
   description: "Aggressive learning rates for faster convergence"
   d4pg:
-    policy_lr: 1e-3
-    critic_lr: 1e-2
+    policy_lr: 1.0e-3
+    critic_lr: 1.0e-2
     max_grad_norm: 1.0  # Clip gradients for stability
 
 lr_warmup_decay:
   description: "Higher initial LR with scheduled decay"
   d4pg:
-    policy_lr: 5e-4
-    critic_lr: 5e-3
+    policy_lr: 5.0e-4
+    critic_lr: 5.0e-3
     lr_scheduler_kwargs:
       step_size: 2000
       gamma: 0.7
@@ -166,8 +166,8 @@ test:
 stable_baseline:
   description: "Conservative, stable training baseline"
   d4pg:
-    policy_lr: 1e-4
-    critic_lr: 1e-3
+    policy_lr: 1.0e-4
+    critic_lr: 1.0e-3
     tau: 0.001
     target_update_frequency: 20
     max_grad_norm: 1.0

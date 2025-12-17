@@ -26,8 +26,8 @@ network:
 
 
 d4pg:
-  policy_lr: 3e-4
-  critic_lr: 3e-3
+  policy_lr: 3.0e-4
+  critic_lr: 3.0e-3
   gamma: 0.99
   tau: 0.005
   lr_scheduler_kwargs: null
@@ -57,16 +57,15 @@ replay_buffer:
   beta: 0.4
 
 training:
-  max_steps_per_epoch: 1000
+  max_steps_per_epoch: 10000
   validation_epochs: 1
   validation_steps_per_epoch: 100
-  validation_epochs_frequency: 1
   validation_steps_frequency: 100
   min_train_batch_size: 2
 
 world_model:
   enabled: false
-  learning_rate: 1e-4
+  learning_rate: 1.0e-4
   lr_scheduler_kwargs: null
   imagination_horizon: 5
   imagination_ratio: 5
