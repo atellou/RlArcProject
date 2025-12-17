@@ -30,7 +30,7 @@ class PixelWiseArcStepper:
         grid_size: int,
         color_values: int,
         actor: ViTARCActor,
-        config: CudaConfig,
+        device_config: CudaConfig,
         max_penalty: float = 1.0,
         n_step_config: NStepMinVMaxConfig | None = None,
     ) -> None:
@@ -42,14 +42,14 @@ class PixelWiseArcStepper:
             grid_size (int): Size of the ARC grid.
             color_values (int): Number of possible colors.
             actor (ViTARCActor): Actor network.
-            config (dict): Configuration dictionary.
+            device_config (CudaConfig): Device configuration dictionary.
             max_penalty (float): Maximum penalty for the environment reward.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
         """
         # Initialize dataset and environment
         logger.info("Setting up dataset and environment...")
-        self.device = config["device"]
+        self.device = device_config["device"]
         self.n_step_config = (
             n_step_config if n_step_config is not None else NStepMinVMaxConfig()
         )
@@ -101,7 +101,7 @@ class PixelWiseArcStepper:
             sampler=iter(self.dataset),
             max_steps=max_steps_per_epoch,
             env_sample_reset=self._reset_env,
-            amp_enabled=config.get("amp_enabled", True),
+            amp_enabled=device_config.get("amp_enabled", True),
             on_step=self._get_on_step_rewards(),
         )
 

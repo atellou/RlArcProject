@@ -10,6 +10,7 @@ from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
+from rlarcworld.utils.device import CudaConfig
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
@@ -223,7 +224,9 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         grid_size=grid_size,
         color_values=color_values,
         actor=actor,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
+        device_config=CudaConfig(
+            device=device, amp_enabled=False, use_checkpointing=False
+        ),
         n_step_config=NStepMinVMaxConfig(
             n_steps=2,
             pixel_wise_min_v=-10,
@@ -413,7 +416,9 @@ def test_env_stepper_step_stream_from_samples(device):
         grid_size=grid_size,
         color_values=color_values,
         actor=actor,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
+        device_config=CudaConfig(
+            device=device, amp_enabled=False, use_checkpointing=False
+        ),
         n_step_config=NStepMinVMaxConfig(
             n_steps=2,
             pixel_wise_min_v=-10,

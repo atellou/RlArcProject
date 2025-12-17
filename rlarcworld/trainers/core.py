@@ -37,6 +37,7 @@ class OnStepContext:
         hyperparameters: dict,
         warmup: bool,
         buffer_warmup: float | None = None,
+        run_end: bool = False,
     ):
         """Initialize step ctx.
 
@@ -52,6 +53,7 @@ class OnStepContext:
             hyperparameters: Hyperparameters of the algorithm
             warmup: Whether the training is in warmup phase
             buffer_warmup: Buffer warmup percentage (None if not applicable)
+            run_end: Indicates whether the call is made at the end of _run call
         """
         self.epoch = epoch
         self.step_idx = step_idx
@@ -64,6 +66,7 @@ class OnStepContext:
         self.hyperparameters = hyperparameters
         self.warmup = warmup
         self.buffer_warmup = buffer_warmup
+        self.run_end = run_end
 
 
 class Trainer:
@@ -232,6 +235,16 @@ class Trainer:
         percentage = (storage_len / storage_cap) * 100.0
         return percentage, is_warmup
 
+    @property
+    def train_epoch(self) -> int:
+        """Get the current training epoch."""
+        return self._train_epoch
+
+    @property
+    def train_iteration(self) -> int:
+        """Get the current training iteration."""
+        return self._train_iteration
+
     # ---------------- Public API ----------------
     def _run(
         self,
@@ -398,12 +411,13 @@ class Trainer:
                         break
 
                     iteration += 1
+
+                    # persist iteration counter
+                    if training:
+                        self._train_iteration = iteration
                 # update stored epoch at end of epoch loop iteration
                 if training:
                     self._train_epoch += 1
-            # persist iteration counter
-            if training:
-                self._train_iteration = iteration
         except Exception as e:
             logger.exception(
                 f"Exception during training step iteration {iteration}: {e}"
@@ -436,6 +450,29 @@ class Trainer:
             raise e
         finally:
             # Restore previous modes if altered
+            ctx = OnStepContext(
+                epoch=epoch,
+                step_idx=step_idx,
+                iteration=iteration,
+                batch=batch,
+                loss_actor=loss_actor,
+                loss_critic=loss_critic,
+                td_error=td_error,
+                core=self.core,
+                hyperparameters=self.hyperparameters,
+                warmup=warmup,
+                buffer_warmup=buffer_warmup,
+                run_end=True,
+            )
+            if on_step is not None:
+                for callback_name, callback in on_step.items():
+                    logger.debug(
+                        "Calling {} on_step {}".format(
+                            "training" if training else "validation",
+                            callback_name,
+                        )
+                    )
+                    callback(ctx)
             if not training:
                 try:
                     if prev_actor_mode:

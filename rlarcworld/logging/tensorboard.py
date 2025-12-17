@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from rlarcworld.runners.core import OnStepContext, ReplayBufferProto
+from rlarcworld.trainers.core import OnStepContext, ReplayBufferProto
 
 logger = logging.getLogger(__name__)
 

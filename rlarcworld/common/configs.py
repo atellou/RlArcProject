@@ -331,15 +331,13 @@ class CheckpointConfig:
     Attributes:
         save_frequency (int): Frequency for saving checkpoints.
         checkpoint_dir (Optional[str | Path]): Directory to save checkpoints.
-        improvement_mode (Optional[str]): Mode to track for improvement
-            "train": Track training loss for improvement-based saving
-            "validation": Track validation loss for improvement-based saving
-            If None, no improvement-based saving is used.
+        improvement_checkpoint_enabled (bool): Whether to save checkpoints when
+            validation reward improves. Uses actual policy performance metrics.
     """
 
     save_frequency: int = -1
     checkpoint_dir: Optional[str | Path] = None
-    improvement_mode: Optional[str] = None
+    improvement_checkpoint_enabled: bool = False
 
 
 @dataclass
@@ -415,8 +413,4 @@ class ArcD4PGConfig:
         """Get a validated version of the configuration."""
         self.network.grid_size = self.env.grid_size
         self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
-        if self.checkpoint.improvement_mode not in {"train", "val", None}:
-            raise ValueError(
-                "checkpoint.improvement_mode must be 'train', 'val', or None"
-            )
         return self

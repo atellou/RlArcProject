@@ -10,7 +10,7 @@ from rlarcworld.logging.tensorboard import (
     TensorBoardWriterManager,
     make_tensorboard_callbacks,
 )
-from rlarcworld.runners.core import OnStepContext
+from rlarcworld.trainers.core import OnStepContext
 
 
 @pytest.fixture

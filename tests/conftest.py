@@ -17,7 +17,8 @@ from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.runners.core import Trainer
+from rlarcworld.trainers.core import Trainer
+from rlarcworld.utils.device import CudaConfig
 from tests.utils.synthetic import make_synthetic_step_on_device
 
 
@@ -123,11 +124,11 @@ def d4pg_core(actor: ViTARCActor, critic: VitARCCritic, device) -> D4PGCore:
         tau=0.005,
         n_steps=1,
         amp_enabled=False,
-        config={
-            "device": str(device),
-            "amp_enabled": False,
-            "use_checkpointing": False,
-        },
+        device_config=CudaConfig(
+            device=device,
+            amp_enabled=False,
+            use_checkpointing=False,
+        ),
     )
 
 

@@ -11,7 +11,8 @@ from torchrl.data.replay_buffers import (
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.runners.core import OnStepContext, Trainer
+from rlarcworld.trainers.core import OnStepContext, Trainer
+from rlarcworld.utils.device import CudaConfig
 from tests.utils.buffers import MiniBuffer, TrackingMiniBuffer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
@@ -352,7 +353,11 @@ def _build_simple_core(
         n_steps=1,
         amp_enabled=amp,
         max_grad_norm=max_grad_norm,
-        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
+        device_config=CudaConfig(
+            device=device,
+            amp_enabled=amp,
+            use_checkpointing=False,
+        ),
     )
     return core
 
@@ -479,12 +484,16 @@ def test_d4pg_trainer_validation_process(d4pg_core, make_synthetic_step, batch_s
     val_losses_actor, val_losses_critic = [], []
 
     def on_train_step(ctx: OnStepContext):
+        if ctx.run_end:
+            return  # Skip run_end callback for step counting
         if ctx.loss_actor is not None:
             train_losses_actor.append(ctx.loss_actor)
         if ctx.loss_critic is not None:
             train_losses_critic.append(ctx.loss_critic)
 
     def on_validation_step(ctx: OnStepContext):
+        if ctx.run_end:
+            return  # Skip run_end callback for step counting
         if ctx.loss_actor is not None:
             val_losses_actor.append(ctx.loss_actor)
         if ctx.loss_critic is not None:

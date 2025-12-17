@@ -19,7 +19,7 @@ from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
 from rlarcworld.models.actor import ViTARCActor
-from rlarcworld.runners.core import OnStepContext
+from rlarcworld.trainers.core import OnStepContext
 from rlarcworld.utils.device import CudaConfig
 from rlarcworld.utils.torch_queue import TorchQueue
 

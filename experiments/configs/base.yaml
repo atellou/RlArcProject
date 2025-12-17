@@ -75,7 +75,7 @@ world_model:
 checkpoint:
   save_frequency: -1
   checkpoint_dir: "checkpoints"
-  improvement_mode: "train"
+  improvement_checkpoint_enabled: false
 
 logging:
   tensorboard_enabled: false
