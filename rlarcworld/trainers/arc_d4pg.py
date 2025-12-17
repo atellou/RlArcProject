@@ -534,7 +534,8 @@ class ArcD4PG:
         """Run the complete training loop.
 
         Args:
-            epochs: Number of epochs to train
+            epochs: Total number of epochs to run. Resuming from a checkpoint,
+                training continues from current epoch until total epoch count reached
         """
         logger.info(f"Starting D4PG training for {epochs} epochs")
         failed = False

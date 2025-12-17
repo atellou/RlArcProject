@@ -151,8 +151,8 @@ class Trainer:
         self.priority_init_value = priority_init_value
 
         # Internal progress tracking for checkpointing
-        self._epoch: int = 0
-        self._iteration: int = 0
+        self._train_epoch: int = 0
+        self._train_iteration: int = 0
 
         if self.replay_buffer is None and self.batch_size is None:
             raise ValueError("batch_size must be provided when replay_buffer is None")
@@ -245,10 +245,11 @@ class Trainer:
         validation_steps_per_epoch: int = -1,
         validation_steps_frequency: int = -1,
     ) -> None:
-        """Run a training loop using the provided step stream and hooks.
+        """Run a batch loops using the provided step stream and hooks.
 
         Args:
-            epochs (int): Number of epochs to train for.
+            epochs (int): Total number of epochs to run. Resuming from a checkpoint,
+                training continues from current epoch until total epoch count reached.
             step_stream_factory (Callable[[], Iterator[tuple[bool, int, TensorDict]]]):
                 Factory returning an iterator that yields per-step TensorDicts
                 with keys expected by the core ('state', 'actions', 'reward',
@@ -263,9 +264,7 @@ class Trainer:
             validation_steps_frequency (int): Frequency of validation steps.
         """
         # Initialize variables for exception safety
-        epoch = -1
         step_idx = -1
-        iteration = self._iteration
         batch = None
         loss_actor = None
         loss_critic = None
@@ -273,14 +272,24 @@ class Trainer:
         # Track and set module modes for validation
         prev_actor_mode = getattr(self.core.actor, "training", True)
         prev_critic_mode = getattr(self.core.critic, "training", True)
-        if not training:
+        if training:
+            epoch = self._train_epoch
+            iteration = self._train_iteration
+            if epoch > 0 or iteration > 0:
+                logger.info(
+                    f"Resuming {self.__class__.__name__} training from epoch "
+                    f"{epoch}/{epochs} and iteration {iteration}"
+                )
+        else:
+            epoch = 0
+            iteration = 0
             try:
                 self.core.actor.eval()
                 self.core.critic.eval()
             except Exception:
                 pass
         try:
-            for epoch in range(self._epoch, self._epoch + epochs):
+            for current_epoch in range(epoch, epochs):
                 loss_actor, loss_critic, td_error = (
                     torch.tensor(0.0),
                     torch.tensor(0.0),
@@ -324,9 +333,9 @@ class Trainer:
                             effective_bs = int(self.batch_size)
 
                         if training and effective_bs < self.min_train_batch_size:
-                            logger.info(
+                            logger.debug(
                                 "Skipping rest of epoch %d due to small batch(%d < %d)",
-                                epoch,
+                                current_epoch,
                                 effective_bs,
                                 self.min_train_batch_size,
                             )
@@ -343,7 +352,7 @@ class Trainer:
                     # Create step ctx
                     buffer_warmup, warmup = self.warmup_info()
                     ctx = OnStepContext(
-                        epoch=epoch,
+                        epoch=current_epoch,
                         step_idx=step_idx,
                         iteration=iteration,
                         batch=batch,
@@ -390,16 +399,15 @@ class Trainer:
 
                     iteration += 1
                 # update stored epoch at end of epoch loop iteration
-                self._epoch = epoch + 1
+                if training:
+                    self._train_epoch += 1
             # persist iteration counter
-            self._iteration = iteration
+            if training:
+                self._train_iteration = iteration
         except Exception as e:
-            msg = f"Exception during training step iteration {iteration}: {e}"
-            buffer_warmup, warmup = self.warmup_info()
-            if warmup:
-                logger.info(f"Re-raising exception during warmup: {msg}")
-                raise
-            logger.exception(msg)
+            logger.exception(
+                f"Exception during training step iteration {iteration}: {e}"
+            )
             ctx = OnStepContext(
                 epoch=epoch,
                 step_idx=step_idx,
@@ -446,6 +454,7 @@ class Trainer:
         if self.replay_buffer is not None and self.warmup_buffer_ratio > 0:
             storage_cap = self.replay_buffer.storage.max_size
             warmup_buffer_size = int(self.warmup_buffer_ratio * storage_cap)
+            logger.info(f"The replay buffer warmup size is {warmup_buffer_size}")
             if epochs <= 0:
                 raise ValueError("epochs must be greater than 0")
             if max_steps_per_epoch == 0:
@@ -515,8 +524,8 @@ class Trainer:
         return add_schema_and_class(
             {
                 "state": {
-                    "epoch": self._epoch,
-                    "iteration": self._iteration,
+                    "epoch": self._train_epoch,
+                    "iteration": self._train_iteration,
                     "batch_size": self.batch_size,
                     "warmup_buffer_ratio": self.warmup_buffer_ratio,
                     "min_train_batch_size": self.min_train_batch_size,
@@ -533,8 +542,8 @@ class Trainer:
         if not isinstance(checkpoint, dict):
             raise ValueError("Trainer checkpoint must be a dict")
         state = checkpoint.get("state", {})
-        self._epoch = int(state.get("epoch", 0))
-        self._iteration = int(state.get("iteration", 0))
+        self._train_epoch = int(state.get("epoch", 0))
+        self._train_iteration = int(state.get("iteration", 0))
         # Optionally restore basic config
         self.batch_size = int(state.get("batch_size", self.batch_size))
         self.warmup_buffer_ratio = float(

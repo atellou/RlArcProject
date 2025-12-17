@@ -290,6 +290,8 @@ class TrainingConfig:
         max_steps_per_epoch (int): Maximum steps per epoch.
         validation_epochs (int): Number of validation epochs.
         validation_steps_per_epoch (int): Number of validation steps per epoch.
+        validation_steps_frequency (int): Frequency of validation steps.
+        min_train_batch_size (int): Minimum batch size for training.
     """
 
     max_steps_per_epoch: int = 10000
