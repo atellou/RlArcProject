@@ -84,4 +84,8 @@ logging:
 system:
   amp_enabled: true
   device: null
-  seed: 42
+
+reproducibility:
+  global_seed: null
+  dataset_seed: null
+  augmentation_seed: null

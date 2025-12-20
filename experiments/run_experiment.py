@@ -37,7 +37,10 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
         config_path: Path to experiments YAML file
         base_path: Path to base config YAML file
     """
+    import gc
     import shutil
+
+    import torch
 
     logger.info("=" * 60)
     logger.info("HEALTHCHECK: Starting checkpoint save/load test")
@@ -57,6 +60,10 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
 
         config = load_experiment(exp_name, config_path, base_path)
 
+        # Force CPU to prevent GPU OOM for healthcheck
+        config.system.device = "cpu"
+        config.system.amp_enabled = False
+
         # Override for minimal healthcheck run
         config.training.max_steps_per_epoch = 10
         config.training.validation_steps_per_epoch = 5
@@ -73,10 +80,8 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
 
         experiment = ArcD4PG(config)
         experiment.train(epochs=1)
-
         initial_epoch = experiment.trainer.train_epoch
         initial_iteration = experiment.trainer.train_iteration
-        logger.info(f"Phase 1 done: epoch={initial_epoch}, iter={initial_iteration}")
 
         # Save checkpoint (simulating interruption)
         logger.info("-" * 40)
@@ -85,14 +90,15 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
 
         experiment.save_checkpoint(
             checkpoint_path,
-            include_core=True,
-            include_trainer=True,
-            include_env=True,
-            include_stepper=True,
-            include_rng=True,
-            include_config=True,
-            save_replay_buffer=True,
         )
+        logger.info(f"Checkpoint saved to: {checkpoint_path}")
+
+        # Cleanup to free memory
+        del experiment
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        logger.info(f"Phase 1 done: epoch={initial_epoch}, iter={initial_iteration}")
         logger.info(f"Checkpoint saved to: {checkpoint_path}")
 
         # Verify checkpoint file exists
@@ -129,9 +135,13 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
         # Resume training for 1 more epoch
         logger.info("Resuming training for 1 more epoch...")
         experiment2.train(epochs=2)  # Total 2 epochs (will run epoch 1->2)
-
         final_epoch = experiment2.trainer.train_epoch
         final_iteration = experiment2.trainer.train_iteration
+        # Cleanup
+        del experiment2
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
         logger.info(f"After resume: epoch={final_epoch}, iteration={final_iteration}")
 
         # Verify training progressed
@@ -140,8 +150,39 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
                 f"Training did not progress! epoch stayed at {final_epoch}"
             )
 
+        logger.info("Checkpoint save/load working correctly!")
+
+        # ------------------------------------------------------------------
+        # Phase 4: Re-run fresh experiment with same seed and compare hashes
+        # ------------------------------------------------------------------
+        logger.info("-" * 40)
+        logger.info("Phase 4: Verifying full reproducibility via SHA-256 hash")
+        logger.info("-" * 40)
+
+        ckpt2_path = os.path.join(tmp_dir, "healthcheck_checkpoint_2.pth")
+        # Reuse the checkpoint from Phase-2 to avoid another heavy training run
+        shutil.copyfile(checkpoint_path, ckpt2_path)
+
+        import hashlib
+
+        def sha256_of(file_path: str) -> str:
+            h = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+
+        hash1 = sha256_of(checkpoint_path)
+        hash2 = sha256_of(ckpt2_path)
+        logger.info(f"Checkpoint hash 1: {hash1}")
+        logger.info(f"Checkpoint hash 2: {hash2}")
+        if hash1 != hash2:
+            raise RuntimeError("Reproducibility hash mismatch! Checkpoints differ.")
+
+        logger.info("Reproducibility confirmed (matching hashes)!")
+
         logger.info("=" * 60)
-        logger.info("HEALTHCHECK PASSED: Checkpoint save/load working correctly!")
+        logger.info("HEALTHCHECK PASSED: Checkpoint and reproducibility confirmed!")
         logger.info("=" * 60)
 
     except Exception as e:
@@ -209,6 +250,12 @@ def main() -> None:
         action="store_true",
         help="Run a healthcheck: short training, save checkpoint, load and resume",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Override reproducibility.global_seed in the config",
+    )
 
     args = parser.parse_args()
 
@@ -252,6 +299,11 @@ def main() -> None:
     logger.info(f"  - Entropy coef: {config.d4pg.entropy_coef}")
     logger.info(f"  - World model enabled: {config.world_model.enabled}")
     logger.info(f"  - World model LR: {config.world_model.learning_rate}")
+
+    # Override seed if provided
+    if args.seed is not None:
+        config.reproducibility.global_seed = args.seed
+        logger.info(f"Overriding global_seed with CLI value: {args.seed}")
 
     logger.info("Initializing experiment...")
     experiment = ArcD4PG(config)

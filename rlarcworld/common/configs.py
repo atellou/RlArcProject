@@ -355,12 +355,20 @@ class SystemConfig:
     Attributes:
         amp_enabled (bool): Whether to enable automatic mixed precision.
         device (Optional[str]): Device to use for training.
-        seed (int): Random seed.
     """
 
     amp_enabled: bool = True
     device: Optional[str] = None
-    seed: int = 42
+
+
+@dataclass
+class ReproducibilityConfig:
+    """Control global RNG seeds and determinism flags for full reproducibility."""
+
+    global_seed: int | None = None
+    dataset_seed: int | None = None
+    augmentation_seed: int | None = None
+    torch_deterministic: bool = True
 
 
 @dataclass
@@ -407,6 +415,9 @@ class ArcD4PGConfig:
     world_model: WorldModelConfig = field(default_factory=WorldModelConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    reproducibility: ReproducibilityConfig = field(
+        default_factory=ReproducibilityConfig
+    )
     system: SystemConfig = field(default_factory=SystemConfig)
 
     def get_validated_config(self) -> "ArcD4PGConfig":

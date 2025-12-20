@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import random
 from typing import Callable, Dict, List
 
 import numpy as np
@@ -168,8 +169,10 @@ class ArcDataset(Dataset):
     def __init__(
         self,
         arc_dataset_dir: str | list[str],
+        *,
         keep_in_memory: bool = False,
         transform: Callable[[dict], dict] | None = None,
+        shuffle_seed: int | None = None,
     ):
         """Creates a Torch Dataset from the ARC dataset.
 
@@ -179,10 +182,12 @@ class ArcDataset(Dataset):
                 memory.
             transform (callable, optional): Optional transform to be applied
                 on a sample.
+            shuffle_seed (int, optional): Seed for shuffling the dataset.
         """
         self.arc_dir = arc_dataset_dir
         self.keep_in_memory = keep_in_memory
         self.transform = transform
+        self._rng = random.Random(shuffle_seed) if shuffle_seed is not None else None
         self.transformed: set[tuple[str, int]] = set()
         self.load_dataset()
 
@@ -232,7 +237,12 @@ class ArcDataset(Dataset):
         else:
             raise ValueError(f"Invalid arc_dir: {self.arc_dir}")
 
-        return [f for f in iterator if f.endswith(".json")]
+        files = [f for f in iterator if f.endswith(".json")]
+        if self._rng is not None:
+            self._rng.shuffle(files)
+        else:
+            files = sorted(files)
+        return files
 
     def load_dataset(self):
         """Creates a dictionary of file location or samples from the dataset.
@@ -257,6 +267,11 @@ class ArcDataset(Dataset):
             iterator = []
             for dir_path in self.arc_dir:
                 iterator.extend(self.get_files_from_dir(dir_path))
+
+        if self._rng is not None:
+            self._rng.shuffle(iterator)
+        else:
+            iterator = sorted(iterator)
 
         if not iterator:
             raise ValueError("No files found in the specified directories.")

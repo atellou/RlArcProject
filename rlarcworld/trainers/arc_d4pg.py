@@ -31,7 +31,11 @@ from torchrl.data.replay_buffers import (
 from rlarcworld.algorithms.d4pg import D4PGCore
 
 # Re-export config classes for convenient imports
-from rlarcworld.common.configs import ArcD4PGConfig, RlArcWorldViTARCConfig
+from rlarcworld.common.configs import (
+    ArcD4PGConfig,
+    ReproducibilityConfig,
+    RlArcWorldViTARCConfig,
+)
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
@@ -76,6 +80,10 @@ class ArcD4PG:
         config = config.get_validated_config()
         self.exp_config = config
 
+        self.global_seed: int | None = None
+        if config.reproducibility.global_seed is not None:
+            self._setup_reproducibility(config=config.reproducibility)
+
         # Setup in logical order
         self._setup_system(config)
         self._setup_networks(config)
@@ -88,15 +96,30 @@ class ArcD4PG:
             warmup_buffer_ratio=config.replay_buffer.warmup_ratio,
         )
 
+    def _setup_reproducibility(self, config: ReproducibilityConfig) -> None:
+        """Reproducibility: set global seeds and deterministic flags."""
+        if not isinstance(config.global_seed, int):
+            raise ValueError("Global seed must be an integer for reproducibility")
+        self.global_seed = config.global_seed
+
+        msg = "Setting: Global seed: {}".format(self.global_seed)
+
+        # Python / NumPy / Torch seeds
+        random.seed(self.global_seed)
+        np.random.seed(self.global_seed)
+        torch.manual_seed(self.global_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(self.global_seed)
+
+        # Optional deterministic mode
+        if config.torch_deterministic:
+            msg += ", torch_deterministic: True"
+            torch.use_deterministic_algorithms(True, warn_only=False)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+
     def _setup_system(self, config: ArcD4PGConfig) -> None:
-        """Configure system settings: seed, device, and paths.
-
-        Args:
-            config: Experiment configuration
-        """
-        # Set random seed
-        torch.manual_seed(config.system.seed)
-
+        """Configure system settings: seed, device, and paths."""
         # Configure device
         if config.system.device is None:
             self.cuda_config = enable_cuda(amp_enabled=config.system.amp_enabled)
@@ -172,6 +195,17 @@ class ArcD4PG:
         Args:
             config: Experiment configuration
         """
+        # Prepare reproducibility generators / seeds
+        seed_cfg = config.reproducibility
+        ds_shuffle_seed = seed_cfg.dataset_seed or self.global_seed
+        aug_gen = None
+        if seed_cfg.augmentation_seed is not None:
+            aug_gen = torch.Generator(device="cpu").manual_seed(
+                seed_cfg.augmentation_seed
+            )
+        elif self.global_seed is not None:
+            aug_gen = torch.Generator(device="cpu").manual_seed(self.global_seed)
+
         # Create training stepper
         logger.info("Creating training stepper...")
         self.training_stepper = PixelWiseArcStepper(
@@ -181,12 +215,14 @@ class ArcD4PG:
             color_values=config.env.color_values,
             actor=self.actor,
             device_config=self.cuda_config,
+            dataset_shuffle_seed=ds_shuffle_seed,
+            augmentation_generator=aug_gen,
             max_penalty=config.env.max_penalty,
             n_step_config=config.d4pg.n_step_config,
         )
         logger.info("Training stepper created successfully")
 
-        # Create validation stepper
+        # Create validation stepper (use same seeds)
         logger.info("Creating validation stepper...")
         self.validation_stepper = PixelWiseArcStepper(
             max_steps_per_epoch=self.validation_steps_per_epoch,
@@ -195,6 +231,8 @@ class ArcD4PG:
             color_values=config.env.color_values,
             actor=self.actor,
             device_config=self.cuda_config,
+            dataset_shuffle_seed=ds_shuffle_seed,
+            augmentation_generator=aug_gen,
             max_penalty=config.env.max_penalty,
         )
         logger.info("Validation stepper created successfully")
@@ -308,7 +346,7 @@ class ArcD4PG:
             # System
             "device": str(self.device),
             "amp_enabled": cfg.system.amp_enabled,
-            "seed": cfg.system.seed,
+            "seed": cfg.reproducibility.global_seed,
         }
 
         # Add runtime world model stats if available

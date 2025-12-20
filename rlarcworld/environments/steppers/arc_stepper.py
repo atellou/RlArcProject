@@ -31,6 +31,9 @@ class PixelWiseArcStepper:
         color_values: int,
         actor: ViTARCActor,
         device_config: CudaConfig,
+        *,
+        dataset_shuffle_seed: int | None = None,
+        augmentation_generator: torch.Generator | None = None,
         max_penalty: float = 1.0,
         n_step_config: NStepMinVMaxConfig | None = None,
     ) -> None:
@@ -43,6 +46,10 @@ class PixelWiseArcStepper:
             color_values (int): Number of possible colors.
             actor (ViTARCActor): Actor network.
             device_config (CudaConfig): Device configuration dictionary.
+            dataset_shuffle_seed (int | None):
+                Seed for shuffling the dataset.
+            augmentation_generator (torch.Generator | None):
+                Generator for deterministic randomness.
             max_penalty (float): Maximum penalty for the environment reward.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
@@ -61,6 +68,7 @@ class PixelWiseArcStepper:
             color_permutation_range=(1, 12),
             augmentation_probability=0.5,  # Apply augmentations 50% of the time
             shuffle_probability=0.5,  # Shuffle examples 50% of the time
+            generator=augmentation_generator,
         )
 
         # IMPORTANT: ArcSampleTransformer must come FIRST to convert lists to tensors
@@ -77,7 +85,10 @@ class PixelWiseArcStepper:
             ]
         )
         self.dataset: ArcDataset = ArcDataset(
-            dataset, keep_in_memory=False, transform=transform
+            dataset,
+            keep_in_memory=False,
+            transform=transform,
+            shuffle_seed=dataset_shuffle_seed,
         )
 
         base_env = ArcBatchGridEnv(
