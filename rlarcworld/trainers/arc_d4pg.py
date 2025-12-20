@@ -28,29 +28,22 @@ from torchrl.data.replay_buffers import (
     TensorDictReplayBuffer,
 )
 
-# Re-export config classes for convenient imports
-from experiments.configs import (  # noqa: F401
-    ArcD4PGConfig,
-    CheckpointConfig,
-    D4PGConfig,
-    DistributionalConfig,
-    EnvConfig,
-    NetworkConfig,
-    ReplayBufferConfig,
-    SystemConfig,
-    TrainingConfig,
-    WorldModelConfig,
-)
 from rlarcworld.algorithms.d4pg import D4PGCore
+
+# Re-export config classes for convenient imports
+from rlarcworld.common.configs import (
+    ArcD4PGConfig,
+    ReproducibilityConfig,
+    RlArcWorldViTARCConfig,
+)
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
-from rlarcworld.runners.core import OnStepContext, ReplayBufferProto, Trainer
+from rlarcworld.trainers.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     resolve_load_path,
@@ -84,12 +77,50 @@ class ArcD4PG:
             **kwargs: Additional arguments passed to D4PGCore
         """
         # Store full config for reference
+        config = config.get_validated_config()
         self.exp_config = config
 
-        # Set random seed
-        torch.manual_seed(config.system.seed)
+        self.global_seed: int | None = None
+        if config.reproducibility.global_seed is not None:
+            self._setup_reproducibility(config=config.reproducibility)
 
-        # Configure device and logging
+        # Setup in logical order
+        self._setup_system(config)
+        self._setup_networks(config)
+        self._setup_steppers(config)
+        self._setup_core(config, **kwargs)
+        self._setup_trainer(
+            replay_buffer_size=config.replay_buffer.size,
+            alpha=config.replay_buffer.alpha,
+            beta=config.replay_buffer.beta,
+            warmup_buffer_ratio=config.replay_buffer.warmup_ratio,
+        )
+
+    def _setup_reproducibility(self, config: ReproducibilityConfig) -> None:
+        """Reproducibility: set global seeds and deterministic flags."""
+        if not isinstance(config.global_seed, int):
+            raise ValueError("Global seed must be an integer for reproducibility")
+        self.global_seed = config.global_seed
+
+        msg = "Setting: Global seed: {}".format(self.global_seed)
+
+        # Python / NumPy / Torch seeds
+        random.seed(self.global_seed)
+        np.random.seed(self.global_seed)
+        torch.manual_seed(self.global_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(self.global_seed)
+
+        # Optional deterministic mode
+        if config.torch_deterministic:
+            msg += ", torch_deterministic: True"
+            torch.use_deterministic_algorithms(True, warn_only=False)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+
+    def _setup_system(self, config: ArcD4PGConfig) -> None:
+        """Configure system settings: seed, device, and paths."""
+        # Configure device
         if config.system.device is None:
             self.cuda_config = enable_cuda(amp_enabled=config.system.amp_enabled)
         else:
@@ -110,74 +141,99 @@ class ArcD4PG:
 
         # Validation policies
         self.validation_epochs = config.training.validation_epochs
-        self.validation_epochs_frequency = config.training.validation_epochs_frequency
         self.validation_steps_frequency = config.training.validation_steps_frequency
 
         # Checkpoint policies
-        self.periodic_ckpt_interval = config.checkpoint.periodic_interval
-        if config.checkpoint.experiment_path is None:
-            self.experiment_path = Path(
+        self.ckpt_save_frequency = config.checkpoint.save_frequency
+        if config.checkpoint.checkpoint_dir is None:
+            self.checkpoint_dir = Path(
                 "./experiments/{}-{}/".format(
                     self.__class__.__name__,
                     datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
                 )
             )
         else:
-            self.experiment_path = Path(config.checkpoint.experiment_path)
+            self.checkpoint_dir = Path(config.checkpoint.checkpoint_dir)
 
-        logger.info(
-            "Experiment outputs will be written to: %s", self.experiment_path.resolve()
-        )
+        logger.info("Checkpoints will be saved to: %s", self.checkpoint_dir.resolve())
 
-        # Initialize networks
+    def _setup_networks(self, config: ArcD4PGConfig) -> None:
+        """Initialize actor and critic networks.
+
+        Args:
+            config: Experiment configuration
+        """
         logger.info("Initializing actor and critic networks...")
-        logger.info("Creating actor network...")
 
         # Use config's rl_vit_arc_config or create one with best settings
-        if config.network.rl_vit_arc_config is not None:
-            rl_vit_arc_config = config.network.rl_vit_arc_config
-        else:
-            rl_vit_arc_config = RlArcWorldViTARCConfig.best_config(config.env.grid_size)
+        self.rl_vit_arc_config = config.network or RlArcWorldViTARCConfig.best_config(
+            config.env.grid_size
+        )
 
+        logger.info("Creating actor network...")
         self.actor = ViTARCActor(
             color_values=config.env.color_values,
-            rl_vit_arc_config=rl_vit_arc_config,
+            rl_vit_arc_config=self.rl_vit_arc_config,
+            device_config=self.cuda_config,
         )
         logger.info("Actor network created successfully")
 
         logger.info("Creating critic network...")
         self.critic = VitARCCritic(
             color_values=config.env.color_values,
-            rl_vit_arc_config=rl_vit_arc_config,
+            rl_vit_arc_config=self.rl_vit_arc_config,
             num_atoms=config.distributional.num_atoms,
             v_min=config.distributional.v_min,
             v_max=config.distributional.v_max,
-            config=self.cuda_config,
+            device_config=self.cuda_config,
         )
         logger.info("Critic network created successfully")
+
+    def _setup_steppers(self, config: ArcD4PGConfig) -> None:
+        """Create training, validation, and world model steppers.
+
+        Args:
+            config: Experiment configuration
+        """
+        # Prepare reproducibility generators / seeds
+        seed_cfg = config.reproducibility
+        ds_shuffle_seed = seed_cfg.dataset_seed or self.global_seed
+        aug_gen = None
+        if seed_cfg.augmentation_seed is not None:
+            aug_gen = torch.Generator(device="cpu").manual_seed(
+                seed_cfg.augmentation_seed
+            )
+        elif self.global_seed is not None:
+            aug_gen = torch.Generator(device="cpu").manual_seed(self.global_seed)
 
         # Create training stepper
         logger.info("Creating training stepper...")
         self.training_stepper = PixelWiseArcStepper(
             max_steps_per_epoch=self.max_steps_per_epoch,
-            dataset_path=config.dataset_path,
+            dataset=config.dataset,
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
             actor=self.actor,
-            config=self.cuda_config,
+            device_config=self.cuda_config,
+            dataset_shuffle_seed=ds_shuffle_seed,
+            augmentation_generator=aug_gen,
+            max_penalty=config.env.max_penalty,
             n_step_config=config.d4pg.n_step_config,
         )
         logger.info("Training stepper created successfully")
 
-        # Create validation stepper
+        # Create validation stepper (use same seeds)
         logger.info("Creating validation stepper...")
         self.validation_stepper = PixelWiseArcStepper(
             max_steps_per_epoch=self.validation_steps_per_epoch,
-            dataset_path=config.dataset_path,
+            dataset=config.dataset,
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
             actor=self.actor,
-            config=self.cuda_config,
+            device_config=self.cuda_config,
+            dataset_shuffle_seed=ds_shuffle_seed,
+            augmentation_generator=aug_gen,
+            max_penalty=config.env.max_penalty,
         )
         logger.info("Validation stepper created successfully")
 
@@ -188,16 +244,17 @@ class ArcD4PG:
             logger.info("Creating world model stepper...")
             reward_model = RewardWorldModel(
                 color_values=config.env.color_values,
-                rl_vit_arc_config=rl_vit_arc_config,
-                config=self.cuda_config,
+                rl_vit_arc_config=self.rl_vit_arc_config,
+                device_config=self.cuda_config,
             )
             self.world_model_stepper = ArcWorldModelStepper(
                 grid_size=config.env.grid_size,
                 color_values=config.env.color_values,
                 actor=self.actor,
-                config=self.cuda_config,
+                device_config=self.cuda_config,
                 reward_model=reward_model,
                 reward_model_lr=config.world_model.learning_rate,
+                lr_scheduler_kwargs=config.world_model.lr_scheduler_kwargs,
                 step_horizon=config.world_model.imagination_horizon,
                 n_step_config=config.d4pg.n_step_config,
                 gamma=config.d4pg.gamma,
@@ -207,7 +264,13 @@ class ArcD4PG:
             )
             logger.info("World model stepper created successfully")
 
-        # Initialize D4PG core
+    def _setup_core(self, config: ArcD4PGConfig, **kwargs) -> None:
+        """Initialize the D4PG algorithm core.
+
+        Args:
+            config: Experiment configuration
+            **kwargs: Additional arguments passed to D4PGCore
+        """
         logger.info("Initializing D4PG algorithm core...")
         self.d4pg_core = D4PGCore(
             actor=self.actor,
@@ -216,49 +279,77 @@ class ArcD4PG:
             critic_lr=config.d4pg.critic_lr,
             gamma=config.d4pg.gamma,
             tau=config.d4pg.tau,
+            lr_scheduler_kwargs=config.d4pg.lr_scheduler_kwargs,
             n_steps=config.d4pg.n_step_config.n_steps,
-            config=self.cuda_config,
+            device_config=self.cuda_config,
             amp_enabled=config.system.amp_enabled,
+            carsm=config.d4pg.carsm,
+            entropy_coef=config.d4pg.entropy_coef,
+            entropy_coef_decay=config.d4pg.entropy_coef_decay,
+            target_update_frequency=config.d4pg.target_update_frequency,
+            max_grad_norm=config.d4pg.max_grad_norm,
+            compute_td_error=config.d4pg.compute_td_error,
             **kwargs,
         )
 
-        # Initialize trainer with callbacks
-        self._setup_trainer(
-            replay_buffer_size=config.replay_buffer.size,
-            alpha=config.replay_buffer.alpha,
-            beta=config.replay_buffer.beta,
-            warmup_buffer_ratio=config.replay_buffer.warmup_ratio,
-        )
+    def _get_hparams(self) -> dict:
+        """Get hyperparameters from stored config for logging/checkpointing.
 
-    def _get_hparams(self):
+        Returns:
+            Dictionary of hyperparameters sourced from exp_config.
+        """
+        cfg = self.exp_config
+        d4pg = cfg.d4pg
+        net = cfg.network
+        wm = cfg.world_model
+
         hparams = {
-            "grid_size": self.grid_size,
-            "color_values": self.color_values,
-            "batch_size": self.batch_size,
-            "max_steps_per_epoch": self.max_steps_per_epoch,
-            "validation_steps_per_epoch": self.validation_steps_per_epoch,
-            "device": self.device,
-            "use_world_model": self.use_world_model,
+            # Environment
+            "grid_size": cfg.env.grid_size,
+            "color_values": cfg.env.color_values,
+            "max_penalty": cfg.env.max_penalty,
+            "batch_size": cfg.env.batch_size,
+            # Training
+            "max_steps_per_epoch": cfg.training.max_steps_per_epoch,
+            "validation_steps_per_epoch": cfg.training.validation_steps_per_epoch,
+            # D4PG
+            "policy_lr": d4pg.policy_lr,
+            "critic_lr": d4pg.critic_lr,
+            "gamma": d4pg.gamma,
+            "tau": d4pg.tau,
+            "n_steps": d4pg.n_step_config.n_steps,
+            "entropy_coef": d4pg.entropy_coef,
+            "entropy_coef_decay": d4pg.entropy_coef_decay,
+            "carsm": d4pg.carsm,
+            "target_update_frequency": d4pg.target_update_frequency,
+            "max_grad_norm": d4pg.max_grad_norm,
+            # Distributional
+            "num_atoms": cfg.distributional.num_atoms,
+            "v_min_pixel_wise": cfg.distributional.v_min.get("pixel_wise"),
+            "v_max_pixel_wise": cfg.distributional.v_max.get("pixel_wise"),
+            # Network
+            "vitarc_d_model": net.d_model,
+            "vitarc_d_ff": net.d_ff,
+            "vitarc_num_layers": net.num_layers,
+            "vitarc_num_heads": net.num_heads,
+            "vitarc_use_ope": net.use_ope,
+            "vitarc_use_index_grid": net.use_index_grid,
+            "vitarc_use_temporal": net.use_temporal,
+            "vitarc_use_examples": net.use_examples,
+            "vitarc_ape_type": net.ape_type,
+            "vitarc_rpe_type": net.rpe_type,
+            # World model
+            "world_model_enabled": wm.enabled,
+            "world_model_lr": wm.learning_rate if wm.enabled else None,
+            "imagination_horizon": wm.imagination_horizon if wm.enabled else None,
+            "imagination_ratio": wm.imagination_ratio if wm.enabled else None,
+            # System
+            "device": str(self.device),
+            "amp_enabled": cfg.system.amp_enabled,
+            "seed": cfg.reproducibility.global_seed,
         }
-        # trainer hyperparameters dict is nested; flatten selected
 
-        hp = self.trainer.hyperparameters
-        if isinstance(hp, dict):
-            # core hp is a property on trainer, not nested
-            core_hp = hp.get("core", {}) if isinstance(hp.get("core"), dict) else {}
-            hparams.update(
-                {
-                    "t0_actor_lr": core_hp.get("t0_actor_lr", None),
-                    "t0_critic_lr": core_hp.get("t0_critic_lr", None),
-                    "actor_lr": core_hp.get("actor_lr", None),
-                    "critic_lr": core_hp.get("critic_lr", None),
-                    "gamma": core_hp.get("gamma", None),
-                    "tau": core_hp.get("tau", None),
-                    "entropy_coef": core_hp.get("entropy_coef", None),
-                }
-            )
-
-        # Add world model hparams if enabled
+        # Add runtime world model stats if available
         if isinstance(self.world_model_stepper, ArcWorldModelStepper):
             hparams["imagination_count"] = self.world_model_stepper.imagination_count
 
@@ -300,14 +391,18 @@ class ArcD4PG:
             replay_buffer_update_priority=self._replay_buffer_update_priority,
             warmup_buffer_ratio=warmup_buffer_ratio,
             on_train_step=on_step_callbacks,
+            on_validation_step=self._on_validation_callbacks(),
             device=self.device,
             min_train_batch_size=self.min_train_batch_size,
         )
 
         # Attach TensorBoard callbacks (train and validation)
         try:
+            if not self.exp_config.logging.tensorboard_enabled:
+                logger.info("TensorBoard disabled in config, skipping setup")
+                return
             self.tb_manager, tb_train_cb, tb_val_cb = make_tensorboard_callbacks(
-                self.experiment_path,
+                self.checkpoint_dir,
                 replay_buffer=self.replay_buffer,
                 warmup_buffer_ratio=warmup_buffer_ratio,
             )
@@ -358,6 +453,25 @@ class ArcD4PG:
                 info["index"], td_error.get(RewardKeys.PIXEL_WISE.value)
             )
 
+    def _on_validation_callbacks(
+        self,
+    ) -> OrderedDict[str, Callable[[OnStepContext], Any]]:
+        """Build validation step callbacks.
+
+        Returns:
+            Dictionary of callbacks for validation steps
+        """
+        callbacks: OrderedDict[str, Callable[[OnStepContext], Any]] = OrderedDict()
+
+        if self.exp_config.checkpoint.improvement_checkpoint_enabled:
+            logger.info("Validation improvement checkpoint enabled")
+            # Initialize tracking for validation-based improvement
+            self._best_validation_reward: float = float("-inf")
+            self._validation_reward_accumulator: list[float] = []
+            callbacks["improvement_ckpt"] = self._validation_improvement_checkpoint
+
+        return callbacks
+
     def _on_train_callbacks(
         self,
     ) -> OrderedDict[str, Callable[[OnStepContext], Any]]:
@@ -366,18 +480,15 @@ class ArcD4PG:
         Returns:
             Dictionary of callbacks for training steps
         """
-        # Track best (lower is better) actor/critic losses for improvement checkpoints
-        self.best_loss_actor: torch.Tensor = torch.tensor(float("inf"))
-        self.best_loss_critic: torch.Tensor = torch.tensor(float("inf"))
-
         callbacks: OrderedDict[str, Callable[[OnStepContext], Any]] = OrderedDict(
-            {
-                "core_step": self.d4pg_core.on_step,
-                "logging": self._log_step,
-                "periodic_ckpt": self._periodic_checkpoint,
-                "improvement_ckpt": self._improvement_checkpoint,
-            }
+            {"core_step": self.d4pg_core.on_step, "logging": self._log_step}
         )
+
+        if self.ckpt_save_frequency > 0:
+            logger.info(
+                f"Periodic checkpoint enabled every {self.ckpt_save_frequency} steps"
+            )
+            callbacks["periodic_ckpt"] = self._periodic_checkpoint
 
         # Add world model callback if enabled
         if isinstance(self.world_model_stepper, ArcWorldModelStepper):
@@ -391,37 +502,50 @@ class ArcD4PG:
         Args:
             ctx: Step ctx containing training information
         """
-        if ctx.iteration % 100 == 0 and ctx.loss_actor is not None:
-            msg = (
-                f"Epoch {ctx.epoch}, Step {ctx.step_idx}, "
-                f"Iteration {ctx.iteration}: "
-                f"Actor Loss: {ctx.loss_actor:.4f}, "
-                f"Critic Loss: {ctx.loss_critic:.4f}"
+        if ctx.iteration % self.exp_config.logging.log_frequency == 0:
+            msg = f"Epoch {ctx.epoch}, Step {ctx.step_idx}, " + (
+                f"Buffer Warmup: {ctx.buffer_warmup:.1f}%, "
+                if ctx.buffer_warmup is not None
+                else ""
             )
-            # Add world model metrics if enabled
-            if isinstance(self.world_model_stepper, ArcWorldModelStepper):
-                wm_losses = self.world_model_stepper.get_average_model_losses()
-                if wm_losses:
-                    wm_str = ", ".join(f"{k}: {v:.4f}" for k, v in wm_losses.items())
-                    msg += f", RWM Loss: [{wm_str}]"
-                msg += f", Imaginations: {self.world_model_stepper.imagination_count}"
+            if ctx.warmup:
+                msg += " (Warmup), "
+            if ctx.loss_actor is not None:
+                msg += (
+                    f"Iteration {ctx.iteration}: "
+                    f"Actor Loss: {ctx.loss_actor:.4f}, "
+                    f"Critic Loss: {ctx.loss_critic:.4f}"
+                )
+                # Add world model metrics if enabled
+                if isinstance(self.world_model_stepper, ArcWorldModelStepper):
+                    wm_losses = self.world_model_stepper.get_average_model_losses()
+                    if wm_losses:
+                        wm_str = ", ".join(
+                            f"{k}: {v:.4f}" for k, v in wm_losses.items()
+                        )
+                        msg += f", RWM Loss: [{wm_str}]"
+                    msg += (
+                        f", Imaginations: {self.world_model_stepper.imagination_count}"
+                    )
             logger.info(msg)
 
     def _periodic_checkpoint(self, ctx: OnStepContext):
         """Periodic lightweight checkpoint: core + trainer + config + provenance.
 
-        This runs frequently (every self.periodic_ckpt_interval steps) and avoids
+        This runs frequently (every self.save_frequency steps) and avoids
         saving large components such as environment, stepper and replay buffer.
 
         Args:
             ctx: Step ctx containing training information
         """
-        if self.periodic_ckpt_interval <= 0:
-            return
-        if ctx.iteration <= 0 or ctx.iteration % self.periodic_ckpt_interval != 0:
+        if (
+            ctx.warmup
+            or ctx.iteration <= 0
+            or ctx.iteration % self.ckpt_save_frequency != 0
+        ):
             return
         fname = os.path.join(
-            self.experiment_path,
+            self.checkpoint_dir,
             "checkpoints/periodic/d4pg_cp-per_i_{:06d}.pth".format(ctx.iteration),
         )
         # Save minimal components for fast, small checkpoint files
@@ -437,48 +561,86 @@ class ArcD4PG:
             save_replay_buffer=False,
         )
 
-    def _improvement_checkpoint(self, ctx: OnStepContext):
-        """Save core-only checkpoint when losses improve.
+    def _validation_improvement_checkpoint(self, ctx: OnStepContext):
+        """Save checkpoint when validation reward improves.
 
-        Lower losses are better. We checkpoint the core networks and optimizers
-        only, to capture the best model so far with minimal size.
+        Accumulates rewards during validation run and saves checkpoint at run_end
+        if mean reward exceeds previous best. Uses actual policy performance
+        rather than loss values.
 
         Args:
-            ctx: Step ctx containing training information
+            ctx: Step ctx containing validation information
         """
-        if ctx.loss_actor is None or ctx.loss_critic is None:
+        # Accumulate rewards during validation
+        if ctx.batch is not None:
+            # Extract reward from batch - prefer n-step reward if available
+            reward_key = (
+                RewardKeys.PIXEL_WISE_N_REWARD.value
+                if RewardKeys.PIXEL_WISE_N_REWARD.value in ctx.batch.keys()
+                else RewardKeys.PIXEL_WISE.value
+            )
+            if reward_key in ctx.batch.keys():
+                reward = ctx.batch[reward_key].mean().item()
+                self._validation_reward_accumulator.append(reward)
+
+        # Only checkpoint at end of validation run
+        if not ctx.run_end:
             return
-        improved = False
-        if ctx.loss_actor.item() < self.best_loss_actor:
-            self.best_loss_actor = ctx.loss_actor.item()
-            improved = True
-        if ctx.loss_critic.item() < self.best_loss_critic:
-            self.best_loss_critic = ctx.loss_critic.item()
-            improved = True
-        if not improved:
+
+        if not self._validation_reward_accumulator:
+            logger.debug("No validation rewards accumulated, skipping checkpoint")
             return
-        fname = os.path.join(
-            self.experiment_path,
-            "checkpoints/best/d4pg_cp-best_i_{:06d}-la_{:.4f}-lc_{:.4f}.pth".format(
-                int(ctx.iteration),
-                ctx.loss_actor.item(),
-                ctx.loss_critic.item(),
-            ),
+
+        mean_reward = sum(self._validation_reward_accumulator) / len(
+            self._validation_reward_accumulator
         )
-        # Core-only save for best improvements
+        self._validation_reward_accumulator.clear()  # Reset for next validation
+
+        if mean_reward <= self._best_validation_reward:
+            logger.debug(
+                f"Validation reward {mean_reward:.4f} did not improve "
+                f"over best {self._best_validation_reward:.4f}"
+            )
+            return
+
+        self._best_validation_reward = mean_reward
+        fname = os.path.join(
+            self.checkpoint_dir,
+            f"checkpoints/best/validation/d4pg_cp-best_e_{self.trainer.train_epoch:04d}_i_{self.trainer.train_iteration:06d}"
+            f"-reward_{mean_reward:.4f}.pth",
+        )
         try:
             self.d4pg_core.save_checkpoint(path=fname)
-            logger.info("Saved improvement core checkpoint: %s", fname)
+            logger.info(
+                f"Saved validation improvement checkpoint: {fname} "
+                f"(reward: {mean_reward:.4f})"
+            )
         except Exception as e:
             logger.warning("Failed to save improvement checkpoint %s: %s", fname, e)
 
     def train(self, epochs: int = 10) -> None:
         """Run the complete training loop.
 
+        This method is cloud-friendly: the `epochs` parameter represents the
+        **total desired epochs**, not additional epochs to run. When resuming
+        from a checkpoint, training continues from the saved epoch until the
+        total epoch count is reached.
+
+        Example:
+            - Fresh start with epochs=100: runs epochs 0-99
+            - Resume at epoch 50 with epochs=100: runs epochs 50-99
+            - Resume at epoch 50 with epochs=50: exits immediately (already done)
+
         Args:
-            epochs: Number of epochs to train
+            epochs: Total number of epochs to complete. If resuming from a
+                checkpoint where current_epoch >= epochs, training exits early.
         """
         logger.info(f"Starting D4PG training for {epochs} epochs")
+
+        # Ensure networks are in train mode
+        self.actor.train()
+        self.critic.train()
+
         failed = False
         try:
             assert self.trainer is not None
@@ -487,20 +649,24 @@ class ArcD4PG:
                 max_steps_per_epoch=self.max_steps_per_epoch,
                 validation_epochs=self.validation_epochs,
                 validation_steps_per_epoch=self.validation_steps_per_epoch,
-                validation_epochs_frequency=self.validation_epochs_frequency,
                 validation_steps_frequency=self.validation_steps_frequency,
             )
             logger.info("Training completed successfully")
-
-            self.tb_manager.log_hparams(self._get_hparams())
+            if hasattr(self, "tb_manager") and self.tb_manager is not None:
+                self.tb_manager.log_hparams(self._get_hparams())
         except Exception as e:
             logger.error(f"Training failed with error: {e}")
             failed = True
             raise
         finally:
+            _buffer_warmup, warmup = self.trainer.warmup_info()
+            if warmup:
+                logger.warning("Skipping final checkpoint during warmup period")
+                return
+            logger.info("Saving final checkpoint...")
             self.save_checkpoint(
                 os.path.join(
-                    self.experiment_path,
+                    self.checkpoint_dir,
                     "checkpoints/{}/d4pg_cp-failed-{}.pth".format(
                         "failure" if failed else "success",
                         datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
@@ -580,26 +746,8 @@ class ArcD4PG:
             else None
         )
 
-        # Config snapshot and provenance
-        config = (
-            {
-                "grid_size": self.grid_size,
-                "color_values": self.color_values,
-                "batch_size": self.batch_size,
-                "n_steps": getattr(self, "n_steps", None),
-                "gamma": getattr(self, "gamma", None),
-                "tau": getattr(self, "tau", None),
-                "policy_lr": getattr(self, "policy_lr", None),
-                "critic_lr": getattr(self, "critic_lr", None),
-                "device": self.device,
-                "amp_enabled": getattr(self, "amp_enabled", True),
-                "seed": getattr(self, "seed", None),
-                "dataset_path": getattr(self, "dataset_path", None),
-                "use_world_model": self.use_world_model,
-            }
-            if include_config
-            else None
-        )
+        # Config snapshot from exp_config (source of truth)
+        config = self._get_hparams() if include_config else None
 
         provenance = (
             {

@@ -12,7 +12,7 @@ class CudaConfig(TypedDict):
     """Typed configuration returned by ``enable_cuda``.
 
     Keys:
-    - ``amp_enabled``: whether AMP should be enabled
+    - ``amp_enabled``: whether Automatic Mixed Precision should be enabled
     - ``use_checkpointing``: whether gradient checkpointing should be enabled
     - ``device``: selected device string ("cuda" or "cpu")
     """
@@ -28,10 +28,12 @@ def enable_cuda(
     """Configures CUDA settings for AMP and gradient checkpointing.
 
     Args:
-        amp_enabled (bool, optional): Flag to indicate whether to use AMP.
+        amp_enabled (bool, optional):
+            Flag to indicate whether to use Automatic Mixed Precision.
             Defaults to True.
-        use_checkpointing (bool, optional): Flag to indicate whether to use
-            gradient checkpointing. Defaults to False.
+        use_checkpointing (bool, optional):
+            Flag to indicate whether to use gradient checkpointing.
+            Defaults to False.
 
     Returns:
         CudaConfig: Configuration with keys 'amp_enabled', 'use_checkpointing',

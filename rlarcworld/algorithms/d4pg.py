@@ -11,7 +11,7 @@ from tensordict import TensorDict
 
 from rlarcworld.algorithms.distributions import categorical_projection
 from rlarcworld.common.enums import RewardKeys
-from rlarcworld.runners.core import OnStepContext
+from rlarcworld.trainers.core import OnStepContext
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
     assert_expected_class,
@@ -54,7 +54,7 @@ class D4PGCore:
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
         target_update_frequency: int = 10,
-        config: CudaConfig | None = None,
+        device_config: CudaConfig | None = None,
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
     ) -> None:
@@ -78,8 +78,8 @@ class D4PGCore:
                 0.0.
             entropy_coef_decay (float, optional): Entropy coefficient decay.
                 Defaults to 1.0.
-            config (Optional[CudaConfig], optional): Configuration dictionary.
-                Defaults to None.
+            device_config (Optional[CudaConfig], optional): Device configuration
+                dictionary. Defaults to None.
             max_grad_norm (float, optional): Maximum gradient norm. Defaults to
                 0.0.
             amp_enabled (bool, optional): Whether to use automatic mixed
@@ -93,8 +93,12 @@ class D4PGCore:
         assert entropy_coef_decay >= 0, "Entropy coefficient decay must be non-negative"
 
         # Config/device/AMP
-        self.config = enable_cuda(amp_enabled=amp_enabled) if config is None else config
-        self.device = self.config["device"]
+        self.device_config = (
+            enable_cuda(amp_enabled=amp_enabled)
+            if device_config is None
+            else device_config
+        )
+        self.device = self.device_config["device"]
         self.amp_scaler = AmpScaler(amp_enabled=amp_enabled, device=self.device)
 
         # Hyperparameters

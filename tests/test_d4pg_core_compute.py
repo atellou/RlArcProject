@@ -6,11 +6,10 @@ import torch
 from tensordict import TensorDict
 
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.common.enums import StateKeys
+from rlarcworld.common.configs import RlArcWorldViTARCConfig
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
-from rlarcworld.utils.device import enable_cuda
+from rlarcworld.utils.device import CudaConfig, enable_cuda
 from rlarcworld.utils.logging_utils import configure_logger
 
 # Configure logger for test session
@@ -45,16 +44,15 @@ def core_setup(request):
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     actor = ViTARCActor(
         color_values=color_values,
         rl_vit_arc_config=actor_config,
-        config={
-            "device": str(device),
-            "amp_enabled": config["amp_enabled"],
-            "use_checkpointing": False,
-        },
+        device_config=CudaConfig(
+            device=device,
+            amp_enabled=config["amp_enabled"],
+            use_checkpointing=False,
+        ),
     ).to(device)
     actor.eval()
 
@@ -67,11 +65,11 @@ def core_setup(request):
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
-        config={
-            "device": str(device),
-            "amp_enabled": config["amp_enabled"],
-            "use_checkpointing": False,
-        },
+        device_config=CudaConfig(
+            device=device,
+            amp_enabled=config["amp_enabled"],
+            use_checkpointing=False,
+        ),
     )
     critic.eval()
     # Ensure critic.z_atoms lives on the same device
@@ -88,7 +86,7 @@ def core_setup(request):
         entropy_coef_decay=1.0,
         max_grad_norm=0.0,
         amp_enabled=config["amp_enabled"],
-        config=config,
+        device_config=config,
     )
 
     # Create synthetic batch
@@ -165,11 +163,11 @@ def build_core(grid_size: int = 12, color_values: int = 7) -> D4PGCore:
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
-        config={
-            "device": str(device),
-            "amp_enabled": config["amp_enabled"],
-            "use_checkpointing": False,
-        },
+        device_config=CudaConfig(
+            device=device,
+            amp_enabled=config["amp_enabled"],
+            use_checkpointing=False,
+        ),
     ).to(device)
     critic.eval()
     critic.z_atoms = critic.z_atoms.to(device)
@@ -185,7 +183,7 @@ def build_core(grid_size: int = 12, color_values: int = 7) -> D4PGCore:
         entropy_coef_decay=1.0,
         max_grad_norm=0.0,
         amp_enabled=config["amp_enabled"],
-        config=config,
+        device_config=config,
     )
     return core
 

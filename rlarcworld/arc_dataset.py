@@ -3,11 +3,11 @@
 import json
 import logging
 import os
+import random
 from typing import Callable, Dict, List
 
 import numpy as np
 import torch
-from google.cloud import storage
 from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
@@ -97,15 +97,18 @@ class ArcSampleTransformer:
             (Examples, Stages, Grid Height, Grid Width).
         """
         logger.debug("Concat examples...")
-        return torch.cat(
-            [
-                self.concat_unsqueeze(
-                    self.pad_to_size(torch.as_tensor(example["input"])),
-                    self.pad_to_size(torch.as_tensor(example["output"])),
-                ).unsqueeze(0)
-                for example in train_examples
-            ],
-            dim=0,
+        return (
+            torch.cat(
+                [
+                    self.concat_unsqueeze(
+                        self.pad_to_size(torch.as_tensor(example["input"])),
+                        self.pad_to_size(torch.as_tensor(example["output"])),
+                    ).unsqueeze(0)
+                    for example in train_examples
+                ],
+                dim=0,
+            )
+            + self.zero_based_correction
         )
 
     def __call__(self, sample: dict) -> dict:
@@ -165,10 +168,11 @@ class ArcDataset(Dataset):
 
     def __init__(
         self,
-        arc_dataset_dir: str,
+        arc_dataset_dir: str | list[str],
+        *,
         keep_in_memory: bool = False,
         transform: Callable[[dict], dict] | None = None,
-        gcs_bucket_name: str | None = None,
+        shuffle_seed: int | None = None,
     ):
         """Creates a Torch Dataset from the ARC dataset.
 
@@ -178,24 +182,13 @@ class ArcDataset(Dataset):
                 memory.
             transform (callable, optional): Optional transform to be applied
                 on a sample.
-            gcs_bucket_name (string, optional): GCS bucket name.
+            shuffle_seed (int, optional): Seed for shuffling the dataset.
         """
-        if arc_dataset_dir.startswith("gs://"):
-            arc_dataset_dir = arc_dataset_dir.split("gs://")[-1]
-            parts = arc_dataset_dir.split("/")
-            gcs_bucket_name = parts[0]
-            arc_dataset_dir = "/".join(parts[1:])
-
         self.arc_dir = arc_dataset_dir
         self.keep_in_memory = keep_in_memory
         self.transform = transform
+        self._rng = random.Random(shuffle_seed) if shuffle_seed is not None else None
         self.transformed: set[tuple[str, int]] = set()
-        self.gcs_bucket_name = gcs_bucket_name
-        if self.gcs_bucket_name is not None:
-            self.storage_client = storage.Client(os.environ["ML_PROJECT_ID"])
-            self.bucket = self.storage_client.bucket(self.gcs_bucket_name)
-        else:
-            self.bucket = None
         self.load_dataset()
 
     def open_file(self, file_key: str, test_index: int | None = None) -> dict:
@@ -210,13 +203,8 @@ class ArcDataset(Dataset):
         """
         logger.debug(f"Open file: {file_key}")
 
-        if self.bucket is not None:
-            blob = self.bucket.blob(file_key)
-            file_contents = blob.download_as_string()
-            sample = json.loads(file_contents)
-        else:
-            with open(file_key) as file:
-                sample = json.load(file)
+        with open(file_key) as file:
+            sample = json.load(file)
         if test_index is not None:
             sample["test"] = {
                 "input": torch.as_tensor(sample["test"][test_index]["input"]),
@@ -239,6 +227,23 @@ class ArcDataset(Dataset):
         ]
         return {"train": sample["train"], "test": sample["test"]}
 
+    def get_files_from_dir(self, dir_path: str) -> list[str]:
+        """Get all JSON files from a directory."""
+        iterator = []
+        if os.path.isfile(dir_path):
+            iterator = [dir_path]
+        elif os.path.isdir(dir_path):
+            iterator = [os.path.join(dir_path, f) for f in os.listdir(dir_path)]
+        else:
+            raise ValueError(f"Invalid arc_dir: {self.arc_dir}")
+
+        files = [f for f in iterator if f.endswith(".json")]
+        if self._rng is not None:
+            self._rng.shuffle(files)
+        else:
+            files = sorted(files)
+        return files
+
     def load_dataset(self):
         """Creates a dictionary of file location or samples from the dataset.
 
@@ -254,17 +259,22 @@ class ArcDataset(Dataset):
         Returns:
             None
         """
-        # Get training file indexes
-        logger.debug("Load Dataset")
-        if self.gcs_bucket_name is not None:
-            iterator = map(
-                lambda blob: blob.name, self.bucket.list_blobs(prefix=self.arc_dir)
-            )
+        if isinstance(self.arc_dir, str):
+            logger.info("Load Dataset from %s", self.arc_dir)
+            iterator = self.get_files_from_dir(self.arc_dir)
         else:
-            iterator = map(
-                lambda f: os.path.join(self.arc_dir, f), os.listdir(self.arc_dir)
-            )
-        iterator = filter(lambda f: f.endswith(".json"), iterator)
+            logger.info("Loading dataset from multiple directories")
+            iterator = []
+            for dir_path in self.arc_dir:
+                iterator.extend(self.get_files_from_dir(dir_path))
+
+        if self._rng is not None:
+            self._rng.shuffle(iterator)
+        else:
+            iterator = sorted(iterator)
+
+        if not iterator:
+            raise ValueError("No files found in the specified directories.")
 
         self.samples = {}
         for i, file in enumerate(iterator):
@@ -276,6 +286,10 @@ class ArcDataset(Dataset):
                 else:
                     self.samples[key] = file
         self.file_ids = list(self.samples.keys())
+        logger.info(
+            f"Loaded{' IN MEMORY ' if self.keep_in_memory else ' LAZY '}dataset "
+            f"with {len(self.samples)} samples from {len(iterator)} files"
+        )
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
@@ -290,7 +304,6 @@ class ArcDataset(Dataset):
         Returns:
             dict: The transformed sample.
         """
-        logger.debug(f"Sample index: {idx}")
         if isinstance(idx, torch.Tensor):
             idx = int(idx.item())
 
@@ -305,7 +318,6 @@ class ArcDataset(Dataset):
         sample.setdefault("examples", sample.pop("train", None))
         sample.setdefault("task", sample.pop("test", None))
         if self.transform is not None:
-            logger.debug("Transform data")
             if self.keep_in_memory and file_id not in self.transformed:
                 sample = self.transform(sample)
                 self.transformed.add(file_id)

@@ -24,6 +24,8 @@ def test_torch_queue_init():
     if torch.cuda.is_available():
         td_cuda = td.to("cuda")
         assert isinstance(td_cuda, TensorDict)
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 0
 
 
 def test_torch_queue_push():
@@ -32,6 +34,8 @@ def test_torch_queue_push():
     queue = queue.push(item)
     assert queue.shape[queue.queue_dim] == 6
     assert queue[-1] == item
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 0
 
 
 def test_torch_queue_push_multiple_dimensions():
@@ -40,6 +44,8 @@ def test_torch_queue_push_multiple_dimensions():
     queue = queue.push(item)
     assert queue.shape[queue.queue_dim] == 6
     torch.testing.assert_close(queue[:, -1], item.squeeze(1))
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 1
 
 
 def test_torch_queue_pop():
@@ -49,6 +55,8 @@ def test_torch_queue_pop():
     assert queue.shape[queue.queue_dim] == 9
     assert queue[-1] == item[-1]
     assert popped == item[0]
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 0
 
 
 def test_torch_queue_indexing():
@@ -63,6 +71,8 @@ def test_torch_queue_indexing():
     assert not isinstance(queue[0], TorchQueue)
     assert not isinstance(queue[-1], TorchQueue)
     assert not isinstance(queue[5], TorchQueue)
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 0
 
 
 def test_torch_queue_multiple_push():
@@ -73,6 +83,9 @@ def test_torch_queue_multiple_push():
         assert queue.shape[queue._queue_dim] == min(5 + i + 1, 10)
         assert queue[-1] == item
 
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 0
+
 
 def test_torch_queue_multiple_push_multiple_dimensions():
     queue = TorchQueue(torch.randn(3, 5), 10, queue_dim=1)
@@ -81,6 +94,9 @@ def test_torch_queue_multiple_push_multiple_dimensions():
         queue = queue.push(item)
         assert queue.shape[queue._queue_dim] == min(5 + i + 1, 10)
         torch.testing.assert_close(queue[:, -1], item.squeeze(1))
+
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 1
 
 
 def test_torch_queue_multiple_pop():
@@ -93,6 +109,9 @@ def test_torch_queue_multiple_pop():
         assert last_value == queue[-1]
         assert oldest_value == item
 
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 0
+
 
 def test_torch_queue_full():
     queue = TorchQueue(torch.randn(10), 10)
@@ -100,6 +119,8 @@ def test_torch_queue_full():
     queue = queue.push(item)
     assert queue.shape[queue._queue_dim] == 10
     assert queue[-1] == item
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 0
 
 
 def test_torch_queue_empty():
@@ -107,6 +128,8 @@ def test_torch_queue_empty():
     with pytest.raises(IndexError):
         queue.pop()
     assert queue.shape[queue._queue_dim] == 0
+    assert queue._queue_size == 10
+    assert queue._queue_dim == 0
 
 
 def test_torch_queue_push_to_capacity_and_overflow():
@@ -118,6 +141,8 @@ def test_torch_queue_push_to_capacity_and_overflow():
         queue = queue.push(item)
     assert queue.is_full
     assert queue.shape[queue.queue_dim] == capacity
+    assert queue._queue_size == capacity
+    assert queue._queue_dim == 0
 
     # Record current first and push one more to cause overflow
     first_before_value = queue[0].item()
@@ -128,6 +153,8 @@ def test_torch_queue_push_to_capacity_and_overflow():
     # Oldest dropped, newest at the end
     assert queue[-1] == new_item
     assert queue[0].item() != first_before_value
+    assert queue._queue_size == capacity
+    assert queue._queue_dim == 0
 
 
 def test_torch_queue_clone_preserves_attrs_and_data():
@@ -138,6 +165,8 @@ def test_torch_queue_clone_preserves_attrs_and_data():
     assert clone_q.queue_size == queue.queue_size
     assert clone_q.queue_dim == queue.queue_dim
     torch.testing.assert_close(clone_q, queue)
+    assert clone_q._queue_size == queue._queue_size
+    assert clone_q._queue_dim == queue._queue_dim
 
 
 def test_torch_queue_to_device_roundtrip():
@@ -152,9 +181,13 @@ def test_torch_queue_to_device_roundtrip():
         q_cuda = queue.to("cuda")
         assert isinstance(q_cuda, TorchQueue)
         assert q_cuda.device.type == "cuda"
+        assert q_cuda._queue_dim == queue._queue_dim
+        assert q_cuda._queue_size == queue._queue_size
         q_back = q_cuda.to("cpu")
         assert isinstance(q_back, TorchQueue)
         assert q_back.device.type == "cpu"
+        assert q_back._queue_dim == queue._queue_dim
+        assert q_back._queue_size == queue._queue_size
 
 
 def test_torch_queue_queue_dim_behavior():
@@ -175,5 +208,10 @@ def test_torch_queue_queue_dim_behavior():
     assert q.is_full
     # Pop oldest time step and check shapes
     oldest, q2 = q.pop()
+    assert q._queue_dim == 1
+    assert q._queue_size == capacity
+
     assert oldest.shape == torch.Size([3])
     assert q2.shape[1] == 4
+    assert q2._queue_dim == q._queue_dim
+    assert q2._queue_size == q._queue_size

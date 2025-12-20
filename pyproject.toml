@@ -11,19 +11,14 @@ requires-python = "==3.12.*"
 dependencies = [
     "torch",
     "gymnasium",
-    "matplotlib",
     "numpy",
     "torchrl",
-    "tensorboard",
-    "standard-imghdr",
     "torchvision",
     "pyyaml",
-    "google-cloud-aiplatform",
-    "gcsfs",
-    "google-cloud-logging",
     "python-json-logger",
     "transformers>=4.57.3",
     "opencv-python>=4.12.0.88",
+    "tensorboard>=2.20.0",
 ]
 
 [dependency-groups]

@@ -41,14 +41,14 @@ class ViTARCRewardModel(nn.Module):
         self,
         color_values: int,
         rl_vit_arc_config: RlArcWorldViTARCConfig,
-        config: "CudaConfig | None" = None,
+        device_config: "CudaConfig | None" = None,
     ) -> None:
         """Initialize the ViTARC reward world model.
 
         Args:
             color_values: Number of color values in the grid.
             rl_vit_arc_config: Configuration for the RlArcWorldViTARC encoder.
-            config: CUDA/device configuration. Defaults to None.
+            device_config: CUDA/device configuration. Defaults to None.
         """
         super().__init__()
         self.color_values = color_values
@@ -64,8 +64,8 @@ class ViTARCRewardModel(nn.Module):
             dropout=rl_vit_arc_config.dropout,
         )
 
-        self.config = enable_cuda() if config is None else config
-        self.device = self.config["device"]
+        self.device_config = enable_cuda() if device_config is None else device_config
+        self.device = self.device_config["device"]
 
         self.to(self.device)
 
@@ -100,7 +100,7 @@ class ViTARCRewardModel(nn.Module):
         state.pop(StateKeys.TERMINATED.value, None)
 
         # Encode state through ViTARC
-        if self.config.get("use_checkpointing"):
+        if self.device_config.get("use_checkpointing"):
             encoder_output = checkpoint.checkpoint(
                 self.rl_vit_arc, state, use_reentrant=False
             )

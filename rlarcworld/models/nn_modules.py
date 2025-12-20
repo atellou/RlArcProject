@@ -8,134 +8,19 @@ attention, and cross-attention classifier heads.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 from tensordict import TensorDict
-from transformers.modeling_outputs import BaseModelOutput
 from transformers.models.t5.configuration_t5 import T5Config
 
+from rlarcworld.common.configs import RlArcWorldViTARCConfig, ViTARCEncoderOutput
 from rlarcworld.common.enums import ActionKeys, RewardKeys, StateKeys
-from rlarcworld.common.types import ACTION_KEYS_SET, GRID_ENCODER_KEYS_SET
+from rlarcworld.common.types import ACTION_KEYS_SET
 from rlarcworld.models.grid_encoder import GridEncoder
 from rlarcworld.models.vit_arc import CustomT5Stack, FixedAbsolutePositionalEmbedding
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class RlArcWorldViTARCConfig:
-    """Configuration for the RlArcWorld ViTARC nn module/encoder.
-
-    A configuration class for the ViTARC used in RlArcWorld.
-    This configuration defines the hyperparameters for the ViTARC-based neural network.
-
-    Attributes:
-        grid_size: Size of the input grid (height = width).
-        d_model: Model dimension for embeddings and hidden layers.
-        d_ff: Feed-forward dimension.
-        num_layers: Number of transformer layers.
-        num_heads: Number of attention heads.
-        dropout: Dropout rate.
-        ape_type: Type of absolute position encoding ('none', 'learnable', 'sinusoidal')
-        rpe_type: Type of relative position encoding ('none', 'learnable', 'sinusoidal')
-        use_ope: Whether to use object position encoding.
-        ape_mixer: Mixer type for absolute position encoding.
-        trainable_ape: Whether positional embeddings are trainable.
-        grids_to_encode: List of grid keys to encode.
-        color_values: Number of color values in the dataset.
-    """
-
-    grid_size: int
-    d_model: int = 128
-    d_ff: int = 512
-    num_layers: int = 4
-    num_heads: int = 8
-    dropout: float = 0.1
-    ape_type: str | None = None
-    rpe_type: str | None = None
-    use_ope: bool | None = None
-    ape_mixer: str | None = None
-    trainable_ape: bool = False
-    grids_to_encode: list[str] | None = None
-    use_index_grid: bool = True
-    color_values: int | None = None
-
-    @classmethod
-    def best_config(
-        cls,
-        grid_size: int,
-        use_temporal: bool = False,
-        use_examples: bool = False,
-    ) -> "RlArcWorldViTARCConfig":
-        """Create a config with the best settings from the ViTARC paper.
-
-        Best configuration from ViTARC paper ablation study (arXiv:2410.06405):
-        - APE: SinusoidalAPE2D (2D sinusoidal absolute position encoding)
-        - RPE: Two-slope-Alibi (largest performance gain)
-        - PEmixer: weighted_sum_no_norm_vec (second largest gain)
-        - OPE: True (third largest gain, object-based positional encoding)
-
-        Args:
-            grid_size: Size of the input grid (height = width).
-            use_temporal: Whether to use temporal grids for encoding.
-            use_examples: Whether to use example grids for encoding.
-
-        Returns:
-            RlArcWorldViTARCConfig with best settings for training.
-        """
-        grid_to_encode = [StateKeys.GRID.value]
-        if use_temporal:
-            grid_to_encode.extend([StateKeys.LAST_GRID.value, StateKeys.INITIAL.value])
-        if use_examples:
-            grid_to_encode.append(StateKeys.EXAMPLES.value)
-        return cls(
-            grid_size=grid_size,
-            d_model=128,
-            d_ff=512,
-            num_layers=4,
-            num_heads=8,
-            dropout=0.1,
-            ape_type="SinusoidalAPE2D",
-            rpe_type="Two-slope-Alibi",
-            use_ope=True,
-            ape_mixer="weighted_sum_no_norm_vec",
-            trainable_ape=False,
-            grids_to_encode=grid_to_encode,
-        )
-
-
-@dataclass
-class ViTARCEncoderOutput:
-    """Structured output for ViTARC encoder modules.
-
-    Exposes both the conditioned hidden states and the intermediate artifacts
-    necessary for downstream consumers to reuse embeddings or perform custom
-    pooling/attention.
-
-    Returns:
-        hidden_states: The conditioned hidden states from the encoder.
-        attention_mask: The attention mask used during encoding.
-        encoder_outputs: The full encoder outputs for potential reuse.
-        input_ids: The input token IDs.
-        temporal_ids: Optional temporal position IDs.
-        object_idx: Optional object indices for object-aware processing.
-        example_hidden: Optional example-level hidden states.
-        example_mask: Optional example-level attention mask.
-        index_ids: Optional index/timestamp IDs aligned with input_ids.
-    """
-
-    hidden_states: torch.Tensor
-    attention_mask: torch.Tensor | None
-    encoder_outputs: BaseModelOutput
-    input_ids: torch.Tensor
-    temporal_ids: torch.Tensor | None
-    object_idx: torch.Tensor | None
-    example_hidden: torch.Tensor | None
-    example_mask: torch.Tensor | None
-    index_ids: torch.Tensor | None
-
 
 # =============================================================================
 # Example Cross-Attention - For conditioning on example pairs
@@ -634,17 +519,6 @@ class RlArcWorldViTARC(nn.Module):
             verbose: Whether to print initialization parameter information.
         """
         super().__init__()
-        if config.grids_to_encode is None:
-            config.grids_to_encode = [StateKeys.GRID.value]
-        else:
-            if not set(config.grids_to_encode).issubset(GRID_ENCODER_KEYS_SET):
-                raise ValueError(
-                    f"Grid encoder keys must be in {GRID_ENCODER_KEYS_SET}."
-                    f"Keys found {set(config.grids_to_encode)}"
-                )
-            if StateKeys.GRID.value not in config.grids_to_encode:
-                raise ValueError(f"{StateKeys.GRID.value} must be in grids_to_encode")
-        self.grids_to_encode = config.grids_to_encode
         self.action_head_keys = set(ACTION_KEYS_SET)
 
         # Use best config from paper if not specified
@@ -697,15 +571,12 @@ class RlArcWorldViTARC(nn.Module):
             self.index_embed = FixedAbsolutePositionalEmbedding(config.d_model)
 
         # Temporal embedding (0=initial, 1=last, 2=current)
-        self.use_temporal = (
-            StateKeys.INITIAL.value in self.grids_to_encode
-            or StateKeys.LAST_GRID.value in self.grids_to_encode
-        )
+        self.use_temporal = config.use_temporal
         if self.use_temporal:
             self.temporal_embed = nn.Embedding(3, config.d_model)
 
         # Example cross-attention (if examples are used)
-        self.use_examples = StateKeys.EXAMPLES.value in self.grids_to_encode
+        self.use_examples = config.use_examples
         if self.use_examples:
             self.example_cross_attention = ExampleCrossAttention(
                 d_model=config.d_model,
@@ -770,13 +641,7 @@ class RlArcWorldViTARC(nn.Module):
         if self.use_temporal:
             input_ids, attention_mask, temporal_ids, object_idx = (
                 self.grid_encoder.encode_temporal_grids(
-                    current=grid,
-                    initial=initial
-                    if StateKeys.INITIAL.value in self.grids_to_encode
-                    else None,
-                    last_grid=last_grid
-                    if StateKeys.LAST_GRID.value in self.grids_to_encode
-                    else None,
+                    current=grid, initial=initial, last_grid=last_grid
                 )
             )
         else:

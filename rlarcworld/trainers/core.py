@@ -8,6 +8,7 @@ validation, and checkpointing.
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Tuple
 
 import torch
@@ -19,6 +20,7 @@ from rlarcworld.utils.checkpointing import add_schema_and_class
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class OnStepContext:
     """ctx object containing all information about a training step."""
 
@@ -33,6 +35,9 @@ class OnStepContext:
         td_error: TensorDict | None,
         core: ActorCriticCoreProto,
         hyperparameters: dict,
+        warmup: bool,
+        buffer_warmup: float | None = None,
+        run_end: bool = False,
     ):
         """Initialize step ctx.
 
@@ -46,6 +51,9 @@ class OnStepContext:
             td_error: TD error (None if no training occurred)
             core: Algorithm core containing networks and methods
             hyperparameters: Hyperparameters of the algorithm
+            warmup: Whether the training is in warmup phase
+            buffer_warmup: Buffer warmup percentage (None if not applicable)
+            run_end: Indicates whether the call is made at the end of _run call
         """
         self.epoch = epoch
         self.step_idx = step_idx
@@ -56,6 +64,9 @@ class OnStepContext:
         self.td_error = td_error
         self.core = core
         self.hyperparameters = hyperparameters
+        self.warmup = warmup
+        self.buffer_warmup = buffer_warmup
+        self.run_end = run_end
 
 
 class Trainer:
@@ -143,8 +154,8 @@ class Trainer:
         self.priority_init_value = priority_init_value
 
         # Internal progress tracking for checkpointing
-        self._epoch: int = 0
-        self._iteration: int = 0
+        self._train_epoch: int = 0
+        self._train_iteration: int = 0
 
         if self.replay_buffer is None and self.batch_size is None:
             raise ValueError("batch_size must be provided when replay_buffer is None")
@@ -214,6 +225,26 @@ class Trainer:
 
         return None, None
 
+    def warmup_info(self) -> tuple[float, bool]:
+        """Get warmup information including phase status and percentage."""
+        if self.replay_buffer is None:
+            return 0.0, False
+        storage_len = len(self.replay_buffer.storage)
+        storage_cap = self.replay_buffer.storage.max_size
+        is_warmup = storage_len <= storage_cap * self.warmup_buffer_ratio
+        percentage = (storage_len / storage_cap) * 100.0
+        return percentage, is_warmup
+
+    @property
+    def train_epoch(self) -> int:
+        """Get the current training epoch."""
+        return self._train_epoch
+
+    @property
+    def train_iteration(self) -> int:
+        """Get the current training iteration."""
+        return self._train_iteration
+
     # ---------------- Public API ----------------
     def _run(
         self,
@@ -225,13 +256,13 @@ class Trainer:
         max_steps_per_epoch: int = -1,
         validation_epochs: int = 1,
         validation_steps_per_epoch: int = -1,
-        validation_epochs_frequency: int = 1,
         validation_steps_frequency: int = -1,
     ) -> None:
-        """Run a training loop using the provided step stream and hooks.
+        """Run a batch loops using the provided step stream and hooks.
 
         Args:
-            epochs (int): Number of epochs to train for.
+            epochs (int): Total number of epochs to run. Resuming from a checkpoint,
+                training continues from current epoch until total epoch count reached.
             step_stream_factory (Callable[[], Iterator[tuple[bool, int, TensorDict]]]):
                 Factory returning an iterator that yields per-step TensorDicts
                 with keys expected by the core ('state', 'actions', 'reward',
@@ -243,13 +274,10 @@ class Trainer:
             validation_epochs (int): Number of epochs to validate for.
             validation_steps_per_epoch (int):
                 Max steps per epoch on validation (-1 for no limit).
-            validation_epochs_frequency (int): Frequency of validation epochs.
             validation_steps_frequency (int): Frequency of validation steps.
         """
         # Initialize variables for exception safety
-        epoch = -1
         step_idx = -1
-        iteration = self._iteration
         batch = None
         loss_actor = None
         loss_critic = None
@@ -257,23 +285,24 @@ class Trainer:
         # Track and set module modes for validation
         prev_actor_mode = getattr(self.core.actor, "training", True)
         prev_critic_mode = getattr(self.core.critic, "training", True)
-        if not training:
+        if training:
+            epoch = self._train_epoch
+            iteration = self._train_iteration
+            if epoch > 0 or iteration > 0:
+                logger.info(
+                    f"Resuming {self.__class__.__name__} training from epoch "
+                    f"{epoch}/{epochs} and iteration {iteration}"
+                )
+        else:
+            epoch = 0
+            iteration = 0
             try:
                 self.core.actor.eval()
                 self.core.critic.eval()
             except Exception:
                 pass
         try:
-            # continue from stored iteration when resuming
-            if (
-                self.validation_step_stream_factory is not None
-                and epochs > 0
-                and validation_epochs_frequency > 0
-                and epochs % validation_epochs_frequency == 0
-                and training
-            ):
-                self.validate(validation_epochs_frequency)
-            for epoch in range(self._epoch, self._epoch + epochs):
+            for current_epoch in range(epoch, epochs):
                 loss_actor, loss_critic, td_error = (
                     torch.tensor(0.0),
                     torch.tensor(0.0),
@@ -281,8 +310,6 @@ class Trainer:
                 )
 
                 for _done, step_idx, step_state in step_stream_factory():
-                    iteration += 1
-
                     # Store transition and maybe sample batch
                     if training:
                         batch, info = self._maybe_store_and_sample(step_state)
@@ -319,9 +346,9 @@ class Trainer:
                             effective_bs = int(self.batch_size)
 
                         if training and effective_bs < self.min_train_batch_size:
-                            logger.info(
+                            logger.debug(
                                 "Skipping rest of epoch %d due to small batch(%d < %d)",
-                                epoch,
+                                current_epoch,
                                 effective_bs,
                                 self.min_train_batch_size,
                             )
@@ -336,8 +363,9 @@ class Trainer:
                         loss_actor, loss_critic, td_error = None, None, None
 
                     # Create step ctx
+                    buffer_warmup, warmup = self.warmup_info()
                     ctx = OnStepContext(
-                        epoch=epoch,
+                        epoch=current_epoch,
                         step_idx=step_idx,
                         iteration=iteration,
                         batch=batch,
@@ -346,6 +374,8 @@ class Trainer:
                         td_error=td_error,
                         core=self.core,
                         hyperparameters=self.hyperparameters,
+                        warmup=warmup,
+                        buffer_warmup=buffer_warmup,
                     )
 
                     if (
@@ -355,26 +385,23 @@ class Trainer:
                         and training
                     ):
                         if info is None:
-                            raise ValueError("info is None")
+                            raise ValueError(
+                                "Info is None - cannot update replay buffer priorities"
+                            )
                         self.replay_buffer_update_priority(
                             ctx, info, self.replay_buffer
                         )
 
                     # Call step callback
-                    if on_step and batch is not None:
+                    if on_step is not None:
                         for callback_name, callback_step in on_step.items():
-                            logger.debug(
-                                "Calling {} on_step {}".format(
-                                    "training" if training else "validation",
-                                    callback_name,
-                                )
-                            )
                             callback_step(ctx)
 
                     if (
                         self.validation_step_stream_factory is not None
                         and validation_steps_frequency > 0
                         and iteration % validation_steps_frequency == 0
+                        and not warmup
                         and training
                     ):
                         self.validate(validation_epochs, validation_steps_per_epoch)
@@ -382,11 +409,19 @@ class Trainer:
                     # Early termination
                     if max_steps_per_epoch > 0 and step_idx >= max_steps_per_epoch - 1:
                         break
+
+                    iteration += 1
+
+                    # persist iteration counter
+                    if training:
+                        self._train_iteration = iteration
                 # update stored epoch at end of epoch loop iteration
-                self._epoch = epoch + 1
-            # persist iteration counter
-            self._iteration = iteration
+                if training:
+                    self._train_epoch += 1
         except Exception as e:
+            logger.exception(
+                f"Exception during training step iteration {iteration}: {e}"
+            )
             ctx = OnStepContext(
                 epoch=epoch,
                 step_idx=step_idx,
@@ -397,6 +432,8 @@ class Trainer:
                 td_error=td_error,
                 core=self.core,
                 hyperparameters=self.hyperparameters,
+                warmup=warmup,
+                buffer_warmup=buffer_warmup,
             )
             if self.on_exception is not None:
                 for (
@@ -413,6 +450,29 @@ class Trainer:
             raise e
         finally:
             # Restore previous modes if altered
+            ctx = OnStepContext(
+                epoch=epoch,
+                step_idx=step_idx,
+                iteration=iteration,
+                batch=batch,
+                loss_actor=loss_actor,
+                loss_critic=loss_critic,
+                td_error=td_error,
+                core=self.core,
+                hyperparameters=self.hyperparameters,
+                warmup=warmup,
+                buffer_warmup=buffer_warmup,
+                run_end=True,
+            )
+            if on_step is not None:
+                for callback_name, callback in on_step.items():
+                    logger.debug(
+                        "Calling {} on_step {}".format(
+                            "training" if training else "validation",
+                            callback_name,
+                        )
+                    )
+                    callback(ctx)
             if not training:
                 try:
                     if prev_actor_mode:
@@ -426,44 +486,23 @@ class Trainer:
                 except Exception:
                     pass
 
-    # ---------------- Checkpoint API ----------------
-    def checkpoint(self) -> dict:
-        """Return a minimal checkpoint for trainer progress.
-
-        This intentionally avoids serializing callbacks. It captures only
-        counters in order to support resuming training.
-        """
-        return add_schema_and_class(
-            {
-                "state": {
-                    "epoch": self._epoch,
-                    "iteration": self._iteration,
-                    "batch_size": self.batch_size,
-                    "warmup_buffer_ratio": self.warmup_buffer_ratio,
-                    "min_train_batch_size": self.min_train_batch_size,
-                },
-            },
-            self.__class__.__name__,
-        )
-
-    def load(self, checkpoint: dict) -> None:
-        """Load trainer progress from a checkpoint dict.
-
-        Note: This does not restore callbacks or replay buffer contents.
-        """
-        if not isinstance(checkpoint, dict):
-            raise ValueError("Trainer checkpoint must be a dict")
-        state = checkpoint.get("state", {})
-        self._epoch = int(state.get("epoch", 0))
-        self._iteration = int(state.get("iteration", 0))
-        # Optionally restore basic config
-        self.batch_size = int(state.get("batch_size", self.batch_size))
-        self.warmup_buffer_ratio = float(
-            state.get("warmup_buffer_ratio", self.warmup_buffer_ratio)
-        )
-        self.min_train_batch_size = int(
-            state.get("min_train_batch_size", self.min_train_batch_size)
-        )
+    def _validate_train_buffer(self, epochs: int, max_steps_per_epoch: int) -> None:
+        """Validate that the replay buffer has enough data for training."""
+        if self.replay_buffer is not None and self.warmup_buffer_ratio > 0:
+            storage_cap = self.replay_buffer.storage.max_size
+            warmup_buffer_size = int(self.warmup_buffer_ratio * storage_cap)
+            logger.info(f"The replay buffer warmup size is {warmup_buffer_size}")
+            if epochs <= 0:
+                raise ValueError("epochs must be greater than 0")
+            if max_steps_per_epoch == 0:
+                raise ValueError("max_steps_per_epoch must be different from 0")
+            training_steps_required = max_steps_per_epoch * epochs
+            if max_steps_per_epoch > 0 and training_steps_required < warmup_buffer_size:
+                raise ValueError(
+                    f"Warmup size ({warmup_buffer_size}) is greater than "
+                    f"required training duration ({training_steps_required} steps). "
+                    "Increase training steps or reduce warmup_buffer_ratio."
+                )
 
     def train(
         self,
@@ -471,7 +510,6 @@ class Trainer:
         max_steps_per_epoch: int = -1,
         validation_epochs: int = 1,
         validation_steps_per_epoch: int = -1,
-        validation_epochs_frequency: int = 1,
         validation_steps_frequency: int = -1,
     ) -> None:
         """Run the training loop.
@@ -481,9 +519,10 @@ class Trainer:
             max_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
             validation_epochs (int): Number of epochs to validate for.
             validation_steps_per_epoch (int): Max steps per epoch (-1 for no limit).
-            validation_epochs_frequency (int): Frequency of validation epochs.
             validation_steps_frequency (int): Frequency of validation steps.
         """
+        self._validate_train_buffer(epochs, max_steps_per_epoch)
+
         self._run(
             step_stream_factory=self.train_step_stream_factory,
             on_step=self.on_train_step,
@@ -492,7 +531,6 @@ class Trainer:
             max_steps_per_epoch=max_steps_per_epoch,
             validation_epochs=validation_epochs,
             validation_steps_per_epoch=validation_steps_per_epoch,
-            validation_epochs_frequency=validation_epochs_frequency,
             validation_steps_frequency=validation_steps_frequency,
         )
 
@@ -511,4 +549,43 @@ class Trainer:
             training=False,
             epochs=epochs,
             max_steps_per_epoch=max_steps_per_epoch,
+        )
+
+    # ---------------- Checkpoint API ----------------
+    def checkpoint(self) -> dict:
+        """Return a minimal checkpoint for trainer progress.
+
+        This intentionally avoids serializing callbacks. It captures only
+        counters in order to support resuming training.
+        """
+        return add_schema_and_class(
+            {
+                "state": {
+                    "epoch": self._train_epoch,
+                    "iteration": self._train_iteration,
+                    "batch_size": self.batch_size,
+                    "warmup_buffer_ratio": self.warmup_buffer_ratio,
+                    "min_train_batch_size": self.min_train_batch_size,
+                },
+            },
+            self.__class__.__name__,
+        )
+
+    def load(self, checkpoint: dict) -> None:
+        """Load trainer progress from a checkpoint dict.
+
+        Note: This does not restore callbacks or replay buffer contents.
+        """
+        if not isinstance(checkpoint, dict):
+            raise ValueError("Trainer checkpoint must be a dict")
+        state = checkpoint.get("state", {})
+        self._train_epoch = int(state.get("epoch", 0))
+        self._train_iteration = int(state.get("iteration", 0))
+        # Optionally restore basic config
+        self.batch_size = int(state.get("batch_size", self.batch_size))
+        self.warmup_buffer_ratio = float(
+            state.get("warmup_buffer_ratio", self.warmup_buffer_ratio)
+        )
+        self.min_train_batch_size = int(
+            state.get("min_train_batch_size", self.min_train_batch_size)
         )

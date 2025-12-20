@@ -6,10 +6,10 @@ import pytest
 import torch
 from tensordict import TensorDict
 
+from rlarcworld.common.configs import RlArcWorldViTARCConfig
 from rlarcworld.common.enums import (
     ActionKeys,
     RewardKeys,
-    StateKeys,
 )
 from rlarcworld.environments.arc_batch_grid_env import (
     ArcBatchGridEnv,
@@ -17,7 +17,6 @@ from rlarcworld.environments.arc_batch_grid_env import (
 )
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
 from rlarcworld.models.reward_world_model import RewardWorldModel
 
 logger = logging.getLogger(__name__)
@@ -539,7 +538,6 @@ def test_reward_world_model_wrapper_basic():
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     model = RewardWorldModel(
         color_values=color_values,
@@ -630,7 +628,6 @@ def test_reward_world_model_wrapper_multi_step():
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     model = RewardWorldModel(
         color_values=color_values,
@@ -704,7 +701,6 @@ def test_reward_world_model_wrapper_horizon_truncation():
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     model = RewardWorldModel(
         color_values=color_values,
@@ -767,7 +763,6 @@ def test_reward_world_model_wrapper_caching():
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     model = RewardWorldModel(
         color_values=color_values,

@@ -26,28 +26,37 @@ class PixelWiseArcStepper:
     def __init__(
         self,
         max_steps_per_epoch: int,
-        dataset_path: str,
+        dataset: str | list[str],
         grid_size: int,
         color_values: int,
         actor: ViTARCActor,
-        config: CudaConfig,
+        device_config: CudaConfig,
+        *,
+        dataset_shuffle_seed: int | None = None,
+        augmentation_generator: torch.Generator | None = None,
+        max_penalty: float = 1.0,
         n_step_config: NStepMinVMaxConfig | None = None,
     ) -> None:
         """Creates a stepper for the environment and dataset.
 
         Args:
             max_steps_per_epoch (int): Maximum steps per epoch.
-            dataset_path (str): Path to the dataset.
+            dataset (str | list[str]): Path to the dataset.
             grid_size (int): Size of the ARC grid.
             color_values (int): Number of possible colors.
             actor (ViTARCActor): Actor network.
-            config (dict): Configuration dictionary.
+            device_config (CudaConfig): Device configuration dictionary.
+            dataset_shuffle_seed (int | None):
+                Seed for shuffling the dataset.
+            augmentation_generator (torch.Generator | None):
+                Generator for deterministic randomness.
+            max_penalty (float): Maximum penalty for the environment reward.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
         """
         # Initialize dataset and environment
         logger.info("Setting up dataset and environment...")
-        self.device = config["device"]
+        self.device = device_config["device"]
         self.n_step_config = (
             n_step_config if n_step_config is not None else NStepMinVMaxConfig()
         )
@@ -59,6 +68,7 @@ class PixelWiseArcStepper:
             color_permutation_range=(1, 12),
             augmentation_probability=0.5,  # Apply augmentations 50% of the time
             shuffle_probability=0.5,  # Shuffle examples 50% of the time
+            generator=augmentation_generator,
         )
 
         # IMPORTANT: ArcSampleTransformer must come FIRST to convert lists to tensors
@@ -75,18 +85,22 @@ class PixelWiseArcStepper:
             ]
         )
         self.dataset: ArcDataset = ArcDataset(
-            dataset_path, keep_in_memory=False, transform=transform
+            dataset,
+            keep_in_memory=False,
+            transform=transform,
+            shuffle_seed=dataset_shuffle_seed,
         )
 
         base_env = ArcBatchGridEnv(
             grid_size=grid_size,
             color_values=color_values,
             device=self.device,
+            max_penalty=max_penalty,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
         self.environment = PixelAwareRewardWrapper(
             base_env,
-            max_penalty=1.0,
+            max_penalty=max_penalty,
             n_steps=self.n_step_config.n_steps,
             gamma=base_env.gamma,
         )
@@ -98,7 +112,7 @@ class PixelWiseArcStepper:
             sampler=iter(self.dataset),
             max_steps=max_steps_per_epoch,
             env_sample_reset=self._reset_env,
-            amp_enabled=config.get("amp_enabled", True),
+            amp_enabled=device_config.get("amp_enabled", True),
             on_step=self._get_on_step_rewards(),
         )
 

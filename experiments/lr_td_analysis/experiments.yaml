@@ -1,0 +1,235 @@
+# Learning Rate V.S. Temporal Difference Learning Steps Analysis Experiments
+#
+# Model: ~1.3M trainable parameters
+# Grid: 30x30 = 900 cells (potential changes per episode)
+#
+# Learning Rate Rationale:
+#   - 1.0e-3: Aggressive, may be unstable but fast if it works
+#   - 3.0e-4: Standard for transformers with ~1M params
+#   - 1.0e-4: Conservative, slower but more stable
+#   - 3.0e-5: Very conservative, for fine-tuning or stability
+#
+# N-Step Rationale (grid is 30x30 = 900 cells):
+#   - 1: Standard TD(0), immediate credit assignment
+#   - 5: Short horizon, ~0.5% of max episode length
+#   - 15: Medium horizon, covers small grid regions
+#   - 30: One row/column worth of changes
+#   - 50: Moderate lookahead for multi-step patterns
+#
+# Total: 4 LRs × 5 n_steps = 20 experiments
+
+# =============================================================================
+# LR = 1.0e-3 (Aggressive)
+# =============================================================================
+
+lr_1e3_nstep_1:
+  description: "LR=1.0e-3, n_steps=1 - Aggressive LR with standard TD"
+  d4pg:
+    policy_lr: 1.0e-3
+    critic_lr: 1.0e-2
+    n_step_config:
+      n_steps: 1
+  logging:
+    tensorboard_enabled: true
+
+lr_1e3_nstep_5:
+  description: "LR=1.0e-3, n_steps=5 - Aggressive LR with short horizon"
+  d4pg:
+    policy_lr: 1.0e-3
+    critic_lr: 1.0e-2
+    n_step_config:
+      n_steps: 5
+  logging:
+    tensorboard_enabled: true
+
+lr_1e3_nstep_15:
+  description: "LR=1.0e-3, n_steps=15 - Aggressive LR with medium horizon"
+  d4pg:
+    policy_lr: 1.0e-3
+    critic_lr: 1.0e-2
+    n_step_config:
+      n_steps: 15
+  logging:
+    tensorboard_enabled: true
+
+lr_1e3_nstep_30:
+  description: "LR=1.0e-3, n_steps=30 - Aggressive LR with row-sized horizon"
+  d4pg:
+    policy_lr: 1.0e-3
+    critic_lr: 1.0e-2
+    n_step_config:
+      n_steps: 30
+  logging:
+    tensorboard_enabled: true
+
+lr_1e3_nstep_50:
+  description: "LR=1.0e-3, n_steps=50 - Aggressive LR with moderate lookahead"
+  d4pg:
+    policy_lr: 1.0e-3
+    critic_lr: 1.0e-2
+    n_step_config:
+      n_steps: 50
+  logging:
+    tensorboard_enabled: true
+
+# =============================================================================
+# LR = 3.0e-4 (Standard)
+# =============================================================================
+
+lr_3e4_nstep_1:
+  description: "LR=3.0e-4, n_steps=1 - Standard LR with standard TD"
+  d4pg:
+    policy_lr: 3.0e-4
+    critic_lr: 3.0e-3
+    n_step_config:
+      n_steps: 1
+  logging:
+    tensorboard_enabled: true
+
+lr_3e4_nstep_5:
+  description: "LR=3.0e-4, n_steps=5 - Standard LR with short horizon"
+  d4pg:
+    policy_lr: 3.0e-4
+    critic_lr: 3.0e-3
+    n_step_config:
+      n_steps: 5
+  logging:
+    tensorboard_enabled: true
+
+lr_3e4_nstep_15:
+  description: "LR=3.0e-4, n_steps=15 - Standard LR with medium horizon"
+  d4pg:
+    policy_lr: 3.0e-4
+    critic_lr: 3.0e-3
+    n_step_config:
+      n_steps: 15
+  logging:
+    tensorboard_enabled: true
+
+lr_3e4_nstep_30:
+  description: "LR=3.0e-4, n_steps=30 - Standard LR with row-sized horizon"
+  d4pg:
+    policy_lr: 3.0e-4
+    critic_lr: 3.0e-3
+    n_step_config:
+      n_steps: 30
+  logging:
+    tensorboard_enabled: true
+
+lr_3e4_nstep_50:
+  description: "LR=3.0e-4, n_steps=50 - Standard LR with moderate lookahead"
+  d4pg:
+    policy_lr: 3.0e-4
+    critic_lr: 3.0e-3
+    n_step_config:
+      n_steps: 50
+  logging:
+    tensorboard_enabled: true
+
+# =============================================================================
+# LR = 1.0e-4 (Conservative)
+# =============================================================================
+
+lr_1e4_nstep_1:
+  description: "LR=1.0e-4, n_steps=1 - Conservative LR with standard TD"
+  d4pg:
+    policy_lr: 1.0e-4
+    critic_lr: 1.0e-3
+    n_step_config:
+      n_steps: 1
+  logging:
+    tensorboard_enabled: true
+
+lr_1e4_nstep_5:
+  description: "LR=1.0e-4, n_steps=5 - Conservative LR with short horizon"
+  d4pg:
+    policy_lr: 1.0e-4
+    critic_lr: 1.0e-3
+    n_step_config:
+      n_steps: 5
+  logging:
+    tensorboard_enabled: true
+
+lr_1e4_nstep_15:
+  description: "LR=1.0e-4, n_steps=15 - Conservative LR with medium horizon"
+  d4pg:
+    policy_lr: 1.0e-4
+    critic_lr: 1.0e-3
+    n_step_config:
+      n_steps: 15
+  logging:
+    tensorboard_enabled: true
+
+lr_1e4_nstep_30:
+  description: "LR=1.0e-4, n_steps=30 - Conservative LR with row-sized horizon"
+  d4pg:
+    policy_lr: 1.0e-4
+    critic_lr: 1.0e-3
+    n_step_config:
+      n_steps: 30
+  logging:
+    tensorboard_enabled: true
+
+lr_1e4_nstep_50:
+  description: "LR=1.0e-4, n_steps=50 - Conservative LR with moderate lookahead"
+  d4pg:
+    policy_lr: 1.0e-4
+    critic_lr: 1.0e-3
+    n_step_config:
+      n_steps: 50
+  logging:
+    tensorboard_enabled: true
+
+# =============================================================================
+# LR = 3.0e-5 (Very Conservative)
+# =============================================================================
+
+lr_3e5_nstep_1:
+  description: "LR=3.0e-5, n_steps=1 - Very conservative LR with standard TD"
+  d4pg:
+    policy_lr: 3.0e-5
+    critic_lr: 3.0e-4
+    n_step_config:
+      n_steps: 1
+  logging:
+    tensorboard_enabled: true
+
+lr_3e5_nstep_5:
+  description: "LR=3.0e-5, n_steps=5 - Very conservative LR with short horizon"
+  d4pg:
+    policy_lr: 3.0e-5
+    critic_lr: 3.0e-4
+    n_step_config:
+      n_steps: 5
+  logging:
+    tensorboard_enabled: true
+
+lr_3e5_nstep_15:
+  description: "LR=3.0e-5, n_steps=15 - Very conservative LR with medium horizon"
+  d4pg:
+    policy_lr: 3.0e-5
+    critic_lr: 3.0e-4
+    n_step_config:
+      n_steps: 15
+  logging:
+    tensorboard_enabled: true
+
+lr_3e5_nstep_30:
+  description: "LR=3.0e-5, n_steps=30 - Very conservative LR with row-sized horizon"
+  d4pg:
+    policy_lr: 3.0e-5
+    critic_lr: 3.0e-4
+    n_step_config:
+      n_steps: 30
+  logging:
+    tensorboard_enabled: true
+
+lr_3e5_nstep_50:
+  description: "LR=3.0e-5, n_steps=50 - Very conservative LR with moderate lookahead"
+  d4pg:
+    policy_lr: 3.0e-5
+    critic_lr: 3.0e-4
+    n_step_config:
+      n_steps: 50
+  logging:
+    tensorboard_enabled: true

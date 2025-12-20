@@ -3,14 +3,14 @@ import os
 import torch
 from tensordict import TensorDict
 
-from rlarcworld.common.configs import NStepMinVMaxConfig
-from rlarcworld.common.enums import RewardKeys, StateKeys
+from rlarcworld.common.configs import NStepMinVMaxConfig, RlArcWorldViTARCConfig
+from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
+from rlarcworld.utils.device import CudaConfig
 from rlarcworld.utils.logging_utils import configure_logger
 
 configure_logger(level=os.environ.get("LOG_LEVEL", "INFO").upper(), json_format=False)
@@ -24,12 +24,11 @@ def _make_actor(grid_size: int, color_values: int, device: torch.device) -> ViTA
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
     actor = ViTARCActor(
         color_values=color_values,
         rl_vit_arc_config=actor_config,
-        config={
+        device_config={
             "device": str(device),
             "amp_enabled": False,
             "use_checkpointing": False,
@@ -221,11 +220,13 @@ def test_env_stepper_multiple_steps_with_on_step(device):
 
     stepper = PixelWiseArcStepper(
         max_steps_per_epoch=2,
-        dataset_path="tests/test_data/",
+        dataset="tests/test_data/",
         grid_size=grid_size,
         color_values=color_values,
         actor=actor,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
+        device_config=CudaConfig(
+            device=device, amp_enabled=False, use_checkpointing=False
+        ),
         n_step_config=NStepMinVMaxConfig(
             n_steps=2,
             pixel_wise_min_v=-10,
@@ -411,11 +412,13 @@ def test_env_stepper_step_stream_from_samples(device):
 
     stepper = PixelWiseArcStepper(
         max_steps_per_epoch=2,
-        dataset_path="tests/test_data/",
+        dataset="tests/test_data/",
         grid_size=grid_size,
         color_values=color_values,
         actor=actor,
-        config={"device": device, "amp_enabled": False, "use_checkpointing": False},
+        device_config=CudaConfig(
+            device=device, amp_enabled=False, use_checkpointing=False
+        ),
         n_step_config=NStepMinVMaxConfig(
             n_steps=2,
             pixel_wise_min_v=-10,

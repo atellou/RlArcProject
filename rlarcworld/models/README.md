@@ -60,7 +60,9 @@ class RlArcWorldViTARCConfig:
     rpe_type: str | None     # Relative position encoding type
     use_ope: bool | None     # Object-based positional encoding
     ape_mixer: str | None    # Position embedding mixer
-    grids_to_encode: list[str] | None  # Which grids to encode
+    use_index_grid: bool | None # Index/timestamp grid encoding
+    use_temporal: bool | None # Temporal grid encoding
+    use_examples: bool | None # Example grid encoding
 ```
 
 **Default Best Configuration** (from ViTARC paper ablation):

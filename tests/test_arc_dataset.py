@@ -222,6 +222,15 @@ def test_open_file_with_test_index(arc_dataset_dir, dataset_one):
     torch.testing.assert_close(result["test"]["output"], torch.tensor([[1, 2], [3, 4]]))
 
 
+def test_extraction_multiple_dirs():
+    """Test that the transformed dataset works with multiple directories."""
+    dataset_t = ArcDataset(
+        arc_dataset_dir=["tests/test_data", "tests/test_data2"],
+        keep_in_memory=False,
+    )
+    assert len(dataset_t) == 8
+
+
 # ---------- Negative tests for ArcSampleTransformer ----------
 
 
@@ -264,3 +273,42 @@ def test_transform_call_with_missing_example_keys(transform):
     }
     with pytest.raises(KeyError):
         transform(sample)
+
+
+def test_zero_based_correction_applied_to_examples():
+    """Test that zero_based_correction is applied to examples, not just task grids.
+
+    This ensures padding values (-1) become 0 and all color values are positive.
+    """
+    grid_size = (5, 5)
+    padding_value = -1
+    correction = 1
+
+    transform = ArcSampleTransformer(
+        output_size=grid_size,
+        padding_constant_value=padding_value,
+        zero_based_correction=correction,
+    )
+
+    # Create sample with small grids that will be padded
+    sample = {
+        "examples": [
+            {"input": torch.zeros(2, 2), "output": torch.ones(2, 2)},
+        ],
+        "task": {"input": torch.zeros(3, 3), "output": torch.ones(3, 3)},
+    }
+
+    result = transform(sample)
+
+    # Task grids should have correction applied: min should be 0 + 1 = 1 (from padding)
+    # Original zeros become 1, padding (-1) becomes 0
+    assert result["task"]["input"].min().item() == padding_value + correction  # 0
+    assert result["task"]["output"].min().item() == padding_value + correction  # 0
+
+    # Examples should ALSO have correction applied (this was the bug)
+    # Without the fix, examples would have min = -1 (padding not corrected)
+    assert result["examples"].min().item() == padding_value + correction  # 0
+    assert result["examples"].min().item() >= 0, (
+        f"Examples contain negative values ({result['examples'].min().item()}), "
+        "zero_based_correction not applied to examples"
+    )

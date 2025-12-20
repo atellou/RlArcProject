@@ -5,7 +5,11 @@ bounded queue along a specified dimension. It provides convenient `push` and
 `pop` operations while preserving device/dtype.
 """
 
+import logging
+
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 class TorchQueue(torch.Tensor):
@@ -42,6 +46,8 @@ class TorchQueue(torch.Tensor):
         """
         obj = super().__new__(cls, data, *args, **kwargs)
         obj._attrs = {"queue_size": queue_size, "queue_dim": queue_dim}
+        obj._queue_size = queue_size
+        obj._queue_dim = queue_dim
         return obj
 
     def __init__(self, data: torch.Tensor, queue_size: int, queue_dim: int = 0):
@@ -70,7 +76,6 @@ class TorchQueue(torch.Tensor):
         )
         self._queue_size = queue_size
         self._queue_dim = queue_dim
-        self.__reversed_indices = torch.arange(-1 - queue_size, 0).to(self.device)
 
     def clone(self, *args, **kwargs) -> "TorchQueue":
         """Clones the TorchQueue instance."""
@@ -88,8 +93,26 @@ class TorchQueue(torch.Tensor):
         """
         new_obj = super().to(*args, **kwargs)
         if new_obj is self:
+            # No-op device move, keep self
             return self
-        return TorchQueue(new_obj, queue_size=self.queue_size, queue_dim=self.queue_dim)
+
+        if isinstance(new_obj, TorchQueue):
+            if hasattr(self, "_queue_size") and not hasattr(new_obj, "_queue_size"):
+                new_obj._queue_size = self._queue_size
+            if hasattr(self, "_queue_dim") and not hasattr(new_obj, "_queue_dim"):
+                new_obj._queue_dim = self._queue_dim
+            return new_obj
+
+        if not hasattr(self, "_queue_size") or not hasattr(self, "_queue_dim"):
+            logger.debug(
+                "TorchQueue.to called on object without queue metadata; "
+                "returning base tensor"
+            )
+            return new_obj
+
+        return TorchQueue(
+            new_obj, queue_size=self._queue_size, queue_dim=self._queue_dim
+        )
 
     @property
     def queue_size(self) -> int:
@@ -130,6 +153,12 @@ class TorchQueue(torch.Tensor):
         """Correct the size of the queue along the specified dimension when full."""
         if item is None:
             item = self
+        # Lazily initialize reversed indices if missing (can happen if object was
+        # created or moved by PyTorch internals without calling our __init__).
+        if not hasattr(self, "_TorchQueue__reversed_indices"):
+            self.__reversed_indices = torch.arange(-1 - self._queue_size, 0).to(
+                self.device
+            )
         return TorchQueue(
             torch.index_select(
                 item,

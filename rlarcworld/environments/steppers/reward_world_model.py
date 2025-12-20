@@ -19,7 +19,7 @@ from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.core import EnvStepper
 from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
 from rlarcworld.models.actor import ViTARCActor
-from rlarcworld.runners.core import OnStepContext
+from rlarcworld.trainers.core import OnStepContext
 from rlarcworld.utils.device import CudaConfig
 from rlarcworld.utils.torch_queue import TorchQueue
 
@@ -45,10 +45,11 @@ class ArcWorldModelStepper:
         grid_size: int,
         color_values: int,
         actor: ViTARCActor,
-        config: CudaConfig,
+        device_config: CudaConfig,
         # World model
         reward_model: RewardWorldModelProto,
         reward_model_lr: float = 1e-4,
+        lr_scheduler_kwargs: dict | None = None,
         # Imagination params
         step_horizon: int = 5,
         gamma: float = 0.99,
@@ -68,9 +69,10 @@ class ArcWorldModelStepper:
             grid_size: Size of the grid.
             color_values: Number of possible colors.
             actor: Actor network (shared with D4PGCore).
-            config: Configuration dictionary.
+            device_config: Device configuration.
             reward_model: RewardWorldModel to train and use for imagination.
             reward_model_lr: Learning rate for world model optimizer.
+            lr_scheduler_kwargs: Learning rate scheduler configuration.
             step_horizon: Planning horizon for imagined rollouts.
             gamma: Discount factor.
             n_step_config: N-step configuration.
@@ -82,7 +84,7 @@ class ArcWorldModelStepper:
             imagination_frequency: Run imagination every N training steps.
         """
         self.model = reward_model
-        self.device = config["device"]
+        self.device = device_config["device"]
         self.model_update_frequency = model_update_frequency
         self.imagination_ratio = imagination_ratio
         self.imagination_frequency = imagination_frequency
@@ -131,7 +133,7 @@ class ArcWorldModelStepper:
             sampler=None,
             max_steps=step_horizon,
             env_sample_reset=self._reset_env,
-            amp_enabled=config.get("amp_enabled", True),
+            amp_enabled=device_config.get("amp_enabled", True),
             on_step=self._get_on_step_rewards(),
         )
 
@@ -139,6 +141,10 @@ class ArcWorldModelStepper:
         self.model_optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=reward_model_lr
         )
+        if lr_scheduler_kwargs is not None:
+            self.lr_scheduler = torch.optim.lr_scheduler.StepLR(
+                self.model_optimizer, **lr_scheduler_kwargs
+            )
 
     def _reset_env(self, env, sample, **kwargs):
         """Reset the environment with a sample.

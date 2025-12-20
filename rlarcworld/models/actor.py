@@ -60,17 +60,17 @@ class ViTARCActor(nn.Module):
         self,
         color_values: int,
         rl_vit_arc_config: RlArcWorldViTARCConfig,
-        config: CudaConfig | None = None,
+        device_config: CudaConfig | None = None,
     ):
         """Initialize the ViTARC actor.
 
         Args:
             color_values: Number of colors (default 11 for ARC).
             rl_vit_arc_config: Configuration for the ViTARC model.
-            config: CUDA configuration for device management.
+            device_config: CUDA configuration for device management.
         """
         super().__init__()
-
+        self.rl_vit_arc_config = rl_vit_arc_config
         self.rl_vit_arc = RlArcWorldViTARC(rl_vit_arc_config)
 
         # Action heads
@@ -84,8 +84,8 @@ class ViTARCActor(nn.Module):
         )
 
         # Device configuration
-        self.config = enable_cuda() if config is None else config
-        self.device = self.config["device"]
+        self.device_config = enable_cuda() if device_config is None else device_config
+        self.device = self.device_config["device"]
         self.to(self.device)
 
         # Log configuration and parameter count
@@ -142,7 +142,7 @@ class ViTARCActor(nn.Module):
         self.input_val(state)
 
         # Encode state using shared ViTARC encoder
-        if self.config.get("use_checkpointing"):
+        if self.device_config.get("use_checkpointing"):
             vitarc_output = checkpoint.checkpoint(
                 self.rl_vit_arc, state, use_reentrant=False
             )
@@ -212,7 +212,7 @@ class ViTARCActorFromPretrained(ViTARCActor):
         actor = cls(
             color_values=color_values,
             rl_vit_arc_config=rl_vit_arc_config,
-            config=config,
+            device_config=config,
         )
 
         # Copy encoder weights

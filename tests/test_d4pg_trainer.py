@@ -9,10 +9,10 @@ from torchrl.data.replay_buffers import (
 )
 
 from rlarcworld.algorithms.d4pg import D4PGCore
-from rlarcworld.common.enums import StateKeys
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.runners.core import OnStepContext, Trainer
+from rlarcworld.trainers.core import OnStepContext, Trainer
+from rlarcworld.utils.device import CudaConfig
 from tests.utils.buffers import MiniBuffer, TrackingMiniBuffer
 from tests.utils.synthetic import make_synthetic_step_on_device
 
@@ -319,7 +319,7 @@ def _build_simple_core(
     max_grad_norm: float = 0.0,
 ) -> D4PGCore:
     # Retained for the specialized AMP/grad-clipping test
-    from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
+    from rlarcworld.common.configs import RlArcWorldViTARCConfig
 
     rl_vit_arc_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
@@ -328,7 +328,6 @@ def _build_simple_core(
         num_layers=2,
         num_heads=4,
         use_ope=False,  # Disable OPE for faster test
-        grids_to_encode=[StateKeys.GRID.value],  # Minimal encoding
     )
     actor = ViTARCActor(
         color_values=color_values,
@@ -340,7 +339,11 @@ def _build_simple_core(
         num_atoms={"pixel_wise": 51, "binary": 3},
         v_min={"pixel_wise": -40, "binary": 0},
         v_max={"pixel_wise": 2, "binary": 1},
-        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
+        device_config={
+            "device": str(device),
+            "amp_enabled": amp,
+            "use_checkpointing": False,
+        },
     )
     core = D4PGCore(
         actor=actor,
@@ -350,7 +353,11 @@ def _build_simple_core(
         n_steps=1,
         amp_enabled=amp,
         max_grad_norm=max_grad_norm,
-        config={"device": str(device), "amp_enabled": amp, "use_checkpointing": False},
+        device_config=CudaConfig(
+            device=device,
+            amp_enabled=amp,
+            use_checkpointing=False,
+        ),
     )
     return core
 
@@ -477,12 +484,16 @@ def test_d4pg_trainer_validation_process(d4pg_core, make_synthetic_step, batch_s
     val_losses_actor, val_losses_critic = [], []
 
     def on_train_step(ctx: OnStepContext):
+        if ctx.run_end:
+            return  # Skip run_end callback for step counting
         if ctx.loss_actor is not None:
             train_losses_actor.append(ctx.loss_actor)
         if ctx.loss_critic is not None:
             train_losses_critic.append(ctx.loss_critic)
 
     def on_validation_step(ctx: OnStepContext):
+        if ctx.run_end:
+            return  # Skip run_end callback for step counting
         if ctx.loss_actor is not None:
             val_losses_actor.append(ctx.loss_actor)
         if ctx.loss_critic is not None:
@@ -500,8 +511,7 @@ def test_d4pg_trainer_validation_process(d4pg_core, make_synthetic_step, batch_s
         device=d4pg_core.device,
     )
 
-    # Run training (with validation_epochs_frequency=0 to disable auto-validation)
-    trainer.train(epochs=1, validation_epochs_frequency=0)
+    trainer.train(epochs=1)
 
     # Run validation explicitly
     trainer.validate(epochs=1)

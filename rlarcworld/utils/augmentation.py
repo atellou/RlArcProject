@@ -95,6 +95,7 @@ class ArcAugmentationTransformer:
         probability: Probability of applying augmentations (0.0 to 1.0)
         max_examples: Maximum number of examples to keep after shuffling
         shuffle_probability: Probability of shuffling examples (0.0 to 1.0)
+        generator: Optional torch.Generator for deterministic randomness
     """
 
     def __init__(
@@ -104,6 +105,8 @@ class ArcAugmentationTransformer:
         color_permutation_range: tuple[int, int] = (1, 12),
         augmentation_probability: float = 1.0,
         shuffle_probability: float = 1.0,
+        *,
+        generator: torch.Generator | None = None,
     ):
         """Initialize the augmentation transformer.
 
@@ -115,12 +118,15 @@ class ArcAugmentationTransformer:
                 Probability of applying augmentations (default: 1.0)
             shuffle_probability:
                 Probability of shuffling examples (default: 1.0)
+            generator:
+                Optional torch.Generator for deterministic randomness
         """
         self.augmentations = augmentations or []
         self.max_examples = max_examples
         self.color_permutation_range = color_permutation_range
         self.augmentation_probability = augmentation_probability
         self.shuffle_probability = shuffle_probability
+        self.gen = generator if generator is not None else torch.Generator()
 
         # Validate augmentation names
         valid_augmentations = {"rotate", "reflect", "permute_colors", "translate"}
@@ -149,7 +155,9 @@ class ArcAugmentationTransformer:
 
         # Apply geometric transformations to all grids
         if "rotate" in self.augmentations:
-            rotations = torch.randint(0, 4, (1,)).item()  # 0-3 inclusive
+            rotations = torch.randint(
+                0, 4, (1,), generator=self.gen
+            ).item()  # 0-3 inclusive
             augmented["examples"] = rotate_grid(augmented["examples"], rotations)
             augmented["task"]["input"] = rotate_grid(
                 augmented["task"]["input"], rotations
@@ -159,7 +167,7 @@ class ArcAugmentationTransformer:
             )
 
         if "reflect" in self.augmentations:
-            axis = torch.randint(0, 2, (1,)).item()  # 0 or 1
+            axis = torch.randint(0, 2, (1,), generator=self.gen).item()  # 0 or 1
             augmented["examples"] = reflect_grid(augmented["examples"], axis)
             augmented["task"]["input"] = reflect_grid(augmented["task"]["input"], axis)
             augmented["task"]["output"] = reflect_grid(
@@ -170,7 +178,10 @@ class ArcAugmentationTransformer:
         if "permute_colors" in self.augmentations:
             colors = list(range(*self.color_permutation_range))
             # Permute the colors themselves, not indices
-            perm_colors = [colors[i] for i in torch.randperm(len(colors)).tolist()]
+            perm_colors = [
+                colors[i]
+                for i in torch.randperm(len(colors), generator=self.gen).tolist()
+            ]
             color_map = {colors[i]: perm_colors[i] for i in range(len(colors))}
 
             augmented["examples"] = permute_colors(augmented["examples"], color_map)
@@ -183,8 +194,10 @@ class ArcAugmentationTransformer:
 
         # Apply translation
         if "translate" in self.augmentations:
-            dx = torch.randint(-3, 4, (1,)).item()  # -3 to 3 inclusive
-            dy = torch.randint(-3, 4, (1,)).item()
+            dx = torch.randint(
+                -3, 4, (1,), generator=self.gen
+            ).item()  # -3 to 3 inclusive
+            dy = torch.randint(-3, 4, (1,), generator=self.gen).item()
             augmented["examples"] = translate_grid(augmented["examples"], dx, dy)
             augmented["task"]["input"] = translate_grid(
                 augmented["task"]["input"], dx, dy
@@ -205,14 +218,17 @@ class ArcAugmentationTransformer:
             Augmented sample
         """
         # Apply augmentations with probability
-        if self.augmentations and torch.rand(1).item() < self.augmentation_probability:
+        if (
+            self.augmentations
+            and torch.rand(1, generator=self.gen).item() < self.augmentation_probability
+        ):
             sample = self.augment_sample(sample)
 
         # Shuffle and truncate examples with probability
         if (
             self.max_examples is not None
             and "examples" in sample
-            and torch.rand(1).item() < self.shuffle_probability
+            and torch.rand(1, generator=self.gen).item() < self.shuffle_probability
         ):
             sample["examples"] = shuffle_examples(sample["examples"], self.max_examples)
 

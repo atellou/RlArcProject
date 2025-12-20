@@ -11,13 +11,14 @@ from torchrl.data.replay_buffers import (
 
 from rlarcworld.algorithms.d4pg import D4PGCore
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer
-from rlarcworld.common.enums import RewardKeys, StateKeys
+from rlarcworld.common.configs import RlArcWorldViTARCConfig
+from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
-from rlarcworld.models.nn_modules import RlArcWorldViTARCConfig
-from rlarcworld.runners.core import Trainer
+from rlarcworld.trainers.core import Trainer
+from rlarcworld.utils.device import CudaConfig
 from tests.utils.synthetic import make_synthetic_step_on_device
 
 
@@ -32,6 +33,20 @@ def _set_log_level_env(monkeypatch):
     # Ensure consistent logging level during tests
     monkeypatch.setenv("LOG_LEVEL", os.environ.get("LOG_LEVEL", "INFO"))
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_cuda_cache():
+    """Clear CUDA cache before and after each test to prevent OOM errors."""
+    import gc
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    yield
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 # ---------- Basic dimension fixtures ----------
@@ -65,7 +80,6 @@ def rl_vit_arc_config(grid_size) -> RlArcWorldViTARCConfig:
         num_layers=2,
         num_heads=4,
         use_ope=False,
-        grids_to_encode=[StateKeys.GRID.value],
     )
 
 
@@ -74,7 +88,7 @@ def actor(device, color_values, rl_vit_arc_config) -> ViTARCActor:
     return ViTARCActor(
         color_values=color_values,
         rl_vit_arc_config=rl_vit_arc_config,
-        config={
+        device_config={
             "device": str(device),
             "amp_enabled": False,
             "use_checkpointing": False,
@@ -93,7 +107,7 @@ def critic(device, color_values, rl_vit_arc_config) -> VitARCCritic:
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
-        config={
+        device_config={
             "device": str(device),
             "amp_enabled": False,
             "use_checkpointing": False,
@@ -110,11 +124,11 @@ def d4pg_core(actor: ViTARCActor, critic: VitARCCritic, device) -> D4PGCore:
         tau=0.005,
         n_steps=1,
         amp_enabled=False,
-        config={
-            "device": str(device),
-            "amp_enabled": False,
-            "use_checkpointing": False,
-        },
+        device_config=CudaConfig(
+            device=device,
+            amp_enabled=False,
+            use_checkpointing=False,
+        ),
     )
 
 
