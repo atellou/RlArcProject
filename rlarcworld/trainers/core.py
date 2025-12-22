@@ -231,8 +231,14 @@ class Trainer:
             return 0.0, False
         storage_len = len(self.replay_buffer.storage)
         storage_cap = self.replay_buffer.storage.max_size
-        is_warmup = storage_len <= storage_cap * self.warmup_buffer_ratio
-        percentage = (storage_len / storage_cap) * 100.0
+        warmup_size = int(storage_cap * float(self.warmup_buffer_ratio))
+        # Guard against nonsensical configs (e.g. ratio=0)
+        if warmup_size <= 0:
+            return 100.0, False
+        is_warmup = storage_len < warmup_size
+        percentage = (float(storage_len) / float(warmup_size)) * 100.0
+        # Keep the log readable once we cross warmup.
+        percentage = min(percentage, 100.0)
         return percentage, is_warmup
 
     @property

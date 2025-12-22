@@ -66,8 +66,8 @@ ignore_errors = true
 # Interrogate configuration (docstring coverage)
 [tool.interrogate]
 fail_under = 0
-verbose = 1
-quiet = 0
+verbose = true
+quiet = false
 whitelist_regex = ["rlarcworld/.*"]
 ignore-init-method = true
 ignore-init-module = true
