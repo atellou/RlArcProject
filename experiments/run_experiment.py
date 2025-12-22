@@ -284,14 +284,17 @@ def main() -> None:
         config.dataset = args.dataset
     elif args.samples_path_list:
         with open(args.samples_path_list, "r") as f:
-            paths = [line.strip() for line in f if line.strip()]
-        config.dataset = paths
-        logger.info(f"Using dataset paths from file: {len(paths)} paths loaded")
+            config.dataset = [line.strip() for line in f if line.strip()]
+        logger.info(
+            f"Using dataset paths from file: {len(config.dataset)} paths loaded"
+        )
     else:
         logger.info(f"Using default dataset configuration: {config.dataset}")
 
     logger.info("Configuration loaded:")
-    logger.info(f"  - Dataset: {config.dataset}")
+    logger.info(
+        f"  - Dataset: {args.dataset if args.dataset else args.samples_path_list}"
+    )
     logger.info(f"  - Grid size: {config.env.grid_size}")
     logger.info(f"  - Batch size: {config.env.batch_size}")
     logger.info(f"  - Policy LR: {config.d4pg.policy_lr}")

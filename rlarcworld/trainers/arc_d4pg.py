@@ -104,6 +104,12 @@ class ArcD4PG:
 
         msg = "Setting: Global seed: {}".format(self.global_seed)
 
+        # Optional deterministic mode
+        # NOTE: CuBLAS determinism requires this env var to be set *before* any
+        # CUDA context is initialized.
+        if config.torch_deterministic:
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
         # Python / NumPy / Torch seeds
         random.seed(self.global_seed)
         np.random.seed(self.global_seed)
@@ -111,12 +117,14 @@ class ArcD4PG:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(self.global_seed)
 
-        # Optional deterministic mode
         if config.torch_deterministic:
             msg += ", torch_deterministic: True"
             torch.use_deterministic_algorithms(True, warn_only=False)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
+            # TF32 can introduce nondeterminism; disable in deterministic mode.
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
 
     def _setup_system(self, config: ArcD4PGConfig) -> None:
         """Configure system settings: seed, device, and paths."""
@@ -509,10 +517,10 @@ class ArcD4PG:
                 else ""
             )
             if ctx.warmup:
-                msg += " (Warmup), "
+                msg += " (Warmup) "
             if ctx.loss_actor is not None:
                 msg += (
-                    f"Iteration {ctx.iteration}: "
+                    f", Iteration {ctx.iteration}: "
                     f"Actor Loss: {ctx.loss_actor:.4f}, "
                     f"Critic Loss: {ctx.loss_critic:.4f}"
                 )

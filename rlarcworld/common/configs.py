@@ -279,7 +279,7 @@ class ReplayBufferConfig:
     size: int = 100000
     alpha: float = 0.6
     beta: float = 0.4
-    warmup_ratio: float = 0.2
+    warmup_ratio: float = 0.02
 
 
 @dataclass

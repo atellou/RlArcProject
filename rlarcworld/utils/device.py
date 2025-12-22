@@ -1,11 +1,19 @@
 """CUDA/AMP device configuration helpers."""
 
+import importlib.util
 import logging
 from typing import TypedDict
 
 import torch
 
 logger = logging.getLogger(__name__)
+
+TORCH_XLA_AVAILABLE = importlib.util.find_spec("torch_xla") is not None
+
+if TORCH_XLA_AVAILABLE:
+    import torch_xla
+else:
+    xm = None
 
 
 class CudaConfig(TypedDict):
@@ -40,36 +48,42 @@ def enable_cuda(
             and 'device'.
     """
     cuda_available = torch.cuda.is_available()
+
+    if TORCH_XLA_AVAILABLE:
+        device_name = str(torch_xla.device())
+        capability_major = 7
+        device_type = "XLA"
     # Only query device properties if CUDA is available
-    if cuda_available:
+    elif cuda_available:
         try:
             capability_major = torch.cuda.get_device_capability(0)[0]
             device_name = torch.cuda.get_device_name(0)
         except Exception:  # pragma: no cover - defensive: some backends may differ
             capability_major = 0
             device_name = "cuda"
+        device_type = "CUDA"
     else:
         capability_major = 0
         device_name = "cpu"
+        device_type = "CPU"
 
-    amp_available = cuda_available and capability_major >= 7
+    amp_available = capability_major >= 7
     logger.info(
-        "CUDA available: %s, AMP available: %s, Device: %s, Capability: %s",
-        cuda_available,
+        "Device type: %s, AMP available: %s, Device: %s, Capability: %s",
+        device_type,
         amp_available,
         device_name,
         capability_major,
     )
-    gradient_checkpointing_enabled = amp_available
     logger.info(
         "Gradient checkpointing enabled: %s, use_checkpointing: %s",
-        gradient_checkpointing_enabled,
+        amp_available,
         use_checkpointing,
     )
 
     return {
         "amp_enabled": amp_enabled and amp_available,
-        "use_checkpointing": use_checkpointing and gradient_checkpointing_enabled,
+        "use_checkpointing": use_checkpointing and amp_available,
         "device": "cuda" if cuda_available else "cpu",
     }
 
