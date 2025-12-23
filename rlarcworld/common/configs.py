@@ -358,6 +358,7 @@ class SystemConfig:
     """
 
     amp_enabled: bool = True
+    use_checkpointing: bool = False
     device: Optional[str] = None
 
 

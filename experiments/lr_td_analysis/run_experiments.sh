@@ -19,6 +19,7 @@ BASE_PATH="${ROOT_DIR}/experiments/configs/base.yaml"
 SAMPLE_PATH_LIST="${ROOT_DIR}/experiments/lr_td_analysis/arc_sample.txt"
 
 export CUBLAS_WORKSPACE_CONFIG=":4096:8"
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 SEED="123"
 EPOCHS="10"
 

@@ -130,7 +130,10 @@ class ArcD4PG:
         """Configure system settings: seed, device, and paths."""
         # Configure device
         if config.system.device is None:
-            self.cuda_config = enable_cuda(amp_enabled=config.system.amp_enabled)
+            self.cuda_config = enable_cuda(
+                amp_enabled=config.system.amp_enabled,
+                use_checkpointing=config.system.use_checkpointing,
+            )
         else:
             self.cuda_config = {
                 "device": config.system.device,
