@@ -31,7 +31,9 @@ class CudaConfig(TypedDict):
 
 
 def enable_cuda(
-    amp_enabled: bool = True, use_checkpointing: bool = False
+    amp_enabled: bool = True,
+    use_checkpointing: bool = False,
+    device_index: int | None = None,
 ) -> CudaConfig:
     """Configures CUDA settings for AMP and gradient checkpointing.
 
@@ -42,12 +44,21 @@ def enable_cuda(
         use_checkpointing (bool, optional):
             Flag to indicate whether to use gradient checkpointing.
             Defaults to False.
+        device_index (int | None, optional):
+            If provided, select this CUDA device index (e.g. LOCAL_RANK under
+            torchrun). Defaults to None.
 
     Returns:
         CudaConfig: Configuration with keys 'amp_enabled', 'use_checkpointing',
             and 'device'.
     """
     cuda_available = torch.cuda.is_available()
+    if cuda_available and device_index is not None:
+        # Ensure we query and use the intended device (e.g. LOCAL_RANK under torchrun)
+        try:
+            torch.cuda.set_device(device_index)
+        except Exception:  # pragma: no cover
+            pass
 
     if TORCH_XLA_AVAILABLE:
         device_name = str(torch_xla.device())
@@ -56,8 +67,9 @@ def enable_cuda(
     # Only query device properties if CUDA is available
     elif cuda_available:
         try:
-            capability_major = torch.cuda.get_device_capability(0)[0]
-            device_name = torch.cuda.get_device_name(0)
+            idx = int(device_index) if device_index is not None else 0
+            capability_major = torch.cuda.get_device_capability(idx)[0]
+            device_name = torch.cuda.get_device_name(idx)
         except Exception:  # pragma: no cover - defensive: some backends may differ
             capability_major = 0
             device_name = "cuda"
@@ -84,7 +96,13 @@ def enable_cuda(
     return {
         "amp_enabled": amp_enabled and amp_available,
         "use_checkpointing": use_checkpointing and amp_available,
-        "device": "cuda" if cuda_available else "cpu",
+        "device": (
+            f"cuda:{int(device_index)}"
+            if cuda_available and device_index is not None
+            else "cuda"
+        )
+        if cuda_available
+        else "cpu",
     }
 
 
