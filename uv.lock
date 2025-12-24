@@ -2321,6 +2321,7 @@ dependencies = [
 
 [package.optional-dependencies]
 aws-sagemaker = [
+    { name = "boto3" },
     { name = "botocore", extra = ["crt"] },
     { name = "sagemaker" },
 ]
@@ -2336,6 +2337,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", marker = "extra == 'aws-sagemaker'", specifier = ">=1.42.16" },
     { name = "botocore", extras = ["crt"], marker = "extra == 'aws-sagemaker'", specifier = ">=1.32.23" },
     { name = "gymnasium", specifier = ">=1.2.0" },
     { name = "numpy", specifier = ">=2.2.6" },

@@ -24,6 +24,7 @@ dependencies = [
 aws-sagemaker = [
     "sagemaker>=3.0.0",
     "botocore[crt]>=1.32.23",
+    "boto3>=1.42.16",
 ]
 
 [dependency-groups]

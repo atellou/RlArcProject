@@ -11,6 +11,8 @@ setup(
             "rlarcworld.*",
             "experiments",
             "experiments.*",
+            "aws_sagemaker",
+            "aws_sagemaker.*",
         ]
     ),
     install_requires=[
@@ -27,6 +29,8 @@ setup(
     extras_require={
         "aws-sagemaker": [
             "sagemaker>=3.0.0",
+            "botocore[crt]>=1.32.23",
+            "boto3>=1.42.16",
         ],
     },
     python_requires="==3.12.*",

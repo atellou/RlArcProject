@@ -9,8 +9,8 @@ It submits a GPU training job using the SageMaker PyTorch Estimator and runs
 
 from __future__ import annotations
 
-import argparse
 import logging
+from dataclasses import dataclass
 
 from sagemaker.core.helper.session_helper import Session as SmSession
 from sagemaker.core.training.configs import (
@@ -25,35 +25,49 @@ from sagemaker.train.distributed import Torchrun
 logger = logging.getLogger(__name__)
 
 
-def main() -> None:
+@dataclass
+class SagemakerExperiment:
+    """Configuration for a SageMaker training job.
+
+    Attributes:
+        role_arn: AWS IAM role ARN for SageMaker execution.
+        s3_train_tar: S3 path to training data tarball.
+        experiment: Name of the experiment configuration to run.
+        experiments_config: Path to experiments YAML configuration file.
+        base_config: Path to base YAML configuration file.
+        epochs: Number of training epochs to run.
+        seed: Random seed for reproducibility.
+        instance_type: SageMaker instance type for training.
+        instance_count: Number of instances to use for training.
+        volume_size: EBS volume size in GB for training.
+        max_run: Maximum job runtime in seconds.
+        job_name: Custom name for the training job.
+        training_image: Custom training image URI.
+        pytorch_version: PyTorch version to use.
+        py_version: Python version to use.
+        dry_run: If True, only display the job configuration without submitting.
+    """
+
+    role_arn: str
+    s3_train_tar: str
+    experiment: str
+    experiments_config: str = "experiments/lr_td_analysis/experiments.yaml"
+    base_config: str = "experiments/configs/cloud_base.yaml"
+    epochs: int = 10
+    seed: int | None = None
+    instance_type: str = "ml.g5.12xlarge"
+    instance_count: int = 1
+    volume_size: int = 200
+    max_run: int = 24 * 60 * 60
+    job_name: str | None = None
+    training_image: str | None = None
+    pytorch_version: str = "2.1.0"
+    py_version: str = "py310"
+    dry_run: bool = False
+
+
+def run_experiment(args: SagemakerExperiment) -> None:
     """Submit a SageMaker training job using the PyTorch Estimator."""
-    parser = argparse.ArgumentParser(description="Launch SageMaker training")
-    parser.add_argument("--role-arn", required=True, type=str)
-    parser.add_argument("--s3-train-tar", required=True, type=str)
-    parser.add_argument("--experiment", required=True, type=str)
-    parser.add_argument(
-        "--experiments-config",
-        default="experiments/lr_td_analysis/experiments.yaml",
-        type=str,
-    )
-    parser.add_argument(
-        "--base-config",
-        default="experiments/configs/cloud_base.yaml",
-        type=str,
-    )
-    parser.add_argument("--epochs", default=10, type=int)
-    parser.add_argument("--seed", default=None, type=int)
-    parser.add_argument("--instance-type", default="ml.g5.12xlarge", type=str)
-    parser.add_argument("--instance-count", default=1, type=int)
-    parser.add_argument("--volume-size", default=200, type=int)
-    parser.add_argument("--max-run", default=24 * 60 * 60, type=int)
-    parser.add_argument("--job-name", default=None, type=str)
-    parser.add_argument("--training-image", default=None, type=str)
-    parser.add_argument("--pytorch-version", default="2.1.0", type=str)
-    parser.add_argument("--py-version", default="py310", type=str)
-
-    args = parser.parse_args()
-
     sess = SmSession()
     role = args.role_arn
     logger.info("SageMaker Session:")
@@ -132,8 +146,11 @@ def main() -> None:
         )
 
     train_data = InputData(channel_name="train", data_source=args.s3_train_tar)
+    if args.dry_run:
+        # pretty-print the training configuration and stop
+        import pprint
+
+        pprint.pp(model_trainer.to_request())  # full JSON request body
+        logger.info("Dry-run: job not submitted.")
+        return
     model_trainer.train(input_data_config=[train_data], wait=True, logs=True)
-
-
-if __name__ == "__main__":
-    main()
