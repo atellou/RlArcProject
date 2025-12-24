@@ -1,19 +1,11 @@
 """CUDA/AMP device configuration helpers."""
 
-import importlib.util
 import logging
 from typing import TypedDict
 
 import torch
 
 logger = logging.getLogger(__name__)
-
-TORCH_XLA_AVAILABLE = importlib.util.find_spec("torch_xla") is not None
-
-if TORCH_XLA_AVAILABLE:
-    import torch_xla
-else:
-    xm = None
 
 
 class CudaConfig(TypedDict):
@@ -60,12 +52,7 @@ def enable_cuda(
         except Exception:  # pragma: no cover
             pass
 
-    if TORCH_XLA_AVAILABLE:
-        device_name = str(torch_xla.device())
-        capability_major = 7
-        device_type = "XLA"
-    # Only query device properties if CUDA is available
-    elif cuda_available:
+    if cuda_available:
         try:
             idx = int(device_index) if device_index is not None else 0
             capability_major = torch.cuda.get_device_capability(idx)[0]

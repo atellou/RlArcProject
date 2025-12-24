@@ -9,23 +9,21 @@ license = {text = "Apache-2.0"}
 readme = "README.md"
 requires-python = "==3.12.*"
 dependencies = [
-    "torch",
-    "gymnasium",
-    "numpy",
-    "torchrl",
-    "torchvision",
-    "pyyaml",
-    "python-json-logger",
     "transformers>=4.57.3",
     "opencv-python>=4.12.0.88",
     "tensorboard>=2.20.0",
     "tensordict>=0.9.1",
+    "torch>=2.8.0",
+    "gymnasium>=1.2.0",
+    "numpy>=2.2.6",
+    "torchrl>=0.9.2",
+    "torchvision>=0.23.0",
 ]
 
 [project.optional-dependencies]
 aws-sagemaker = [
-    'torch-xla[tpu]>=2.0.0; platform_system=="Linux"',
-    'sagemaker>=2.0.0; platform_system=="Linux"',
+    "sagemaker>=3.0.0",
+    "botocore[crt]>=1.32.23",
 ]
 
 [dependency-groups]

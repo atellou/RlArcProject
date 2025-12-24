@@ -1,0 +1,98 @@
+# Cloud/SageMaker base configuration for ArcD4PG experiments
+# This config intentionally avoids machine-specific absolute paths.
+# The SageMaker entrypoint (sagemaker/train.py) is responsible for:
+# - extracting the dataset tarball
+# - setting config.dataset to the extracted sample paths
+# - setting checkpoint.checkpoint_dir to SM_MODEL_DIR
+
+dataset: ""
+
+env:
+  grid_size: 30
+  color_values: 10
+  max_penalty: 1.0
+  batch_size: 32
+
+network:
+  d_model: 128
+  d_ff: 512
+  num_layers: 4
+  num_heads: 8
+  dropout: 0.1
+  ape_type: "SinusoidalAPE2D"
+  rpe_type: "Two-slope-Alibi"
+  use_ope: true
+  ape_mixer: "weighted_sum_no_norm_vec"
+  trainable_ape: false
+  use_index_grid: true
+  use_temporal: true
+  use_examples: true
+
+d4pg:
+  policy_lr: 3.0e-4
+  critic_lr: 3.0e-3
+  gamma: 0.99
+  tau: 0.005
+  lr_scheduler_kwargs: null
+  n_step_config:
+    n_steps: 1
+  compute_td_error: true
+  carsm: false
+  entropy_coef: 0.0
+  entropy_coef_decay: 1.0
+  target_update_frequency: 10
+  max_grad_norm: 0.0
+
+distributional:
+  num_atoms:
+    pixel_wise: 21
+    binary: 21
+  v_min:
+    pixel_wise: -1
+    binary: -1
+  v_max:
+    pixel_wise: 1
+    binary: 1
+
+replay_buffer:
+  size: 100000
+  alpha: 0.6
+  beta: 0.4
+  warmup_ratio: 0.02
+
+training:
+  max_steps_per_epoch: 10000
+  validation_epochs: 1
+  validation_steps_per_epoch: 100
+  validation_steps_frequency: 100
+  min_train_batch_size: 2
+
+world_model:
+  enabled: false
+  learning_rate: 1.0e-4
+  lr_scheduler_kwargs: null
+  imagination_horizon: 5
+  imagination_ratio: 5
+  imagination_frequency: 10
+  model_update_frequency: 10
+
+checkpoint:
+  save_frequency: -1
+  checkpoint_dir: null
+  improvement_checkpoint_enabled: false
+
+logging:
+  tensorboard_enabled: true
+  log_frequency: 100
+
+system:
+  amp_enabled: true
+  use_checkpointing: true
+  fsdp_enabled: true
+  device: null
+
+reproducibility:
+  global_seed: null
+  dataset_seed: null
+  augmentation_seed: null
+  torch_deterministic: true
