@@ -14,6 +14,7 @@ from pathlib import Path
 
 from sagemaker.core.helper.session_helper import Session as SmSession
 from sagemaker.core.training.configs import (
+    CheckpointConfig,
     Compute,
     InputData,
     OutputDataConfig,
@@ -35,13 +36,15 @@ class SagemakerExperiment:
         output_data_config: OutputDataConfig,
         experiment: str,
         experiments_config: str,
-        base_config: str = "experiments/configs/cloud_base.yaml",
+        base_config: str = "aws_sagemaker/cloud_base.yaml",
         epochs: int = 10,
         seed: int | None = None,
         instance_type: str = "ml.g5.12xlarge",
         instance_count: int = 1,
         volume_size: int = 200,
+        enable_spot_instance: bool = False,
         max_run: int = 1 * 60 * 60,
+        max_wait: int | None = None,
         job_name: str | None = None,
         training_image: str | None = None,
         pytorch_version: str = "2.1.0",
@@ -51,6 +54,7 @@ class SagemakerExperiment:
 
         Attributes:
             role_arn: AWS IAM role ARN for SageMaker execution.
+            output_data_config: Output data configuration for SageMaker training job.
             experiment: Name of the experiment configuration to run.
             experiments_config: Path to experiments YAML configuration file.
             base_config: Path to base YAML configuration file.
@@ -59,6 +63,7 @@ class SagemakerExperiment:
             instance_type: SageMaker instance type for training.
             instance_count: Number of instances to use for training.
             volume_size: EBS volume size in GB for training.
+            enable_spot_instance: Enable spot instances for training.
             max_run: Maximum job runtime in seconds.
             job_name: Custom name for the training job.
             training_image: Custom training image URI.
@@ -74,11 +79,17 @@ class SagemakerExperiment:
         self.instance_type = instance_type
         self.instance_count = instance_count
         self.volume_size = volume_size
+        self.enable_spot_instance = enable_spot_instance
         self.max_run = max_run
+        self.max_wait = max_wait
         self.job_name = job_name
         self.training_image = training_image
         self.pytorch_version = pytorch_version
         self.py_version = py_version
+        # default OutputDataConfig if caller passed None
+        if output_data_config is None:
+            default_s3 = f"s3://{SmSession().default_bucket()}/{experiment}"
+            output_data_config = OutputDataConfig(s3_output_path=default_s3)
         self.output_data_config = output_data_config
 
         self.session = SmSession()
@@ -97,8 +108,16 @@ class SagemakerExperiment:
             instance_type=self.instance_type,
             instance_count=self.instance_count,
             volume_size_in_gb=self.volume_size,
+            enable_managed_spot_training=self.enable_spot_instance,
         )
         logger.info("Compute: %s", self.compute)
+
+        if self.enable_spot_instance:
+            s3_uri = self.output_data_config.s3_output_path
+            self.checkpoint_config = CheckpointConfig(
+                s3_uri=f"{s3_uri}/checkpoints",
+                local_path="/opt/ml/checkpoints",
+            )
 
         self.create_model_trainer()
 
@@ -145,7 +164,16 @@ class SagemakerExperiment:
 
     def create_model_trainer(self) -> None:
         """Create the model trainer for the training job."""
-        stopping_condition = StoppingCondition(max_runtime_in_seconds=self.max_run)
+        # SageMaker requires max_wait_time_in_seconds >= max_runtime_in_seconds.
+        wait_time = (
+            self.max_wait
+            if self.max_wait is not None
+            else (self.max_run * 2 if self.enable_spot_instance else None)
+        )
+        stopping_condition = StoppingCondition(
+            max_runtime_in_seconds=self.max_run,
+            max_wait_time_in_seconds=wait_time,
+        )
 
         self.model_trainer = ModelTrainer(
             training_image=self.training_image,
@@ -177,6 +205,9 @@ class SagemakerExperiment:
             },
         )
         logger.info(f"Model trainer created: {self.model_trainer}")
+
+        if hasattr(self, "checkpoint_config"):
+            self.model_trainer.with_checkpoint_config(self.checkpoint_config)
 
     def train(self, s3_train_data_tar: str) -> None:
         """Train the model using the SageMaker training job.

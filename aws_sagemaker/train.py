@@ -11,11 +11,20 @@ existing experiment runner via the ArcD4PG trainer.
 import argparse
 import logging
 import os
+import sys
 import tarfile
 from pathlib import Path
 
-from rlarcworld.trainers.arc_d4pg import ArcD4PG
-from rlarcworld.utils.config_loader import load_experiment
+# ---------------------------------------------------------------------------
+# Adjust PYTHONPATH inside the SageMaker container so that in-repo packages
+# like `rlarcworld` resolve without installing the project as a wheel.
+# ---------------------------------------------------------------------------
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from rlarcworld.trainers.arc_d4pg import ArcD4PG  # noqa: E402
+from rlarcworld.utils.config_loader import load_experiment  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -173,7 +182,10 @@ def main() -> None:
     config = load_experiment(args.experiment, args.experiments_config, args.base_config)
 
     config.dataset = _load_samples_path_list(extracted_dir, args.samples_path_list)
-    config.checkpoint.checkpoint_dir = str(model_dir)
+
+    # honour checkpoint directory from YAML; fall back to SageMaker default
+    if not config.checkpoint.checkpoint_dir:
+        config.checkpoint.checkpoint_dir = "/opt/ml/checkpoints"
 
     if args.seed is not None:
         config.reproducibility.global_seed = args.seed

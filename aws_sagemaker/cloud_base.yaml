@@ -78,7 +78,7 @@ world_model:
 
 checkpoint:
   save_frequency: -1
-  checkpoint_dir: null
+  checkpoint_dir: "/opt/ml/checkpoints"
   improvement_checkpoint_enabled: false
 
 logging:
