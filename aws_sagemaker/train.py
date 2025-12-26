@@ -144,7 +144,8 @@ def main() -> None:
     parser.add_argument("--experiment", required=True, type=str)
     parser.add_argument(
         "--experiments-config",
-        default="experiments/lr_td_analysis/experiments.yaml",
+        required=True,
+        type=str,
     )
     parser.add_argument("--base-config", default="experiments/configs/cloud_base.yaml")
     parser.add_argument("--epochs", default=10, type=int)

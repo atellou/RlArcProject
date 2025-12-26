@@ -14,7 +14,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
-
 from sagemaker.core.helper.session_helper import Session as SmSession
 
 
@@ -92,7 +91,10 @@ def create_and_upload_arc_tar(
     try:
         if not overwrite:
             s3_client.head_object(Bucket=bucket, Key=key)
-            raise FileExistsError(f"s3://{bucket}/{key} already exists")
+            logging.warning(
+                "Object %s/%s already exists; skipping upload.", bucket, key
+            )
+            return f"s3://{bucket}/{key}"
     except ClientError as err:
         if err.response["Error"]["Code"] != "404":
             raise

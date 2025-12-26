@@ -50,7 +50,7 @@ If you need additional system libraries, build and push an image to ECR and supp
 
 ## TODOs
 
-- [ ] Upload dataset tarball to S3.
+- [x] Upload dataset tarball to S3.
 - [ ] Build/push ECR image.
-- [ ] Configure IAM role and AWS credentials.
+- [x] Configure IAM role and AWS credentials.
 - [x] Add `--dry-run` option to `aws_sagemaker/launch.py` that prints the `ModelTrainer` request JSON and skips job submission.
