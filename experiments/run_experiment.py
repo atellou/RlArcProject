@@ -23,6 +23,49 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _maybe_init_distributed() -> tuple[int, int]:
+    """Initialize torch.distributed when launched via torchrun.
+
+    Returns:
+        (rank, world_size)
+    """
+    world_size_env = os.environ.get("WORLD_SIZE")
+    if world_size_env is None:
+        return 0, 1
+
+    try:
+        world_size = int(world_size_env)
+    except ValueError:
+        return 0, 1
+
+    if world_size <= 1:
+        return 0, 1
+
+    import torch
+    import torch.distributed as dist
+
+    if dist.is_available() and not dist.is_initialized():
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(backend=backend, init_method="env://")
+
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+
+    return rank, world_size
+
+
+def _maybe_destroy_distributed() -> None:
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
+    except Exception:
+        return
+
+
 def run_healthcheck(config_path: str, base_path: str) -> None:
     """Run a healthcheck to verify checkpoint save/load functionality.
 
@@ -200,6 +243,7 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
 
 def main() -> None:
     """Main entry point for running experiments."""
+    rank, world_size = _maybe_init_distributed()
     parser = argparse.ArgumentParser(
         description="Run ArcD4PG experiments from YAML configurations"
     )
@@ -259,17 +303,30 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Avoid duplicated outputs for non-rank0. Keep training logs if desired.
+    if world_size > 1 and rank != 0:
+        logging.getLogger().setLevel(logging.WARNING)
+
     if args.list:
+        if world_size > 1 and rank != 0:
+            _maybe_destroy_distributed()
+            return
         experiments = list_experiments(args.config)
         print("\nAvailable experiments:")
         print("-" * 60)
         for name, description in experiments.items():
             print(f"  {name:30s} - {description}")
         print()
+        _maybe_destroy_distributed()
         return
 
     if args.healthcheck:
+        if world_size > 1 and rank != 0:
+            _maybe_destroy_distributed()
+            logger.info("Non-rank0 process: skipping healthcheck")
+            return
         run_healthcheck(args.config, args.base)
+        _maybe_destroy_distributed()
         return
 
     if not args.experiment:
@@ -315,6 +372,8 @@ def main() -> None:
     experiment.train(epochs=args.epochs)
 
     logger.info("Training complete!")
+
+    _maybe_destroy_distributed()
 
 
 if __name__ == "__main__":

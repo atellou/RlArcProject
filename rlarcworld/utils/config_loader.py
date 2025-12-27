@@ -14,8 +14,10 @@ from rlarcworld.common.configs import (
     D4PGConfig,
     DistributionalConfig,
     EnvConfig,
+    LoggingConfig,
     NStepMinVMaxConfig,
     ReplayBufferConfig,
+    ReproducibilityConfig,
     RlArcWorldViTARCConfig,
     SystemConfig,
     TrainingConfig,
@@ -149,6 +151,12 @@ def dict_to_config(config_dict: dict) -> ArcD4PGConfig:
     checkpoint_dict = config_dict.get("checkpoint", {})
     checkpoint_config = CheckpointConfig(**checkpoint_dict)
 
+    logging_dict = config_dict.get("logging", {})
+    logging_config = LoggingConfig(**logging_dict)
+
+    reproducibility_dict = config_dict.get("reproducibility", {})
+    reproducibility_config = ReproducibilityConfig(**reproducibility_dict)
+
     system_dict = config_dict.get("system", {})
     system_config = SystemConfig(**system_dict)
 
@@ -162,6 +170,8 @@ def dict_to_config(config_dict: dict) -> ArcD4PGConfig:
         training=training_config,
         world_model=world_model_config,
         checkpoint=checkpoint_config,
+        logging=logging_config,
+        reproducibility=reproducibility_config,
         system=system_config,
     )
 

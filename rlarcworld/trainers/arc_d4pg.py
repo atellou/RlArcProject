@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from tensordict import TensorDict
 from tensordict._reductions import _make_td
 from torch.serialization import add_safe_globals
@@ -80,6 +81,8 @@ class ArcD4PG:
         config = config.get_validated_config()
         self.exp_config = config
 
+        self.fsdp_enabled = bool(getattr(config.system, "fsdp_enabled", False))
+
         self.global_seed: int | None = None
         if config.reproducibility.global_seed is not None:
             self._setup_reproducibility(config=config.reproducibility)
@@ -96,6 +99,14 @@ class ArcD4PG:
             warmup_buffer_ratio=config.replay_buffer.warmup_ratio,
         )
 
+    def _dist_rank(self) -> int:
+        if dist.is_available() and dist.is_initialized():
+            return int(dist.get_rank())
+        return 0
+
+    def _is_rank0(self) -> bool:
+        return self._dist_rank() == 0
+
     def _setup_reproducibility(self, config: ReproducibilityConfig) -> None:
         """Reproducibility: set global seeds and deterministic flags."""
         if not isinstance(config.global_seed, int):
@@ -103,6 +114,12 @@ class ArcD4PG:
         self.global_seed = config.global_seed
 
         msg = "Setting: Global seed: {}".format(self.global_seed)
+
+        # Optional deterministic mode
+        # NOTE: CuBLAS determinism requires this env var to be set *before* any
+        # CUDA context is initialized.
+        if config.torch_deterministic:
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
         # Optional deterministic mode
         # NOTE: CuBLAS determinism requires this env var to be set *before* any
@@ -125,12 +142,19 @@ class ArcD4PG:
             # TF32 can introduce nondeterminism; disable in deterministic mode.
             torch.backends.cuda.matmul.allow_tf32 = False
             torch.backends.cudnn.allow_tf32 = False
+        logger.info(msg)
 
     def _setup_system(self, config: ArcD4PGConfig) -> None:
         """Configure system settings: seed, device, and paths."""
         # Configure device
         if config.system.device is None:
-            self.cuda_config = enable_cuda(amp_enabled=config.system.amp_enabled)
+            local_rank_env = os.environ.get("LOCAL_RANK")
+            device_index = int(local_rank_env) if local_rank_env is not None else None
+            self.cuda_config = enable_cuda(
+                amp_enabled=config.system.amp_enabled,
+                use_checkpointing=config.system.use_checkpointing,
+                device_index=device_index,
+            )
         else:
             self.cuda_config = {
                 "device": config.system.device,
@@ -291,6 +315,7 @@ class ArcD4PG:
             n_steps=config.d4pg.n_step_config.n_steps,
             device_config=self.cuda_config,
             amp_enabled=config.system.amp_enabled,
+            fsdp_enabled=config.system.fsdp_enabled,
             carsm=config.d4pg.carsm,
             entropy_coef=config.d4pg.entropy_coef,
             entropy_coef_decay=config.d4pg.entropy_coef_decay,
@@ -406,6 +431,9 @@ class ArcD4PG:
 
         # Attach TensorBoard callbacks (train and validation)
         try:
+            if not self._is_rank0():
+                logger.info("Non-rank0 process: skipping TensorBoard setup")
+                return
             if not self.exp_config.logging.tensorboard_enabled:
                 logger.info("TensorBoard disabled in config, skipping setup")
                 return
@@ -422,6 +450,7 @@ class ArcD4PG:
                 self.trainer.on_validation_step or OrderedDict()
             )
             self.trainer.on_validation_step["tensorboard"] = tb_val_cb
+            logger.info("TensorBoard attached!!!")
         except Exception as e:
             logger.warning("TensorBoard not attached: %s", e)
 
@@ -671,6 +700,9 @@ class ArcD4PG:
             if warmup:
                 logger.warning("Skipping final checkpoint during warmup period")
                 return
+            if not self._is_rank0() and not self.fsdp_enabled:
+                logger.info("Non-rank0 process: skipping final checkpoint")
+                return
             logger.info("Saving final checkpoint...")
             self.save_checkpoint(
                 os.path.join(
@@ -711,6 +743,11 @@ class ArcD4PG:
             include_config: Whether to include config checkpoint
             include_provenance: Whether to include provenance checkpoint
         """
+        # With FSDP full-state-dict gathering, all ranks must participate in
+        # state_dict/optim_state_dict collection, but only rank0 should write.
+        if not self._is_rank0() and not self.fsdp_enabled:
+            logger.info("Non-rank0 process: skipping save_checkpoint")
+            return
         # Resolve target path (file or directory semantics)
         checkpoint_path = resolve_save_path(path, self.__class__.__name__)
         if not (
@@ -818,8 +855,15 @@ class ArcD4PG:
         }
         checkpoint = add_schema_and_class(payload, self.__class__.__name__)
 
-        torch.save(checkpoint, checkpoint_path)
-        logger.info(f"Checkpoint saved to {checkpoint_path}")
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+
+        if self._is_rank0():
+            torch.save(checkpoint, checkpoint_path)
+            logger.info(f"Checkpoint saved to {checkpoint_path}")
+
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
 
     def load_checkpoint(
         self,
@@ -844,8 +888,11 @@ class ArcD4PG:
             add_safe_globals(safe_list)
         except Exception:
             pass
+        map_location: str | torch.device = self.device
+        if dist.is_available() and dist.is_initialized():
+            map_location = "cpu"
         checkpoint = torch.load(
-            cp_path, map_location=self.device, weights_only=weights_only
+            cp_path, map_location=map_location, weights_only=weights_only
         )
         restored_core = False
         restored_env = False

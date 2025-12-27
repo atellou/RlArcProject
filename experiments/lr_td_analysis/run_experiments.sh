@@ -19,8 +19,16 @@ BASE_PATH="${ROOT_DIR}/experiments/configs/base.yaml"
 SAMPLE_PATH_LIST="${ROOT_DIR}/experiments/lr_td_analysis/arc_sample.txt"
 
 export CUBLAS_WORKSPACE_CONFIG=":4096:8"
+export PYTORCH_ALLOC_CONF="expandable_segments:True"
 SEED="123"
 EPOCHS="10"
+
+NPROC_PER_NODE="$(uv run python -c 'import torch; print(torch.cuda.device_count())')"
+if [[ -z "${NPROC_PER_NODE}" || "${NPROC_PER_NODE}" -lt 1 ]]; then
+  echo "ERROR: No CUDA devices found (torch.cuda.device_count()=${NPROC_PER_NODE})" >&2
+  exit 1
+fi
+echo "Using torchrun with nproc_per_node=${NPROC_PER_NODE}"
 
 experiments=(
   lr_1e3_nstep_1
@@ -62,7 +70,7 @@ for exp_name in "${experiments[@]}"; do
   echo "Starting experiment: ${exp_name}"
   echo "------------------------------------------------------------"
 
-  uv run python experiments/run_experiment.py \
+  uv run torchrun --standalone --nproc_per_node "${NPROC_PER_NODE}" experiments/run_experiment.py \
     --experiment "${exp_name}" \
     --config "${CONFIG_PATH}" \
     --base "${BASE_PATH}" \
