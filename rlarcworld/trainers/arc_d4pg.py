@@ -121,6 +121,12 @@ class ArcD4PG:
         if config.torch_deterministic:
             os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
+        # Optional deterministic mode
+        # NOTE: CuBLAS determinism requires this env var to be set *before* any
+        # CUDA context is initialized.
+        if config.torch_deterministic:
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
         # Python / NumPy / Torch seeds
         random.seed(self.global_seed)
         np.random.seed(self.global_seed)
