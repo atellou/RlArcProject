@@ -36,7 +36,8 @@ class SagemakerExperiment:
         output_data_config: OutputDataConfig,
         experiment: str,
         experiments_config: str,
-        base_config: str = "aws_sagemaker/cloud_base.yaml",
+        training_image: str,
+        base_config: str = "./lr_experiment/cloud_base.yaml",
         epochs: int = 10,
         seed: int | None = None,
         instance_type: str = "ml.g5.12xlarge",
@@ -46,7 +47,6 @@ class SagemakerExperiment:
         max_run: int = 1 * 60 * 60,
         max_wait: int | None = None,
         job_name: str | None = None,
-        training_image: str | None = None,
         pytorch_version: str = "2.1.0",
         py_version: str = "py310",
     ):
@@ -57,6 +57,7 @@ class SagemakerExperiment:
             output_data_config: Output data configuration for SageMaker training job.
             experiment: Name of the experiment configuration to run.
             experiments_config: Path to experiments YAML configuration file.
+            training_image: Training image URI.
             base_config: Path to base YAML configuration file.
             epochs: Number of training epochs to run.
             seed: Random seed for reproducibility.
@@ -66,7 +67,6 @@ class SagemakerExperiment:
             enable_spot_instance: Enable spot instances for training.
             max_run: Maximum job runtime in seconds.
             job_name: Custom name for the training job.
-            training_image: Custom training image URI.
             pytorch_version: PyTorch version to use.
             py_version: Python version to use.
         """
@@ -86,10 +86,6 @@ class SagemakerExperiment:
         self.training_image = training_image
         self.pytorch_version = pytorch_version
         self.py_version = py_version
-        # default OutputDataConfig if caller passed None
-        if output_data_config is None:
-            default_s3 = f"s3://{SmSession().default_bucket()}/{experiment}"
-            output_data_config = OutputDataConfig(s3_output_path=default_s3)
         self.output_data_config = output_data_config
 
         self.session = SmSession()
@@ -97,9 +93,6 @@ class SagemakerExperiment:
         logger.info("  - role arn: %s", self.__role_arn)
         logger.info("  - bucket: %s", self.session.default_bucket())
         logger.info("  - region: %s", self.session.boto_region_name)
-
-        self.training_image = self.__retreive_image()
-        logger.info("Training image: %s", self.training_image)
 
         self.source_code = self.__source_code()
         logger.info("Source code: %s", self.source_code)
@@ -121,36 +114,13 @@ class SagemakerExperiment:
 
         self.create_model_trainer()
 
-    def __retreive_image(self):
-        """Submit a SageMaker training job using the PyTorch Estimator."""
-        training_image = self.training_image
-        if training_image is None:
-            try:
-                from sagemaker.core import image_uris
-            except ModuleNotFoundError as e:
-                raise ModuleNotFoundError(
-                    "Unable to import 'sagemaker.core.image_uris'. "
-                    "Either install full SageMaker Python SDK or pass training-image"
-                    "with the full ECR image URI to use for training."
-                ) from e
-
-            training_image = image_uris.retrieve(
-                framework="pytorch",
-                region=self.session.boto_region_name,
-                version=self.pytorch_version,
-                py_version=self.py_version,
-                image_scope="training",
-                instance_type=self.instance_type,
-            )
-        return training_image
-
     def __source_code(self) -> SourceCode:
         """Return the source code for the training job."""
-        project_root = Path(__file__).resolve().parent.parent  # repo root
+        code_dir = Path(__file__).resolve().parent  # aws_sagemaker folder
 
         source_code = SourceCode(
-            source_dir=str(project_root),
-            entry_script="aws_sagemaker/train.py",
+            source_dir=str(code_dir),
+            entry_script="train.py",
             ignore_patterns=[
                 "*.ipynb",
                 ".git",
@@ -194,14 +164,13 @@ class SagemakerExperiment:
                     "base-config": self.base_config,
                     "epochs": str(self.epochs),
                     "seed": None if self.seed is None else str(self.seed),
-                    "samples-path-list": "arc_sample.txt",
                 }.items()
                 if v is not None
             },
             environment={
                 "NCCL_ASYNC_ERROR_HANDLING": "1",
                 "NCCL_DEBUG": "WARN",
-                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                "PYTORCH_ALLOC_CONF": "max_split_size_mb:128,expandable_segments:True",
             },
         )
         logger.info(f"Model trainer created: {self.model_trainer}")

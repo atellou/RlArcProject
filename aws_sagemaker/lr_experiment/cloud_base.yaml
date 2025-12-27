@@ -11,7 +11,7 @@ env:
   grid_size: 30
   color_values: 10
   max_penalty: 1.0
-  batch_size: 32
+  batch_size: 16
 
 network:
   d_model: 128

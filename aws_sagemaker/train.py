@@ -11,20 +11,11 @@ existing experiment runner via the ArcD4PG trainer.
 import argparse
 import logging
 import os
-import sys
 import tarfile
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Adjust PYTHONPATH inside the SageMaker container so that in-repo packages
-# like `rlarcworld` resolve without installing the project as a wheel.
-# ---------------------------------------------------------------------------
-project_root = Path(__file__).resolve().parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
-from rlarcworld.trainers.arc_d4pg import ArcD4PG  # noqa: E402
-from rlarcworld.utils.config_loader import load_experiment  # noqa: E402
+from rlarcworld.trainers.arc_d4pg import ArcD4PG
+from rlarcworld.utils.config_loader import load_experiment
 
 logging.basicConfig(
     level=logging.INFO,
@@ -118,7 +109,10 @@ def _extract_tarball(tar_path: Path, extract_dir: Path) -> Path:
             member_path = (extract_dir / member.name).resolve()
             if not str(member_path).startswith(str(extract_root)):
                 raise RuntimeError(f"Unsafe path in tarball member: {member.name}")
-        tf.extractall(path=extract_dir)
+        try:
+            tf.extractall(path=extract_dir, filter="data")
+        except TypeError:
+            tf.extractall(path=extract_dir)
 
     marker.write_text(str(tar_path) + "\n")
     return extract_dir
@@ -160,7 +154,13 @@ def main() -> None:
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--seed", default=None, type=int)
     parser.add_argument("--dataset-tarball", default=None, type=str)
-    parser.add_argument("--samples-path-list", default="arc_sample.txt", type=str)
+    parser.add_argument(
+        "--samples-path-list",
+        default=None,
+        type=str,
+        help="Relative path to a text file listing JSON sample paths. \
+        If omitted, all *.json files under the extracted tarball are used.",
+    )
 
     args = parser.parse_args()
 
@@ -181,7 +181,12 @@ def main() -> None:
 
     config = load_experiment(args.experiment, args.experiments_config, args.base_config)
 
-    config.dataset = _load_samples_path_list(extracted_dir, args.samples_path_list)
+    if args.samples_path_list:
+        config.dataset = _load_samples_path_list(extracted_dir, args.samples_path_list)
+    else:
+        # Use every JSON file in the extracted directory
+        config.dataset = [str(p) for p in extracted_dir.rglob("*.json")]
+        logger.info("Loaded %d samples from extracted dataset", len(config.dataset))
 
     # honour checkpoint directory from YAML; fall back to SageMaker default
     if not config.checkpoint.checkpoint_dir:

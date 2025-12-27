@@ -165,7 +165,7 @@ cython_debug/
 #.idea/
 
 # Custom
-experiments/lr_td_analysis/arc_sample.txt
+aws_sagemaker/lr_experiment/arc_sample.txt
 rlarcworld/algorithms/old.py
 rlarcworld/jobs_old/**
 rlarcworld/**/dataset/
