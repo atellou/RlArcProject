@@ -168,7 +168,7 @@ class SagemakerExperiment:
                 if v is not None
             },
             environment={
-                "NCCL_ASYNC_ERROR_HANDLING": "1",
+                "TORCH_NCCL_ASYNC_ERROR_HANDLING": "1",
                 "NCCL_DEBUG": "WARN",
                 "PYTORCH_ALLOC_CONF": "max_split_size_mb:128,expandable_segments:True",
             },

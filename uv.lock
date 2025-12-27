@@ -2165,6 +2165,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-json-logger"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/bf/eca6a3d43db1dae7070f70e160ab20b807627ba953663ba07928cdd3dc58/python_json_logger-4.0.0.tar.gz", hash = "sha256:f58e68eb46e1faed27e0f574a55a0455eecd7b8a5b88b85a784519ba3cff047f", size = 17683 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/e5/fecf13f06e5e5f67e8837d777d1bc43fac0ed2b77a676804df5c34744727/python_json_logger-4.0.0-py3-none-any.whl", hash = "sha256:af09c9daf6a813aa4cc7180395f50f2a9e5fa056034c9953aec92e381c5ba1e2", size = 15548 },
+]
+
+[[package]]
 name = "python-rapidjson"
 version = "1.23"
 source = { registry = "https://pypi.org/simple" }
@@ -2322,6 +2331,7 @@ dependencies = [
     { name = "gymnasium" },
     { name = "numpy" },
     { name = "opencv-python" },
+    { name = "python-json-logger" },
     { name = "tensorboard" },
     { name = "tensordict" },
     { name = "torch" },
@@ -2354,6 +2364,7 @@ requires-dist = [
     { name = "gymnasium", specifier = ">=1.2.0" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "opencv-python", specifier = ">=4.12.0.88" },
+    { name = "python-json-logger", specifier = ">=4.0.0" },
     { name = "sagemaker", marker = "extra == 'aws-sagemaker'", specifier = ">=3.0.0" },
     { name = "tensorboard", specifier = ">=2.20.0" },
     { name = "tensordict", specifier = ">=0.9.1" },

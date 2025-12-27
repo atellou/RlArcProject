@@ -141,22 +141,42 @@ class D4PGCore:
 
         # Optional FSDP wrapping (shards params / grads / optimizer state)
         if self._using_fsdp and self._FSDP is not None:
+            from torch.distributed.fsdp.wrap import ModuleWrapPolicy
+
             device_id = torch.device(self.device)
+
+            # Exclude embedding and normalization layers from FSDP wrapping
+            # to avoid shape corruption issues
+            fsdp_wrap_policy = ModuleWrapPolicy(
+                {
+                    torch.nn.TransformerEncoderLayer,
+                    torch.nn.TransformerDecoderLayer,
+                }
+            )
+
             self.actor = self._FSDP(
-                self.actor, device_id=device_id, use_orig_params=True
+                self.actor,
+                device_id=device_id,
+                use_orig_params=True,
+                auto_wrap_policy=fsdp_wrap_policy,
             )
             self.critic = self._FSDP(
-                self.critic, device_id=device_id, use_orig_params=True
+                self.critic,
+                device_id=device_id,
+                use_orig_params=True,
+                auto_wrap_policy=fsdp_wrap_policy,
             )
             self.actor_target = self._FSDP(
                 self.actor_target.to(self.device).eval(),
                 device_id=device_id,
                 use_orig_params=True,
+                auto_wrap_policy=fsdp_wrap_policy,
             )
             self.critic_target = self._FSDP(
                 self.critic_target.to(self.device).eval(),
                 device_id=device_id,
                 use_orig_params=True,
+                auto_wrap_policy=fsdp_wrap_policy,
             )
 
         self.actor_target.load_state_dict(self.actor.state_dict())
@@ -337,9 +357,9 @@ class D4PGCore:
         Returns:
             TensorDict: Actor loss.
         """
-        assert (
-            not self.carsm or target_q is not None
-        ), "target_q must be provided when using CARSM loss."
+        assert not self.carsm or target_q is not None, (
+            "target_q must be provided when using CARSM loss."
+        )
 
         # Action probabilities
         if action_probs is None:

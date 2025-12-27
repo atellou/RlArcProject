@@ -18,6 +18,7 @@ dependencies = [
     "numpy>=2.2.6",
     "torchrl>=0.9.2",
     "torchvision>=0.23.0",
+    "python-json-logger>=4.0.0",
 ]
 
 [project.optional-dependencies]
