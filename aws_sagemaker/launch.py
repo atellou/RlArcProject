@@ -178,11 +178,15 @@ class SagemakerExperiment:
         if hasattr(self, "checkpoint_config"):
             self.model_trainer.with_checkpoint_config(self.checkpoint_config)
 
-    def train(self, s3_train_data_tar: str) -> None:
+    def train(
+        self, s3_train_data_tar: str, wait: bool = True, logs: bool = True
+    ) -> None:
         """Train the model using the SageMaker training job.
 
         Args:
             s3_train_data_tar: S3 path to training data tarball.
+            wait: Wait for the training job to complete.
+            logs: Print logs to stdout.
         """
         train_data = InputData(channel_name="train", data_source=s3_train_data_tar)
         self.model_trainer.train(input_data_config=[train_data], wait=True, logs=True)
