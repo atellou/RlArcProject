@@ -11,7 +11,7 @@ env:
   grid_size: 30
   color_values: 10
   max_penalty: 1.0
-  batch_size: 16
+  batch_size: 8
 
 network:
   d_model: 128
@@ -27,6 +27,8 @@ network:
   use_index_grid: true
   use_temporal: true
   use_examples: true
+  example_compression_tokens: 32
+  grid_compression_tokens: 256
 
 d4pg:
   policy_lr: 3.0e-4

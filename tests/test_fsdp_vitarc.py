@@ -90,9 +90,9 @@ def test_fsdp_vitarc_single_gpu():
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Embedding):
                 weight = module.weight
-                assert weight.ndim == 2, (
-                    f"Embedding {name} weight is not 2-D: shape={weight.shape}"
-                )
+                assert (
+                    weight.ndim == 2
+                ), f"Embedding {name} weight is not 2-D: shape={weight.shape}"
                 logger.info(f"Embedding {name} has correct 2-D shape: {weight.shape}")
 
         # Create input state with all required fields
@@ -156,12 +156,12 @@ def test_fsdp_vitarc_single_gpu():
         # Verify embedding gradients specifically
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Embedding):
-                assert module.weight.grad is not None, (
-                    f"Embedding {name} has no gradient"
-                )
-                assert module.weight.grad.ndim == 2, (
-                    f"Embedding {name} gradient is not 2-D"
-                )
+                assert (
+                    module.weight.grad is not None
+                ), f"Embedding {name} has no gradient"
+                assert (
+                    module.weight.grad.ndim == 2
+                ), f"Embedding {name} gradient is not 2-D"
                 logger.info(
                     f"Embedding {name} gradient shape: {module.weight.grad.shape}"
                 )
@@ -235,16 +235,16 @@ def test_fsdp_vitarc_embedding_shape_preservation():
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Embedding):
                 current_shape = module.weight.shape
-                assert name in original_shapes, (
-                    f"Embedding {name} not found in original shapes"
-                )
+                assert (
+                    name in original_shapes
+                ), f"Embedding {name} not found in original shapes"
                 assert current_shape == original_shapes[name], (
                     f"Embedding {name} shape changed: ",
                     f"{original_shapes[name]} -> {current_shape}",
                 )
-                assert len(current_shape) == 2, (
-                    f"Embedding {name} is not 2-D: {current_shape}"
-                )
+                assert (
+                    len(current_shape) == 2
+                ), f"Embedding {name} is not 2-D: {current_shape}"
                 logger.info(f"Verified {name} shape preserved: {current_shape}")
 
         logger.info("All embedding shapes preserved correctly")

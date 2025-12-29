@@ -59,7 +59,7 @@ convention = "google"
 # Mypy configuration
 [tool.mypy]
 python_version = "3.12"
-packages = ["rlarcworld"]
+packages = ["rlarcworld", "aws_sagemaker", "experiments"]
 ignore_missing_imports = true
 disallow_untyped_defs = false
 warn_unused_ignores = true

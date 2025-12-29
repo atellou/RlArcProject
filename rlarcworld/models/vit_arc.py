@@ -338,6 +338,11 @@ class CustomT5Attention(T5Attention):
                 (1, self.n_heads, query_length, key_length), device=device
             )
         elif self.rpe_type in ["Four-diag-slope-Alibi", "Two-slope-Alibi"]:
+            # If relative_position is None, return zeros (RPE disabled)
+            if relative_position is None:
+                return torch.zeros(
+                    (1, self.n_heads, query_length, key_length), device=device
+                )
             relative_position = relative_position.to(device)
 
             if self.rpe_abs:

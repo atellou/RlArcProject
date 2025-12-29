@@ -141,17 +141,80 @@ class D4PGCore:
 
         # Optional FSDP wrapping (shards params / grads / optimizer state)
         if self._using_fsdp and self._FSDP is not None:
-            from torch.distributed.fsdp.wrap import ModuleWrapPolicy
+            import functools
+
+            from transformers.models.t5.modeling_t5 import T5LayerNorm
 
             device_id = torch.device(self.device)
 
-            # Exclude embedding and normalization layers from FSDP wrapping
-            # to avoid shape corruption issues
-            fsdp_wrap_policy = ModuleWrapPolicy(
-                {
-                    torch.nn.TransformerEncoderLayer,
-                    torch.nn.TransformerDecoderLayer,
-                }
+            # Collect embedding and small modules to exclude from FSDP wrapping
+            # Must collect both main and target networks since targets are deepcopies
+            from rlarcworld.models.vit_arc import ViTARCEmbedding
+
+            ignored_modules = []
+            # Collect from actor and actor_target
+            for module in self.actor.modules():
+                if isinstance(
+                    module,
+                    (
+                        torch.nn.Embedding,
+                        torch.nn.EmbeddingBag,
+                        ViTARCEmbedding,
+                        torch.nn.LayerNorm,
+                        T5LayerNorm,
+                    ),
+                ):
+                    ignored_modules.append(module)
+            for module in self.actor_target.modules():
+                if isinstance(
+                    module,
+                    (
+                        torch.nn.Embedding,
+                        torch.nn.EmbeddingBag,
+                        ViTARCEmbedding,
+                        torch.nn.LayerNorm,
+                        T5LayerNorm,
+                    ),
+                ):
+                    ignored_modules.append(module)
+            # Collect from critic and critic_target
+            for module in self.critic.modules():
+                if isinstance(
+                    module,
+                    (
+                        torch.nn.Embedding,
+                        torch.nn.EmbeddingBag,
+                        ViTARCEmbedding,
+                        torch.nn.LayerNorm,
+                        T5LayerNorm,
+                    ),
+                ):
+                    ignored_modules.append(module)
+            for module in self.critic_target.modules():
+                if isinstance(
+                    module,
+                    (
+                        torch.nn.Embedding,
+                        torch.nn.EmbeddingBag,
+                        ViTARCEmbedding,
+                        torch.nn.LayerNorm,
+                        T5LayerNorm,
+                    ),
+                ):
+                    ignored_modules.append(module)
+
+            # Custom policy: exclude embeddings but use size-based wrapping for others
+            def custom_fsdp_policy(
+                module, recurse, nonwrapped_numel, min_num_params=100_000_000
+            ):
+                # Never wrap embedding layers to prevent shape corruption
+                if isinstance(module, (torch.nn.Embedding, torch.nn.EmbeddingBag)):
+                    return False
+                # Use size-based wrapping for other modules
+                return nonwrapped_numel >= min_num_params
+
+            fsdp_wrap_policy = functools.partial(
+                custom_fsdp_policy, min_num_params=100_000_000
             )
 
             self.actor = self._FSDP(
@@ -159,24 +222,28 @@ class D4PGCore:
                 device_id=device_id,
                 use_orig_params=True,
                 auto_wrap_policy=fsdp_wrap_policy,
+                ignored_modules=ignored_modules,
             )
             self.critic = self._FSDP(
                 self.critic,
                 device_id=device_id,
                 use_orig_params=True,
                 auto_wrap_policy=fsdp_wrap_policy,
+                ignored_modules=ignored_modules,
             )
             self.actor_target = self._FSDP(
                 self.actor_target.to(self.device).eval(),
                 device_id=device_id,
                 use_orig_params=True,
                 auto_wrap_policy=fsdp_wrap_policy,
+                ignored_modules=ignored_modules,
             )
             self.critic_target = self._FSDP(
                 self.critic_target.to(self.device).eval(),
                 device_id=device_id,
                 use_orig_params=True,
                 auto_wrap_policy=fsdp_wrap_policy,
+                ignored_modules=ignored_modules,
             )
 
         self.actor_target.load_state_dict(self.actor.state_dict())
@@ -357,9 +424,9 @@ class D4PGCore:
         Returns:
             TensorDict: Actor loss.
         """
-        assert not self.carsm or target_q is not None, (
-            "target_q must be provided when using CARSM loss."
-        )
+        assert (
+            not self.carsm or target_q is not None
+        ), "target_q must be provided when using CARSM loss."
 
         # Action probabilities
         if action_probs is None:
