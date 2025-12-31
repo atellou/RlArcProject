@@ -98,7 +98,7 @@ class RlArcWorldViTARCConfig:
     use_temporal: bool = True
     use_examples: bool = True
     example_compression_tokens: int = 32
-    grid_compression_tokens: int | None = None
+    grid_compression_tokens: int | None = 256
     color_values: int | None = None
 
     @classmethod

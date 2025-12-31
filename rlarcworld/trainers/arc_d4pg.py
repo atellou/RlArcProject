@@ -550,8 +550,8 @@ class ArcD4PG:
             if ctx.loss_actor is not None:
                 msg += (
                     f", Iteration {ctx.iteration}: "
-                    f"Actor Loss: {ctx.loss_actor:.4f}, "
-                    f"Critic Loss: {ctx.loss_critic:.4f}"
+                    f"Actor Loss: {ctx.loss_actor:.7f}, "
+                    f"Critic Loss: {ctx.loss_critic:.7f}"
                 )
                 # Add world model metrics if enabled
                 if isinstance(self.world_model_stepper, ArcWorldModelStepper):
@@ -696,6 +696,14 @@ class ArcD4PG:
             failed = True
             raise
         finally:
+            # Flush and close TensorBoard writer to ensure all data is written
+            if hasattr(self, "tb_manager") and self.tb_manager is not None:
+                try:
+                    logger.info("Flushing TensorBoard writer...")
+                    self.tb_manager.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close TensorBoard writer: {e}")
+
             _buffer_warmup, warmup = self.trainer.warmup_info()
             if warmup:
                 logger.warning("Skipping final checkpoint during warmup period")

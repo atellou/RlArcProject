@@ -195,9 +195,6 @@ def main() -> None:
     if args.seed is not None:
         config.reproducibility.global_seed = args.seed
 
-    if config.logging.tensorboard_enabled:
-        os.environ.setdefault("TENSORBOARD_LOGDIR", str(output_dir / "tensorboard"))
-
     logger.info("SageMaker job paths:")
     logger.info("  - train_channel_dir=%s", train_channel_dir)
     logger.info("  - extracted_dir=%s", extracted_dir)

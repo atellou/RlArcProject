@@ -171,6 +171,7 @@ class SagemakerExperiment:
                 "TORCH_NCCL_ASYNC_ERROR_HANDLING": "1",
                 "NCCL_DEBUG": "WARN",
                 "PYTORCH_ALLOC_CONF": "max_split_size_mb:128,expandable_segments:True",
+                "TENSORBOARD_LOGDIR": "/opt/ml/output/data/tensorboard",
             },
         )
         logger.info(f"Model trainer created: {self.model_trainer}")

@@ -17,7 +17,7 @@ from rlarcworld.trainers.arc_d4pg import ArcD4PG
 from rlarcworld.utils.config_loader import list_experiments, load_experiment
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
