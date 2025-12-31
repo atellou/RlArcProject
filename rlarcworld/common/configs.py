@@ -78,6 +78,8 @@ class RlArcWorldViTARCConfig:
         use_index_grid: Whether to use index grid.
         use_temporal: Whether to use temporal encoding.
         use_examples: Whether to use examples.
+        example_compression_tokens: Number of tokens to compress each example to.
+        grid_compression_tokens: Number of tokens to compress grid(None=no compression).
         color_values: Number of color values in the dataset.
     """
 
@@ -95,6 +97,8 @@ class RlArcWorldViTARCConfig:
     use_index_grid: bool = True
     use_temporal: bool = True
     use_examples: bool = True
+    example_compression_tokens: int = 32
+    grid_compression_tokens: int | None = None
     color_values: int | None = None
 
     @classmethod

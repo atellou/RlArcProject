@@ -18,6 +18,7 @@ dependencies = [
     "numpy>=2.2.6",
     "torchrl>=0.9.2",
     "torchvision>=0.23.0",
+    "python-json-logger>=4.0.0",
 ]
 
 [project.optional-dependencies]
@@ -58,7 +59,7 @@ convention = "google"
 # Mypy configuration
 [tool.mypy]
 python_version = "3.12"
-packages = ["rlarcworld"]
+packages = ["rlarcworld", "aws_sagemaker", "experiments"]
 ignore_missing_imports = true
 disallow_untyped_defs = false
 warn_unused_ignores = true
