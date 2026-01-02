@@ -97,8 +97,9 @@ class RlArcWorldViTARCConfig:
     use_index_grid: bool = True
     use_temporal: bool = True
     use_examples: bool = True
-    example_compression_tokens: int = 32
-    grid_compression_tokens: int | None = 256
+    example_compression_tokens: int = 64
+    grid_compression_tokens: int | None = 128
+    compression_method: str = "learned"  # "pooling" or "learned"
     color_values: int | None = None
 
     @classmethod

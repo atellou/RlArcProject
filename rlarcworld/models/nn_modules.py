@@ -23,6 +23,107 @@ from rlarcworld.models.vit_arc import CustomT5Stack, FixedAbsolutePositionalEmbe
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# Learned Compression - Perceiver-style attention-based compression
+# =============================================================================
+
+
+class LearnedCompression(nn.Module):
+    """Perceiver-style learned compression using cross-attention.
+
+    Uses learnable query tokens that attend to the full sequence,
+    allowing the model to learn what information to preserve during compression.
+    This is more flexible than pooling as it can adaptively focus on
+    task-relevant features.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        num_compressed_tokens: int,
+        num_heads: int = 8,
+        dropout: float = 0.1,
+    ):
+        """Initialize learned compression module.
+
+        Args:
+            d_model: Model hidden dimension
+            num_compressed_tokens: Number of tokens in compressed output
+            num_heads: Number of attention heads
+            dropout: Dropout probability
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.num_compressed_tokens = num_compressed_tokens
+
+        # Learnable compression queries
+        self.compression_queries = nn.Parameter(
+            torch.randn(1, num_compressed_tokens, d_model)
+        )
+        nn.init.xavier_uniform_(self.compression_queries)
+
+        # Cross-attention: queries attend to input sequence
+        self.cross_attention = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+        # Layer norm and feedforward for post-processing
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model),
+            nn.Dropout(dropout),
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Compress input sequence using learned queries.
+
+        Args:
+            x: Input tensor of shape [batch, seq_len, d_model]
+            mask: Optional attention mask of shape [batch, seq_len]
+
+        Returns:
+            Compressed tensor of shape [batch, num_compressed_tokens, d_model]
+        """
+        batch_size = x.shape[0]
+
+        # Expand compression queries for batch
+        queries = self.compression_queries.expand(batch_size, -1, -1)
+
+        # Cross-attention: queries attend to input
+        # key_padding_mask expects True for positions to ignore
+        key_padding_mask = None
+        if mask is not None:
+            # mask is 1 for valid positions, 0 for padding
+            # key_padding_mask needs True for padding
+            key_padding_mask = mask == 0
+
+        compressed, _ = self.cross_attention(
+            query=queries,
+            key=x,
+            value=x,
+            key_padding_mask=key_padding_mask,
+        )
+
+        # Residual connection + layer norm
+        compressed = self.norm1(queries + compressed)
+
+        # Feedforward + residual
+        compressed = self.norm2(compressed + self.ffn(compressed))
+
+        return compressed
+
+
+# =============================================================================
 # Example Cross-Attention - For conditioning on example pairs
 # =============================================================================
 
@@ -580,29 +681,48 @@ class RlArcWorldViTARC(nn.Module):
         if self.use_temporal:
             self.temporal_embed = nn.Embedding(3, config.d_model)
 
-        # Grid compression (optional, to reduce encoder memory)
+        # Grid compression (optional)
         self.grid_compression_tokens = config.grid_compression_tokens
+        self.compression_method = config.compression_method
         if self.grid_compression_tokens is not None:
-            self.grid_projection = nn.Sequential(
-                nn.Linear(config.d_model, config.d_model),
-                nn.GELU(),
-                nn.Dropout(config.dropout),
-            )
-            self.grid_pooling = nn.AdaptiveAvgPool1d(self.grid_compression_tokens)
+            if self.compression_method == "learned":
+                self.grid_compressor = LearnedCompression(
+                    d_model=config.d_model,
+                    num_compressed_tokens=self.grid_compression_tokens,
+                    num_heads=config.num_heads,
+                    dropout=config.dropout,
+                )
+            else:  # pooling
+                self.grid_projection = nn.Sequential(
+                    nn.Linear(config.d_model, config.d_model),
+                    nn.GELU(),
+                    nn.Dropout(config.dropout),
+                )
+                self.grid_pooling = nn.AdaptiveAvgPool1d(self.grid_compression_tokens)
 
         # Example cross-attention (if examples are used)
         self.use_examples = config.use_examples
         if self.use_examples:
-            # Projection to compress example sequence length
+            # Compression for example sequence length
             # Reduces memory usage in cross-attention
             self.example_compression_tokens = config.example_compression_tokens
-            self.example_projection = nn.Sequential(
-                nn.Linear(config.d_model, config.d_model),
-                nn.GELU(),
-                nn.Dropout(config.dropout),
-            )
-            # Pool to configurable number of tokens per example
-            self.example_pooling = nn.AdaptiveAvgPool1d(self.example_compression_tokens)
+            if self.compression_method == "learned":
+                self.example_compressor = LearnedCompression(
+                    d_model=config.d_model,
+                    num_compressed_tokens=self.example_compression_tokens,
+                    num_heads=config.num_heads,
+                    dropout=config.dropout,
+                )
+            else:  # pooling
+                self.example_projection = nn.Sequential(
+                    nn.Linear(config.d_model, config.d_model),
+                    nn.GELU(),
+                    nn.Dropout(config.dropout),
+                )
+                # Pool to configurable number of tokens per example
+                self.example_pooling = nn.AdaptiveAvgPool1d(
+                    self.example_compression_tokens
+                )
 
             self.example_cross_attention = ExampleCrossAttention(
                 d_model=config.d_model,
@@ -631,11 +751,14 @@ class RlArcWorldViTARC(nn.Module):
                 p.numel() for p in self.parameters() if p.requires_grad
             )
             logger.info(
-                f"ViTARCActor initialized with best ViTARC config:\n"
+                f"RlArcWorldViTARC config:\n"
                 f"  - APE: {ape_type}\n"
                 f"  - RPE: {rpe_type} (largest gain)\n"
                 f"  - PEmixer: {ape_mixer} (second largest gain)\n"
                 f"  - OPE: {use_ope} (third largest gain)\n"
+                f"  - Examples: {self.use_examples}\n"
+                f"  - Grid compression: {self.grid_compression_tokens}\n"
+                f"  - Example compression: {self.example_compression_tokens}\n"
                 f"  - Params: {total_params:,} total, {trainable_params:,} trainable"
             )
 
@@ -693,12 +816,15 @@ class RlArcWorldViTARC(nn.Module):
             inputs_embeds = self.embed_tokens(input_ids)
 
             # Compress: [B, seq_len, d_model] -> [B, K, d_model]
-            # where K = grid_compression_tokens (e.g., 256 or 512)
-            inputs_embeds = self.grid_projection(inputs_embeds)
-            # Pool: [B, d_model, seq_len] -> [B, d_model, K]
-            inputs_embeds = self.grid_pooling(inputs_embeds.transpose(1, 2))
-            # Reshape: [B, d_model, K] -> [B, K, d_model]
-            inputs_embeds = inputs_embeds.transpose(1, 2)
+            # where K = grid_compression_tokens (e.g., 256)
+            if self.compression_method == "learned":
+                inputs_embeds = self.grid_compressor(inputs_embeds, mask=attention_mask)
+            else:  # pooling
+                inputs_embeds = self.grid_projection(inputs_embeds)
+                # Pool: [B, d_model, seq_len] -> [B, d_model, K]
+                inputs_embeds = self.grid_pooling(inputs_embeds.transpose(1, 2))
+                # Reshape: [B, d_model, K] -> [B, K, d_model]
+                inputs_embeds = inputs_embeds.transpose(1, 2)
 
             # Update attention mask to match compressed sequence
             if attention_mask is not None:
@@ -802,11 +928,15 @@ class RlArcWorldViTARC(nn.Module):
                     # Get embeddings and compress:
                     # [B, seq_len, d_model] -> [B, K, d_model]
                     ex_embeds = self.embed_tokens(ex_ids)
-                    ex_embeds = self.example_projection(ex_embeds)
-                    # Pool: [B, d_model, seq_len] -> [B, d_model, K]
-                    ex_embeds = self.example_pooling(ex_embeds.transpose(1, 2))
-                    # Reshape: [B, d_model, K] -> [B, K, d_model]
-                    ex_embeds = ex_embeds.transpose(1, 2)
+
+                    if self.compression_method == "learned":
+                        ex_embeds = self.example_compressor(ex_embeds, mask=ex_mask)
+                    else:  # pooling
+                        ex_embeds = self.example_projection(ex_embeds)
+                        # Pool: [B, d_model, seq_len] -> [B, d_model, K]
+                        ex_embeds = self.example_pooling(ex_embeds.transpose(1, 2))
+                        # Reshape: [B, d_model, K] -> [B, K, d_model]
+                        ex_embeds = ex_embeds.transpose(1, 2)
 
                     # Update mask to match compressed sequence
                     ex_mask = torch.ones(
