@@ -564,6 +564,9 @@ class RlArcWorldViTARC(nn.Module):
         # rows/cols for 2D positional encoding grid dimensions
         self.t5_config.rows = config.grid_size + 3  # +3 for BOS/EOS tokens
         self.t5_config.cols = config.grid_size
+        # Compression tokens for 1D Alibi RPE
+        self.t5_config.grid_compression_tokens = config.grid_compression_tokens
+        self.t5_config.example_compression_tokens = config.example_compression_tokens
 
         # Token embeddings
         self.embed_tokens = nn.Embedding(self.encoder_ids.VOCAB_SIZE, config.d_model)
@@ -722,16 +725,16 @@ class RlArcWorldViTARC(nn.Module):
             else:
                 object_idx_compressed = None
 
-            # Note: RPE is not used with compression
-            # because pooling destroys the 2D spatial structure it relies on
-            # We pass relative_position=None to disable RPE
+            # Note: With compression, 1D Alibi RPE is used instead of 2D RPE
+            # The encoder will automatically select the 1D distance matrix
+            # based on the compressed sequence length (grid_compression_tokens)
+            # OPE is still used via object_idx_compressed for spatial awareness
 
             # Encode with compressed inputs
             encoder_outputs = self.encoder(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
                 object_idx=object_idx_compressed,
-                relative_position=None,
                 return_dict=True,
             )
         else:
@@ -827,11 +830,11 @@ class RlArcWorldViTARC(nn.Module):
                         ex_obj_idx = None
 
                     # Encode compressed examples
+                    # 1D Alibi RPE is automatically selected based on sequence length
                     ex_output = self.encoder(
                         inputs_embeds=ex_embeds,
                         attention_mask=ex_mask,
                         object_idx=ex_obj_idx,
-                        relative_position=None,
                         return_dict=True,
                     )
                 else:

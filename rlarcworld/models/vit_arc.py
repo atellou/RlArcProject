@@ -56,6 +56,13 @@ SOFTWARE.
 # - Fixed CustomT5Stack 2D positional encoding to properly tile
 #   position_ids_x/y for temporal sequences spanning max_grids
 #   (around lines L1060-L1065 in CustomT5Stack)
+# - Added 1D Alibi RPE support for compressed sequences via
+#   grid_compression_tokens and example_compression_tokens config parameters.
+#   Creates separate 1D distance matrices for each compression length and
+#   automatically selects the appropriate matrix based on sequence length
+#   (see CustomT5Stack.__init__ around L908–L923 and forward around L1053–L1070).
+#   This enables RPE to work with compression while maintaining OPE for spatial
+#   awareness via compressed object_idx.
 """
 
 import copy
@@ -904,6 +911,53 @@ class CustomT5Stack(T5Stack):
             distance_matrix[:, -1] = large_dist + 1
 
             self.distance_matrix_2D = distance_matrix
+            logger.info(f"Using 2D RPE with {total_length} tokens")
+
+            # Create 1D distance matrices for compressed sequences
+            # This enables RPE with compression using simple sequential distances
+            # We create separate matrices for grid and example compression
+            self.distance_matrices_1D = {}
+
+            grid_compressed_len = getattr(config, "grid_compression_tokens", None)
+            if grid_compressed_len is not None:
+                logger.info(f"Using grid compression with {grid_compressed_len} tokens")
+                self.distance_matrices_1D[grid_compressed_len] = (
+                    self.calculate_1d_relative_positions(grid_compressed_len)
+                )
+
+            example_compressed_len = getattr(config, "example_compression_tokens", None)
+            if (
+                example_compressed_len is not None
+                and example_compressed_len != grid_compressed_len
+            ):
+                logger.info(
+                    f"Using example compression with {example_compressed_len} tokens"
+                )
+                self.distance_matrices_1D[example_compressed_len] = (
+                    self.calculate_1d_relative_positions(example_compressed_len)
+                )
+
+    def calculate_1d_relative_positions(self, seq_len):
+        """Calculate 1D relative positions for compressed sequences.
+
+        Uses simple sequential distance (absolute difference between positions).
+        This provides Alibi-style RPE for compressed sequences where 2D spatial
+        structure is lost but sequential locality is still meaningful.
+
+        Args:
+            seq_len: Length of the compressed sequence
+
+        Returns:
+            Distance matrix of shape (seq_len, seq_len) with sequential distances
+        """
+        # Create position indices
+        positions = torch.arange(seq_len, dtype=torch.float)
+
+        # Calculate pairwise distances (absolute difference)
+        # positions[i] - positions[j] for all i, j
+        distance_matrix = torch.abs(positions.unsqueeze(0) - positions.unsqueeze(1))
+
+        return distance_matrix
 
     def calculate_2d_relative_positions(self, grid_height, grid_width):
         """Calculate 2D relative positions."""
@@ -1008,8 +1062,27 @@ class CustomT5Stack(T5Stack):
                 f"{err_msg_prefix}inputs_embeds"
             )
 
+        # Set default relative_position for RPE if not provided and available
         if self.rpe_type in ["Four-diag-slope-Alibi", "Two-slope-Alibi"]:
-            relative_position = self.distance_matrix_2D
+            if relative_position is None:
+                actual_seq_len = (
+                    input_shape[-1] if input_ids is not None else inputs_embeds.shape[1]
+                )
+
+                # Try 1D distance matrices first (for compressed sequences)
+                if (
+                    hasattr(self, "distance_matrices_1D")
+                    and actual_seq_len in self.distance_matrices_1D
+                ):
+                    relative_position = self.distance_matrices_1D[actual_seq_len]
+
+                # Fall back to 2D distance matrix (for uncompressed sequences)
+                if relative_position is None and hasattr(self, "distance_matrix_2D"):
+                    expected_seq_len_2d = self.distance_matrix_2D.shape[-1]
+                    if actual_seq_len == expected_seq_len_2d:
+                        relative_position = self.distance_matrix_2D
+
+                # else: keep relative_position=None, disable RPE if no match
 
         if inputs_embeds is None:
             if self.embed_tokens is None:
