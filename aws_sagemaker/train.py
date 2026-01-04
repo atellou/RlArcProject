@@ -16,6 +16,7 @@ from pathlib import Path
 
 from rlarcworld.trainers.arc_d4pg import ArcD4PG
 from rlarcworld.utils.config_loader import load_experiment
+from rlarcworld.utils.device import init_distributed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,31 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 def _maybe_init_distributed() -> tuple[int, int]:
-    world_size_env = os.environ.get("WORLD_SIZE")
-    if world_size_env is None:
-        return 0, 1
-
-    try:
-        world_size = int(world_size_env)
-    except ValueError:
-        return 0, 1
-
-    if world_size <= 1:
-        return 0, 1
-
-    import torch
-    import torch.distributed as dist
-
-    if dist.is_available() and not dist.is_initialized():
-        backend = "nccl" if torch.cuda.is_available() else "gloo"
-        dist.init_process_group(backend=backend, init_method="env://")
-
-    rank = int(os.environ.get("RANK", "0"))
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    if torch.cuda.is_available():
-        torch.cuda.set_device(local_rank)
-
-    return rank, world_size
+    info = init_distributed()
+    return info["rank"], info["world_size"]
 
 
 def _maybe_destroy_distributed() -> None:

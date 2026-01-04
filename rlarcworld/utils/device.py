@@ -1,9 +1,12 @@
 """CUDA/AMP device configuration helpers."""
 
 import logging
+import os
+from contextlib import nullcontext
 from typing import TypedDict
 
 import torch
+import torch.distributed as dist
 
 logger = logging.getLogger(__name__)
 
@@ -110,35 +113,30 @@ class AmpScaler:
         """
         # Normalize device to string device type
         device_type = device.type if isinstance(device, torch.device) else str(device)
-        if amp_enabled and device_type == "cuda":
-            # Using torch.amp API (PyTorch 2.x) on CUDA only.
+        self.enabled = amp_enabled and device_type == "cuda"
+        if self.enabled:
+            # Each rank gets its own scaler; this is fine for DDP
             self.scaler = torch.amp.GradScaler(device=device_type)
             self._cm = torch.amp.autocast(device_type="cuda")
         else:
             self.scaler = None
-            self._cm = None
+            self._cm = nullcontext()
 
     def __enter__(self):
         """Enter autocast ctx if AMP is enabled."""
-        if self._cm is not None:
-            return self._cm.__enter__()
-        return None
+        return self._cm.__enter__()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit autocast ctx if AMP is enabled."""
-        if self._cm is not None:
-            return self._cm.__exit__(exc_type, exc_val, exc_tb)
-        return False
+        return self._cm.__exit__(exc_type, exc_val, exc_tb)
 
     def scale(self, loss: torch.Tensor) -> torch.Tensor:
         """Conditionally scale a loss tensor when AMP is enabled."""
-        if self.scaler is not None:
-            return self.scaler.scale(loss)
-        return loss
+        return self.scaler.scale(loss) if self.enabled else loss
 
     def step(self, optimizer: torch.optim.Optimizer) -> None:
         """Conditionally step optimizer and update scaler."""
-        if self.scaler is not None:
+        if self.enabled:
             self.scaler.step(optimizer)
             self.scaler.update()
         else:
@@ -149,5 +147,61 @@ class AmpScaler:
 
         Call this before gradient clipping to ensure clipping happens on unscaled grads.
         """
-        if self.scaler is not None:
+        if self.enabled:
             self.scaler.unscale_(optimizer)
+
+
+def init_distributed(backend: str = "nccl") -> dict[str, int]:
+    """Initialise torch.distributed if environment variables are set.
+
+    SageMaker / torchrun automatically export RANK, LOCAL_RANK, WORLD_SIZE
+
+    Args:
+        backend: Distributed backend to use (default: "nccl")
+
+    Returns:
+        Dict with keys ``rank``, ``local_rank`` and ``world_size``.
+    """
+    if "RANK" not in os.environ:  # single-process run
+        return {"rank": 0, "local_rank": 0, "world_size": 1}
+
+    if not dist.is_initialized():
+        dist.init_process_group(backend=backend, init_method="env://")
+
+    rank = dist.get_rank()
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    world_size = dist.get_world_size()
+
+    torch.cuda.set_device(local_rank)
+    logger.info(
+        "DDP initialised - rank %d / %d (local %d)",
+        rank,
+        world_size,
+        local_rank,
+    )
+    return {"rank": rank, "local_rank": local_rank, "world_size": world_size}
+
+
+def is_rank0() -> bool:
+    """Utility: True only on global rank-0 (safe for logging / checkpointing)."""
+    return not dist.is_initialized() or dist.get_rank() == 0
+
+
+def get_distributed_sampler(dataset, shuffle: bool = True):
+    """Return torch.utils.data.Sampler suitable for DDP/no-DDP.
+
+    If torch.distributed is initialized, returns a ``DistributedSampler``;
+    otherwise returns ``None`` so DataLoader falls back to standard sampling.
+
+    Args:
+        dataset: The dataset to sample from
+        shuffle: Whether to shuffle the data (default: True)
+
+    Returns:
+        DistributedSampler if DDP is initialized, otherwise None
+    """
+    if dist.is_initialized():
+        from torch.utils.data import DistributedSampler
+
+        return DistributedSampler(dataset, shuffle=shuffle)
+    return None
