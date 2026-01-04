@@ -149,7 +149,12 @@ class D4PGCore:
 
             # Collect embedding and small modules to exclude from FSDP wrapping
             # Must collect both main and target networks since targets are deepcopies
-            from rlarcworld.models.vit_arc import ViTARCEmbedding
+            from rlarcworld.models.nn_modules import LearnedCompression
+            from rlarcworld.models.vit_arc import (
+                CustomT5Attention,
+                CustomT5Block,
+                ViTARCEmbedding,
+            )
 
             ignored_modules = []
             # Collect from actor and actor_target
@@ -157,6 +162,9 @@ class D4PGCore:
                 if isinstance(
                     module,
                     (
+                        LearnedCompression,
+                        CustomT5Attention,
+                        CustomT5Block,
                         torch.nn.Embedding,
                         torch.nn.EmbeddingBag,
                         ViTARCEmbedding,
@@ -169,6 +177,9 @@ class D4PGCore:
                 if isinstance(
                     module,
                     (
+                        LearnedCompression,
+                        CustomT5Attention,
+                        CustomT5Block,
                         torch.nn.Embedding,
                         torch.nn.EmbeddingBag,
                         ViTARCEmbedding,
@@ -182,6 +193,9 @@ class D4PGCore:
                 if isinstance(
                     module,
                     (
+                        LearnedCompression,
+                        CustomT5Attention,
+                        CustomT5Block,
                         torch.nn.Embedding,
                         torch.nn.EmbeddingBag,
                         ViTARCEmbedding,
@@ -194,6 +208,9 @@ class D4PGCore:
                 if isinstance(
                     module,
                     (
+                        LearnedCompression,
+                        CustomT5Attention,
+                        CustomT5Block,
                         torch.nn.Embedding,
                         torch.nn.EmbeddingBag,
                         ViTARCEmbedding,
@@ -424,9 +441,9 @@ class D4PGCore:
         Returns:
             TensorDict: Actor loss.
         """
-        assert (
-            not self.carsm or target_q is not None
-        ), "target_q must be provided when using CARSM loss."
+        assert not self.carsm or target_q is not None, (
+            "target_q must be provided when using CARSM loss."
+        )
 
         # Action probabilities
         if action_probs is None:

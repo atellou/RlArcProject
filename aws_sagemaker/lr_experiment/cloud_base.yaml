@@ -91,7 +91,7 @@ logging:
 system:
   amp_enabled: true
   use_checkpointing: true
-  fsdp_enabled: true
+  fsdp_enabled: false
   device: null
 
 reproducibility:

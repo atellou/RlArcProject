@@ -190,4 +190,4 @@ class SagemakerExperiment:
             logs: Print logs to stdout.
         """
         train_data = InputData(channel_name="train", data_source=s3_train_data_tar)
-        self.model_trainer.train(input_data_config=[train_data], wait=True, logs=True)
+        self.model_trainer.train(input_data_config=[train_data], wait=wait, logs=logs)

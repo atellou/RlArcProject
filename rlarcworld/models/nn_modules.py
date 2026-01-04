@@ -55,11 +55,9 @@ class LearnedCompression(nn.Module):
         self.d_model = d_model
         self.num_compressed_tokens = num_compressed_tokens
 
-        # Learnable compression queries
-        self.compression_queries = nn.Parameter(
-            torch.randn(1, num_compressed_tokens, d_model)
-        )
-        nn.init.xavier_uniform_(self.compression_queries)
+        # Learnable compression queries (using Embedding for FSDP compatibility)
+        self.query_embeddings = nn.Embedding(num_compressed_tokens, d_model)
+        nn.init.xavier_uniform_(self.query_embeddings.weight)
 
         # Cross-attention: queries attend to input sequence
         self.cross_attention = nn.MultiheadAttention(
@@ -95,9 +93,22 @@ class LearnedCompression(nn.Module):
             Compressed tensor of shape [batch, num_compressed_tokens, d_model]
         """
         batch_size = x.shape[0]
+        device = x.device
 
-        # Expand compression queries for batch
-        queries = self.compression_queries.expand(batch_size, -1, -1)
+        # Ensure input has correct shape [batch, seq_len, d_model]
+        if x.dim() != 3:
+            raise ValueError(f"Expected 3D input tensor, got shape {x.shape}")
+        if x.shape[2] != self.d_model:
+            raise ValueError(f"Expected d_model={self.d_model}, got {x.shape[2]}")
+
+        # Get compression queries from embedding layer (FSDP-compatible)
+        query_indices = torch.arange(
+            self.num_compressed_tokens, dtype=torch.long, device=device
+        )
+        queries = self.query_embeddings(query_indices).unsqueeze(
+            0
+        )  # [1, num_tokens, d_model]
+        queries = queries.repeat(batch_size, 1, 1)  # [batch, num_tokens, d_model]
 
         # Cross-attention: queries attend to input
         # key_padding_mask expects True for positions to ignore
@@ -814,6 +825,13 @@ class RlArcWorldViTARC(nn.Module):
         if self.grid_compression_tokens is not None:
             # Get initial embeddings from input_ids
             inputs_embeds = self.embed_tokens(input_ids)
+
+            # Debug: Check shape before compression
+            if inputs_embeds.numel() == 0:
+                logger.error(f"Empty inputs_embeds! input_ids shape: {input_ids.shape}")
+                raise ValueError(
+                    f"Empty embeddings from input_ids with shape {input_ids.shape}"
+                )
 
             # Compress: [B, seq_len, d_model] -> [B, K, d_model]
             # where K = grid_compression_tokens (e.g., 256)

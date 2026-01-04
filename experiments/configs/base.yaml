@@ -83,12 +83,12 @@ checkpoint:
 
 logging:
   tensorboard_enabled: true
-  log_frequency: 1
+  log_frequency: 100
 
 system:
   amp_enabled: true
   use_checkpointing: true
-  fsdp_enabled: true
+  fsdp_enabled: false
   device: null
 
 reproducibility:
