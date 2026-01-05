@@ -29,8 +29,7 @@ lr_1e3_nstep_1:
     critic_lr: 1.0e-2
     n_step_config:
       n_steps: 1
-  logging:
-    tensorboard_enabled: true
+
 
 lr_1e3_nstep_5:
   description: "LR=1.0e-3, n_steps=5 - Aggressive LR with short horizon"
@@ -49,8 +48,7 @@ lr_1e3_nstep_5:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_1e3_nstep_15:
   description: "LR=1.0e-3, n_steps=15 - Aggressive LR with medium horizon"
@@ -69,8 +67,7 @@ lr_1e3_nstep_15:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_1e3_nstep_30:
   description: "LR=1.0e-3, n_steps=30 - Aggressive LR with row-sized horizon"
@@ -89,8 +86,7 @@ lr_1e3_nstep_30:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_1e3_nstep_50:
   description: "LR=1.0e-3, n_steps=50 - Aggressive LR with moderate lookahead"
@@ -109,8 +105,7 @@ lr_1e3_nstep_50:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 # =============================================================================
 # LR = 3.0e-4 (Standard)
@@ -123,8 +118,7 @@ lr_3e4_nstep_1:
     critic_lr: 3.0e-3
     n_step_config:
       n_steps: 1
-  logging:
-    tensorboard_enabled: true
+
 
 lr_3e4_nstep_5:
   description: "LR=3.0e-4, n_steps=5 - Standard LR with short horizon"
@@ -143,8 +137,7 @@ lr_3e4_nstep_5:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_3e4_nstep_15:
   description: "LR=3.0e-4, n_steps=15 - Standard LR with medium horizon"
@@ -163,8 +156,7 @@ lr_3e4_nstep_15:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_3e4_nstep_30:
   description: "LR=3.0e-4, n_steps=30 - Standard LR with row-sized horizon"
@@ -183,8 +175,7 @@ lr_3e4_nstep_30:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_3e4_nstep_50:
   description: "LR=3.0e-4, n_steps=50 - Standard LR with moderate lookahead"
@@ -203,8 +194,7 @@ lr_3e4_nstep_50:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 # =============================================================================
 # LR = 1.0e-4 (Conservative)
@@ -217,8 +207,7 @@ lr_1e4_nstep_1:
     critic_lr: 1.0e-3
     n_step_config:
       n_steps: 1
-  logging:
-    tensorboard_enabled: true
+
 
 lr_1e4_nstep_5:
   description: "LR=1.0e-4, n_steps=5 - Conservative LR with short horizon"
@@ -237,8 +226,7 @@ lr_1e4_nstep_5:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_1e4_nstep_15:
   description: "LR=1.0e-4, n_steps=15 - Conservative LR with medium horizon"
@@ -257,8 +245,7 @@ lr_1e4_nstep_15:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_1e4_nstep_30:
   description: "LR=1.0e-4, n_steps=30 - Conservative LR with row-sized horizon"
@@ -277,8 +264,7 @@ lr_1e4_nstep_30:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_1e4_nstep_50:
   description: "LR=1.0e-4, n_steps=50 - Conservative LR with moderate lookahead"
@@ -297,8 +283,7 @@ lr_1e4_nstep_50:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 # =============================================================================
 # LR = 3.0e-5 (Very Conservative)
@@ -311,8 +296,7 @@ lr_3e5_nstep_1:
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 1
-  logging:
-    tensorboard_enabled: true
+
 
 lr_3e5_nstep_5:
   description: "LR=3.0e-5, n_steps=5 - Very conservative LR with short horizon"
@@ -331,8 +315,7 @@ lr_3e5_nstep_5:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_3e5_nstep_15:
   description: "LR=3.0e-5, n_steps=15 - Very conservative LR with medium horizon"
@@ -351,8 +334,7 @@ lr_3e5_nstep_15:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_3e5_nstep_30:
   description: "LR=3.0e-5, n_steps=30 - Very conservative LR with row-sized horizon"
@@ -371,8 +353,7 @@ lr_3e5_nstep_30:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+
 
 lr_3e5_nstep_50:
   description: "LR=3.0e-5, n_steps=50 - Very conservative LR with moderate lookahead"
@@ -391,5 +372,4 @@ lr_3e5_nstep_50:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-  logging:
-    tensorboard_enabled: true
+

@@ -58,13 +58,13 @@ distributional:
     binary: 1
 
 replay_buffer:
-  size: 100000
-  alpha: 0.6
-  beta: 0.4
-  warmup_ratio: 0.02
+  size: 5000
+  alpha: 0.2
+  beta: 0.2
+  warmup_ratio: 0.1
 
 training:
-  max_steps_per_epoch: 10000
+  max_steps_per_epoch: 3000
   validation_epochs: 1
   validation_steps_per_epoch: 100
   validation_steps_frequency: 100
@@ -80,9 +80,9 @@ world_model:
   model_update_frequency: 10
 
 checkpoint:
-  save_frequency: -1
+  save_frequency: 100
   checkpoint_dir: "/opt/ml/checkpoints"
-  improvement_checkpoint_enabled: false
+  improvement_checkpoint_enabled: true
 
 logging:
   tensorboard_enabled: true

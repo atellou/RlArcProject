@@ -160,8 +160,8 @@ Configures the prioritized experience replay buffer.
 | Parameter | Type | Default | Impact |
 |-----------|------|---------|--------|
 | `size` | int | 100000 | Maximum number of transitions stored. Larger buffers provide more diverse samples but increase memory usage. Smaller buffers reduce memory but may cause overfitting to recent data. |
-| `alpha` | float | 0.6 | Prioritization exponent (0.0-1.0). Controls how much prioritization is used. Higher values (0.6) prioritize high TD-error samples more; lower values (0.0) use uniform sampling. |
-| `beta` | float | 0.4 | Importance sampling exponent (0.0-1.0). Controls bias correction. Higher values correct more for prioritization bias. |
+| `alpha` | float | 0.2 | Prioritization exponent (0.0-1.0). Controls how much prioritization is used. Higher values (0.6) prioritize high TD-error samples more; lower values (0.0) use random sampling. |
+| `beta` | float | 0.2 | Importance sampling exponent (0.0-1.0). Controls bias correction. Higher values correct more for prioritization bias. |
 | `warmup_ratio` | float | 0.2 | Ratio of buffer to fill before training starts. Ensures diverse initial data. Typical range: 0.1-0.3. |
 
 **Impact**: Prioritized replay focuses learning on important transitions (high TD-error), improving sample efficiency and convergence speed.
