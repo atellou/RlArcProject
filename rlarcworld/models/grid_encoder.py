@@ -101,9 +101,12 @@ class ObjectIndexExtractor:
                 x, y, w, h = cv2.boundingRect(contour)
                 # Mark all pixels in bounding box with same color as this object
                 box = mask[y : y + h, x : x + w]
-                object_indices[y : y + h, x : x + w] = torch.from_numpy(
-                    current_obj_id * box
+                # Ensure multiplication happens in a wide dtype (avoid uint8 overflow
+                # once current_obj_id grows beyond 255)
+                obj_patch = (box.astype(np.int32) * int(current_obj_id)).astype(
+                    np.int64
                 )
+                object_indices[y : y + h, x : x + w] = torch.from_numpy(obj_patch)
 
                 current_obj_id += 1
 

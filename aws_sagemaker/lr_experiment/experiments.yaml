@@ -39,6 +39,16 @@ lr_1e3_nstep_5:
     critic_lr: 1.0e-2
     n_step_config:
       n_steps: 5
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -25
+      binary_n_reward: -25
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -49,6 +59,16 @@ lr_1e3_nstep_15:
     critic_lr: 1.0e-2
     n_step_config:
       n_steps: 15
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -75
+      binary_n_reward: -75
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -59,6 +79,16 @@ lr_1e3_nstep_30:
     critic_lr: 1.0e-2
     n_step_config:
       n_steps: 30
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -150
+      binary_n_reward: -150
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -69,6 +99,16 @@ lr_1e3_nstep_50:
     critic_lr: 1.0e-2
     n_step_config:
       n_steps: 50
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -250
+      binary_n_reward: -250
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -93,6 +133,16 @@ lr_3e4_nstep_5:
     critic_lr: 3.0e-3
     n_step_config:
       n_steps: 5
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -25
+      binary_n_reward: -25
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -103,6 +153,16 @@ lr_3e4_nstep_15:
     critic_lr: 3.0e-3
     n_step_config:
       n_steps: 15
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -75
+      binary_n_reward: -75
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -113,6 +173,16 @@ lr_3e4_nstep_30:
     critic_lr: 3.0e-3
     n_step_config:
       n_steps: 30
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -150
+      binary_n_reward: -150
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -123,6 +193,16 @@ lr_3e4_nstep_50:
     critic_lr: 3.0e-3
     n_step_config:
       n_steps: 50
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -250
+      binary_n_reward: -250
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -147,6 +227,16 @@ lr_1e4_nstep_5:
     critic_lr: 1.0e-3
     n_step_config:
       n_steps: 5
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -25
+      binary_n_reward: -25
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -157,6 +247,16 @@ lr_1e4_nstep_15:
     critic_lr: 1.0e-3
     n_step_config:
       n_steps: 15
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -75
+      binary_n_reward: -75
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -167,6 +267,16 @@ lr_1e4_nstep_30:
     critic_lr: 1.0e-3
     n_step_config:
       n_steps: 30
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -150
+      binary_n_reward: -150
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -177,6 +287,16 @@ lr_1e4_nstep_50:
     critic_lr: 1.0e-3
     n_step_config:
       n_steps: 50
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -250
+      binary_n_reward: -250
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -201,6 +321,16 @@ lr_3e5_nstep_5:
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 5
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -25
+      binary_n_reward: -25
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -211,6 +341,16 @@ lr_3e5_nstep_15:
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 15
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -75
+      binary_n_reward: -75
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -221,6 +361,16 @@ lr_3e5_nstep_30:
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 30
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -150
+      binary_n_reward: -150
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true
 
@@ -231,5 +381,15 @@ lr_3e5_nstep_50:
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 50
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -250
+      binary_n_reward: -250
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 21
+      binary_n_reward: 21
   logging:
     tensorboard_enabled: true

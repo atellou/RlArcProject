@@ -210,6 +210,15 @@ class ArcD4PG:
         )
         logger.info("Actor network created successfully")
 
+        # Ensure distributional config includes n-step reward keys when required
+        if config.d4pg.n_step_config.n_steps > 1:
+            step_keys = RewardKeys.get_n_step_keys()
+            for n_key in step_keys:
+                if n_key.value not in config.distributional.num_atoms:
+                    raise ValueError(
+                        f"Distributional config missing num_atoms for {n_key.value}"
+                    )
+
         logger.info("Creating critic network...")
         self.critic = VitARCCritic(
             color_values=config.env.color_values,
@@ -266,6 +275,7 @@ class ArcD4PG:
             dataset_shuffle_seed=ds_shuffle_seed,
             augmentation_generator=aug_gen,
             max_penalty=config.env.max_penalty,
+            n_step_config=config.d4pg.n_step_config,
         )
         logger.info("Validation stepper created successfully")
 

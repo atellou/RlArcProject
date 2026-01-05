@@ -7,6 +7,8 @@ from typing import Optional
 import torch
 from transformers.modeling_outputs import BaseModelOutput
 
+from rlarcworld.common.enums import RewardKeys
+
 
 @dataclass
 class NStepMinVMaxConfig:
@@ -245,22 +247,14 @@ class DistributionalConfig:
         if penalty <= 0:
             return self
 
-        # Scale support bounds by penalty
-        scaled_v_min = {
-            "pixel_wise": int(self.v_min["pixel_wise"] * penalty),
-            "binary": int(self.v_min["binary"] * penalty),
-        }
-        scaled_v_max = {
-            "pixel_wise": int(self.v_max["pixel_wise"] * penalty),
-            "binary": int(self.v_max["binary"] * penalty),
-        }
+        # Scale support bounds by penalty for every key present
+        scaled_v_min = {k: int(v * penalty) for k, v in self.v_min.items()}
+        scaled_v_max = {k: int(self.v_max[k] * penalty) for k in self.v_max}
 
         # Scale atom count to maintain ~0.1 unit resolution per atom
-        # Original: 2-unit range / 21 atoms = 0.095 units/atom
-        # Scaled: (2*penalty)-unit range / (21*penalty) atoms = 0.095 units/atom
+        # Preserve minimum of 11 atoms per key
         scaled_num_atoms = {
-            "pixel_wise": max(11, int(self.num_atoms["pixel_wise"] * penalty)),
-            "binary": max(11, int(self.num_atoms["binary"] * penalty)),
+            k: max(11, int(self.num_atoms[k] * penalty)) for k in self.num_atoms
         }
 
         return DistributionalConfig(
@@ -431,4 +425,31 @@ class ArcD4PGConfig:
         """Get a validated version of the configuration."""
         self.network.grid_size = self.env.grid_size
         self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
+
+        if self.d4pg.n_step_config.n_steps > 1:
+            step_keys = RewardKeys.get_n_step_keys()
+            # Validate distributional contains n-step parameters
+            if not set(step_keys).issubset(self.distributional.num_atoms.keys()):
+                raise ValueError(
+                    "Distributional config missing num_atoms for n-step rewards. Provided: {}".format(  # noqa: E501
+                        self.distributional.num_atoms.keys()
+                    )
+                )
+
+            # Auto-fill NStepMinVMaxConfig min/max from distributional when missing
+            ns_cfg = self.d4pg.n_step_config
+            # Mapping helper
+            _map = {
+                RewardKeys.PIXEL_WISE_N_REWARD: (
+                    "pixel_wise_min_v",
+                    "pixel_wise_max_v",
+                ),
+                RewardKeys.BINARY_N_REWARD: ("binary_min_v", "binary_max_v"),
+            }
+            for rk, (mn_attr, mx_attr) in _map.items():
+                if getattr(ns_cfg, mn_attr) is None:
+                    setattr(ns_cfg, mn_attr, self.distributional.v_min[rk.value])
+                if getattr(ns_cfg, mx_attr) is None:
+                    setattr(ns_cfg, mx_attr, self.distributional.v_max[rk.value])
+
         return self

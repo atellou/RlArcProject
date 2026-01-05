@@ -33,6 +33,12 @@ This document describes the neural network architectures defined in this reposit
     submit)
 ```
 
+Notes:
+
+- The encoder is implemented in `RlArcWorldViTARC` (`nn_modules.py`) and uses `GridEncoder` (`grid_encoder.py`) to convert grids into token sequences.
+- Object-based positional encoding (OPE) uses OpenCV contour detection (`ObjectIndexExtractor`).
+- The critic head keys are driven by the runtime `distributional` configuration (e.g. `binary`, `pixel_wise`, and optionally `*_n_reward`).
+
 ## Core Components
 
 ### 1. `RlArcWorldViTARC` (nn_modules.py)
@@ -100,6 +106,11 @@ Converts ARC grids into token sequences for the transformer.
 - **Special Tokens**: BOS, EOS, SEP, PAD, ROW_SEP, COL_SEP tokens
 - **Temporal Grid Encoding**: Concatenates multiple grids with separators
 - **Example Pair Encoding**: Encodes input-output pairs for cross-attention
+
+**Implementation Notes:**
+
+- OPE object indices are produced by `ObjectIndexExtractor` and returned as integer tensors (not uint8). This avoids overflow once the object counter exceeds 255.
+- The OpenCV path uses a simple bounding-box fill for each contour (as in the ViTARC paper).
 
 ---
 
@@ -175,7 +186,14 @@ Encoder Hidden States [B, seq_len, H]    Action Distributions
 └─────────────────────────────────────┘
 ```
 
-**Output:** `TensorDict` with Q-value distributions:
+**Output:** `TensorDict` with Q-value distributions.
+
+The set of reward heads is determined by the keys present in the `distributional` configuration passed to `VitARCCritic` (`num_atoms`, `v_min`, `v_max`). In particular, when n-step returns are enabled, the critic is expected to also include:
+
+- `pixel_wise_n_reward`
+- `binary_n_reward`
+
+so that critic outputs match the reward dict produced by the steppers.
 
 - `binary`: [B, num_atoms_binary] — probability distribution over value atoms
 - `pixel_wise`: [B, num_atoms_pixel] — probability distribution over value atoms
@@ -256,6 +274,14 @@ class ViTARCRewardModel(nn.Module):
         encoder_output = self.rl_vit_arc(state)
         return self.reward_head(encoder_output)
 ```
+
+---
+
+## Training/Runtime Integration Notes
+
+- Rewards are produced by steppers (e.g. `PixelWiseArcStepper`) and are converted into a dict/`TensorDict` with base keys (`pixel_wise`, `binary`) and, when `n_steps > 1`, additional n-step keys (`pixel_wise_n_reward`, `binary_n_reward`).
+- To keep training consistent, both training and validation steppers should be constructed with the same `n_step_config` so reward keys match the critic head keys.
+- `NStepMinVMaxConfig` bounds can be derived from the `distributional` configuration to ensure consistent clipping and value supports.
 
 ---
 
