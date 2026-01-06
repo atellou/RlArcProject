@@ -288,6 +288,8 @@ class Trainer:
         loss_actor = None
         loss_critic = None
         td_error = None
+        warmup = False
+        buffer_warmup = 0.0
         # Track and set module modes for validation
         prev_actor_mode = getattr(self.core.actor, "training", True)
         prev_critic_mode = getattr(self.core.critic, "training", True)
@@ -502,7 +504,7 @@ class Trainer:
                 raise ValueError("epochs must be greater than 0")
             if max_steps_per_epoch == 0:
                 raise ValueError("max_steps_per_epoch must be different from 0")
-            training_steps_required = max_steps_per_epoch * epochs
+            training_steps_required = max_steps_per_epoch * epochs * self.batch_size
             if max_steps_per_epoch > 0 and training_steps_required < warmup_buffer_size:
                 raise ValueError(
                     f"Warmup size ({warmup_buffer_size}) is greater than "

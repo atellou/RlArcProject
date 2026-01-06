@@ -5,6 +5,7 @@ from typing import Any, Callable, Tuple
 
 import torch
 from tensordict import TensorDict
+from torch.utils.data import DataLoader
 
 from rlarcworld.arc_dataset import ArcDataset, ArcSampleTransformer, ComposeTransforms
 from rlarcworld.common.configs import NStepMinVMaxConfig
@@ -31,7 +32,9 @@ class PixelWiseArcStepper:
         color_values: int,
         actor: ViTARCActor,
         device_config: CudaConfig,
+        batch_size: int,
         *,
+        max_examples: int = 10,
         dataset_shuffle_seed: int | None = None,
         augmentation_generator: torch.Generator | None = None,
         max_penalty: float = 1.0,
@@ -46,6 +49,8 @@ class PixelWiseArcStepper:
             color_values (int): Number of possible colors.
             actor (ViTARCActor): Actor network.
             device_config (CudaConfig): Device configuration dictionary.
+            batch_size (int): Batch size for the dataloader.
+            max_examples (int): Maximum number of examples to use.
             dataset_shuffle_seed (int | None):
                 Seed for shuffling the dataset.
             augmentation_generator (torch.Generator | None):
@@ -60,11 +65,13 @@ class PixelWiseArcStepper:
         self.n_step_config = (
             n_step_config if n_step_config is not None else NStepMinVMaxConfig()
         )
+        self.batch_size = batch_size
+        self.max_examples = max_examples
 
         # Create augmentation transformer
         augmentation = ArcAugmentationTransformer(
             augmentations=["rotate", "reflect", "permute_colors"],
-            max_examples=None,
+            max_examples=max_examples,
             color_permutation_range=(1, 12),
             augmentation_probability=0.5,  # Apply augmentations 50% of the time
             shuffle_probability=0.5,  # Shuffle examples 50% of the time
@@ -91,6 +98,14 @@ class PixelWiseArcStepper:
             shuffle_seed=dataset_shuffle_seed,
         )
 
+        self.dataloader = DataLoader(
+            self.dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+            collate_fn=self._collate_fn,
+        )
+
         base_env = ArcBatchGridEnv(
             grid_size=grid_size,
             color_values=color_values,
@@ -109,12 +124,41 @@ class PixelWiseArcStepper:
             actor=actor,
             device=self.device,
             env=self.environment,
-            sampler=iter(self.dataset),
+            sampler=iter(self.dataloader),
             max_steps=max_steps_per_epoch,
             env_sample_reset=self._reset_env,
             amp_enabled=device_config.get("amp_enabled", True),
             on_step=self._get_on_step_rewards(),
         )
+
+    def _collate_fn(self, samples: list[dict]) -> dict:
+        tasks_inp = []
+        tasks_out = []
+        examples_list = []
+        for s in samples:
+            t = s["task"]
+            tasks_inp.append(t["input"])
+            tasks_out.append(t["output"])
+            examples_list.append(s["examples"])
+
+        batch_in = torch.stack(tasks_inp, dim=0)
+        batch_out = torch.stack(tasks_out, dim=0)
+
+        padded_examples = []
+        for ex in examples_list:
+            if isinstance(ex, torch.Tensor) and ex.dim() == 4:
+                ex = ex[: self.max_examples]
+                if ex.shape[0] < self.max_examples:
+                    pad_shape = (self.max_examples - ex.shape[0], *ex.shape[1:])
+                    pad = torch.zeros(pad_shape, dtype=ex.dtype, device=ex.device)
+                    ex = torch.cat([ex, pad], dim=0)
+            padded_examples.append(ex)
+
+        batch_examples = torch.stack(padded_examples, dim=0)
+        return {
+            "task": {"input": batch_in, "output": batch_out},
+            "examples": batch_examples,
+        }
 
     def _reset_env(self, env, sample, **kwargs):
         """Reset the environment with a sample from the dataset.

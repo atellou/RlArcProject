@@ -160,15 +160,54 @@ class EnvStepper:
             # Get next state
             next_state = env.get_state(unsqueeze=1)
 
+            # Determine batch size (B) for this transition
+            batch_size = None
+            try:
+                batch_size = int(reward.shape[0])
+            except Exception:
+                try:
+                    batch_size = int(state.batch_size[0])
+                except Exception:
+                    batch_size = None
+            if batch_size is None:
+                batch_size = 1
+
             # Ensure reward is a TensorDict matching critic heads
             if isinstance(reward, TensorDict):
                 reward_td = reward.auto_batch_size_()
             elif isinstance(reward, dict):
-                reward_td = TensorDict(reward, batch_size=[]).auto_batch_size_()
+                reward_td = TensorDict(
+                    reward, batch_size=[batch_size]
+                ).auto_batch_size_()
             else:
                 raise ValueError(
                     "Reward must be a TensorDict or dict. Got: {}".format(type(reward))
                 )
+
+            # Build per-element terminated/truncated vectors for batched envs
+            terminated_vec = None
+            if isinstance(info, TensorDict):
+                try:
+                    if "terminated" in info.keys():
+                        terminated_vec = info["terminated"]
+                except Exception:
+                    terminated_vec = None
+            if terminated_vec is not None:
+                terminated_tensor = terminated_vec.to(self.device).float().reshape(-1)
+            else:
+                terminated_tensor = torch.full(
+                    (batch_size,),
+                    float(bool(terminated)),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+
+            truncated_tensor = torch.full(
+                (batch_size,),
+                float(bool(truncated)),
+                device=self.device,
+                dtype=torch.float32,
+            )
 
             # Format output
             return TensorDict(
@@ -177,14 +216,10 @@ class EnvStepper:
                     "reward": reward_td,
                     "actions": action_probs.auto_batch_size_(),
                     "next_state": next_state.auto_batch_size_(),
-                    "terminated": torch.tensor(
-                        [terminated], device=self.device, dtype=torch.float32
-                    ),
-                    "truncated": torch.tensor(
-                        [truncated], device=self.device, dtype=torch.float32
-                    ),
+                    "terminated": terminated_tensor,
+                    "truncated": truncated_tensor,
                 },
-                batch_size=[],
+                batch_size=[batch_size],
             ).to(self.device)
 
     def create_episode_stream(
@@ -202,8 +237,8 @@ class EnvStepper:
         while not done and (self.max_steps <= -1 or step_number < self.max_steps):
             step_data = self.step(self.env)
             # Ensure Python bool type for loop control
-            term = bool(step_data["terminated"].item())
-            trunc = bool(step_data["truncated"].item())
+            term = bool(torch.all(step_data["terminated"]).item())
+            trunc = bool(torch.all(step_data["truncated"]).item())
             done = term or trunc
             yield (
                 done,

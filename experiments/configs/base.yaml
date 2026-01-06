@@ -61,7 +61,7 @@ replay_buffer:
   warmup_ratio: 0.1
 
 training:
-  max_steps_per_epoch: 3000
+  max_steps_per_epoch: 510
   validation_epochs: 1
   validation_steps_per_epoch: 100
   validation_steps_frequency: 100

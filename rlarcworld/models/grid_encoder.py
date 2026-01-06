@@ -73,17 +73,23 @@ class ObjectIndexExtractor:
         object_indices = torch.zeros((height, width), dtype=torch.int64)
         background_id = torch.bincount(grid.reshape(-1))
 
-        if self.padding_id is not None and background_id.argmax() == self.padding_id:
-            background_id = torch.topk(background_id, k=2)[1][1]
+        if (
+            self.padding_id is not None
+            and background_id.argmax().item() == self.padding_id
+        ):
+            if background_id.numel() >= 2:
+                background_id = torch.topk(background_id, k=2)[1][1].item()
+            else:
+                background_id = int(self.padding_id)
         else:
-            background_id = background_id.argmax()
+            background_id = background_id.argmax().item()
 
         # Process each non-background color separately
         unique_colors = torch.unique(grid)
         current_obj_id = 0
 
         for color in unique_colors:
-            if color in (background_id, self.padding_id):  # Skip background
+            if color.item() in (background_id, self.padding_id):  # Skip background
                 continue
 
             # Create binary mask for this color (use CPU tensor)

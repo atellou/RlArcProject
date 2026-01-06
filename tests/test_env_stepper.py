@@ -227,6 +227,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         device_config=CudaConfig(
             device=device, amp_enabled=False, use_checkpointing=False
         ),
+        batch_size=1,
         n_step_config=NStepMinVMaxConfig(
             n_steps=2,
             pixel_wise_min_v=-10,
@@ -419,6 +420,7 @@ def test_env_stepper_step_stream_from_samples(device):
         device_config=CudaConfig(
             device=device, amp_enabled=False, use_checkpointing=False
         ),
+        batch_size=10,
         n_step_config=NStepMinVMaxConfig(
             n_steps=2,
             pixel_wise_min_v=-10,
