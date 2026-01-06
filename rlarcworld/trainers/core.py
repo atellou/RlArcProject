@@ -27,7 +27,8 @@ class OnStepContext:
     def __init__(
         self,
         epoch: int,
-        step_idx: int,
+        epoch_step_idx: int,
+        episode_step_idx: int,
         iteration: int,
         batch: TensorDict | None,
         loss_actor: torch.Tensor | None,
@@ -43,7 +44,8 @@ class OnStepContext:
 
         Args:
             epoch: Current epoch number
-            step_idx: Current step index within epoch
+            epoch_step_idx: Current step index within epoch
+            episode_step_idx: Current step index within episode
             iteration: Global iteration number
             batch: Training batch (None if no batch available)
             loss_actor: Actor loss (None if no training occurred)
@@ -56,7 +58,8 @@ class OnStepContext:
             run_end: Indicates whether the call is made at the end of _run call
         """
         self.epoch = epoch
-        self.step_idx = step_idx
+        self.epoch_step_idx = epoch_step_idx
+        self.episode_step_idx = episode_step_idx
         self.iteration = iteration
         self.batch = batch
         self.loss_actor = loss_actor
@@ -317,7 +320,9 @@ class Trainer:
                     None,
                 )
 
-                for _done, step_idx, step_state in step_stream_factory():
+                for epoch_step, (_done, step_idx, step_state) in enumerate(
+                    step_stream_factory()
+                ):
                     # Store transition and maybe sample batch
                     if training:
                         batch, info = self._maybe_store_and_sample(step_state)
@@ -374,7 +379,8 @@ class Trainer:
                     buffer_warmup, warmup = self.warmup_info()
                     ctx = OnStepContext(
                         epoch=current_epoch,
-                        step_idx=step_idx,
+                        epoch_step_idx=epoch_step,
+                        episode_step_idx=step_idx,
                         iteration=iteration,
                         batch=batch,
                         loss_actor=loss_actor,
@@ -415,7 +421,10 @@ class Trainer:
                         self.validate(validation_epochs, validation_steps_per_epoch)
 
                     # Early termination
-                    if max_steps_per_epoch > 0 and step_idx >= max_steps_per_epoch - 1:
+                    if (
+                        max_steps_per_epoch > 0
+                        and epoch_step >= max_steps_per_epoch - 1
+                    ):
                         break
 
                     iteration += 1
@@ -432,7 +441,8 @@ class Trainer:
             )
             ctx = OnStepContext(
                 epoch=epoch,
-                step_idx=step_idx,
+                epoch_step_idx=epoch_step,
+                episode_step_idx=step_idx,
                 iteration=iteration,
                 batch=batch,
                 loss_actor=loss_actor,
@@ -460,7 +470,8 @@ class Trainer:
             # Restore previous modes if altered
             ctx = OnStepContext(
                 epoch=epoch,
-                step_idx=step_idx,
+                epoch_step_idx=epoch_step,
+                episode_step_idx=step_idx,
                 iteration=iteration,
                 batch=batch,
                 loss_actor=loss_actor,

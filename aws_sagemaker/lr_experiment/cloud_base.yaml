@@ -11,7 +11,7 @@ env:
   grid_size: 30
   color_values: 10
   max_penalty: 1.0
-  batch_size: 32
+  batch_size: 128
 
 network:
   d_model: 128
@@ -58,17 +58,20 @@ distributional:
     binary: 1
 
 replay_buffer:
-  size: 5000
+  size: 10000
   alpha: 0.2
   beta: 0.2
   warmup_ratio: 0.1
 
 training:
-  max_steps_per_epoch: 3000
+  max_steps_per_epoch: 10000
+  max_steps_per_episode: 1000 # Max possible steps and a little more
   validation_epochs: 1
   validation_steps_per_epoch: 100
+  validation_steps_per_episode: 100
   validation_steps_frequency: 100
   min_train_batch_size: 2
+  augmentation_enabled: false
 
 world_model:
   enabled: false
@@ -86,7 +89,7 @@ checkpoint:
 
 logging:
   tensorboard_enabled: true
-  log_frequency: 100
+  log_frequency: 10
 
 system:
   amp_enabled: true

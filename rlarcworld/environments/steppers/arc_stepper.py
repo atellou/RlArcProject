@@ -26,7 +26,7 @@ class PixelWiseArcStepper:
 
     def __init__(
         self,
-        max_steps_per_epoch: int,
+        max_steps_per_episode: int,
         dataset: str | list[str],
         grid_size: int,
         color_values: int,
@@ -34,6 +34,7 @@ class PixelWiseArcStepper:
         device_config: CudaConfig,
         batch_size: int,
         *,
+        augmentation_enabled: bool = False,
         max_examples: int = 10,
         dataset_shuffle_seed: int | None = None,
         augmentation_generator: torch.Generator | None = None,
@@ -43,13 +44,14 @@ class PixelWiseArcStepper:
         """Creates a stepper for the environment and dataset.
 
         Args:
-            max_steps_per_epoch (int): Maximum steps per epoch.
+            max_steps_per_episode (int): Maximum steps per episode.
             dataset (str | list[str]): Path to the dataset.
             grid_size (int): Size of the ARC grid.
             color_values (int): Number of possible colors.
             actor (ViTARCActor): Actor network.
             device_config (CudaConfig): Device configuration dictionary.
             batch_size (int): Batch size for the dataloader.
+            augmentation_enabled (bool): Whether to enable data augmentation.
             max_examples (int): Maximum number of examples to use.
             dataset_shuffle_seed (int | None):
                 Seed for shuffling the dataset.
@@ -68,33 +70,34 @@ class PixelWiseArcStepper:
         self.batch_size = batch_size
         self.max_examples = max_examples
 
-        # Create augmentation transformer
-        augmentation = ArcAugmentationTransformer(
-            augmentations=["rotate", "reflect", "permute_colors"],
-            max_examples=max_examples,
-            color_permutation_range=(1, 12),
-            augmentation_probability=0.5,  # Apply augmentations 50% of the time
-            shuffle_probability=0.5,  # Shuffle examples 50% of the time
-            generator=augmentation_generator,
-        )
-
         # IMPORTANT: ArcSampleTransformer must come FIRST to convert lists to tensors
         # and apply the padding and zero-based correction.
         # Then augmentation can operate on the tensor data.
-        transform = ComposeTransforms(
-            [
-                ArcSampleTransformer(
-                    output_size=(grid_size, grid_size),
-                    padding_constant_value=-1,
-                    zero_based_correction=1,
-                ),
-                augmentation,
-            ]
-        )
+        transform = [
+            ArcSampleTransformer(
+                output_size=(grid_size, grid_size),
+                padding_constant_value=-1,
+                zero_based_correction=1,
+            )
+        ]
+
+        # Create augmentation transformer
+        if augmentation_enabled:
+            transform.append(
+                ArcAugmentationTransformer(
+                    augmentations=["rotate", "reflect", "permute_colors"],
+                    max_examples=max_examples,
+                    color_permutation_range=(1, 12),
+                    augmentation_probability=0.5,  # Apply augmentations 50% of the time
+                    shuffle_probability=0.5,  # Shuffle examples 50% of the time
+                    generator=augmentation_generator,
+                )
+            )
+
         self.dataset: ArcDataset = ArcDataset(
             dataset,
             keep_in_memory=False,
-            transform=transform,
+            transform=ComposeTransforms(transform),
             shuffle_seed=dataset_shuffle_seed,
         )
 
@@ -124,8 +127,8 @@ class PixelWiseArcStepper:
             actor=actor,
             device=self.device,
             env=self.environment,
-            sampler=iter(self.dataloader),
-            max_steps=max_steps_per_epoch,
+            sampler=self.dataloader,
+            max_steps=max_steps_per_episode,
             env_sample_reset=self._reset_env,
             amp_enabled=device_config.get("amp_enabled", True),
             on_step=self._get_on_step_rewards(),

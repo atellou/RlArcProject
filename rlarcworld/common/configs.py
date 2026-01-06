@@ -287,17 +287,23 @@ class TrainingConfig:
 
     Attributes:
         max_steps_per_epoch (int): Maximum steps per epoch.
+        max_steps_per_episode (int): Maximum steps per episode.
         validation_epochs (int): Number of validation epochs.
         validation_steps_per_epoch (int): Number of validation steps per epoch.
+        validation_steps_per_episode (int): Number of validation steps per episode.
         validation_steps_frequency (int): Frequency of validation steps.
         min_train_batch_size (int): Minimum batch size for training.
+        augmentation_enabled (bool): Whether to enable data augmentation.
     """
 
     max_steps_per_epoch: int = 10000
+    max_steps_per_episode: int = 900
     validation_epochs: int = 1
     validation_steps_per_epoch: int = 100
+    validation_steps_per_episode: int = 100
     validation_steps_frequency: int = 100
     min_train_batch_size: int = 2
+    augmentation_enabled: bool = False
 
 
 @dataclass

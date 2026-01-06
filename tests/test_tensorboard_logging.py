@@ -121,7 +121,8 @@ def sample_context(mock_core):
 
     return OnStepContext(
         epoch=5,
-        step_idx=100,
+        epoch_step_idx=100,
+        episode_step_idx=100,
         iteration=500,
         batch=batch,
         loss_actor=torch.tensor(0.25),
@@ -344,9 +345,9 @@ class TestMinimalMetricsLogging:
         # Check that all scalars use 'val/' prefix
         for call in mock_writer.add_scalar.call_args_list:
             metric_name = call[0][0]
-            assert metric_name.startswith(
-                "val/"
-            ), f"Expected 'val/' prefix, got {metric_name}"
+            assert metric_name.startswith("val/"), (
+                f"Expected 'val/' prefix, got {metric_name}"
+            )
 
     def test_handles_none_losses_gracefully(
         self, temp_experiment_path, mock_writer, mock_core
@@ -354,7 +355,8 @@ class TestMinimalMetricsLogging:
         """Test that None losses don't cause errors."""
         ctx = OnStepContext(
             epoch=1,
-            step_idx=10,
+            epoch_step_idx=10,
+            episode_step_idx=10,
             iteration=10,
             batch=None,
             loss_actor=None,
@@ -375,7 +377,8 @@ class TestMinimalMetricsLogging:
         """Test that None batch doesn't cause errors."""
         ctx = OnStepContext(
             epoch=1,
-            step_idx=10,
+            epoch_step_idx=10,
+            episode_step_idx=10,
             iteration=10,
             batch=None,
             loss_actor=torch.tensor(0.1),

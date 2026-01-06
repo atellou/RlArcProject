@@ -219,7 +219,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
         env.reset(options={**sample, "mode": "train"}, seed=seed)
 
     stepper = PixelWiseArcStepper(
-        max_steps_per_epoch=2,
+        max_steps_per_episode=2,
         dataset="tests/test_data/",
         grid_size=grid_size,
         color_values=color_values,
@@ -412,7 +412,7 @@ def test_env_stepper_step_stream_from_samples(device):
     actor.eval()
 
     stepper = PixelWiseArcStepper(
-        max_steps_per_epoch=2,
+        max_steps_per_episode=2,
         dataset="tests/test_data/",
         grid_size=grid_size,
         color_values=color_values,

@@ -168,7 +168,9 @@ class ArcD4PG:
         self.color_values = config.env.color_values
         self.batch_size = config.env.batch_size
         self.max_steps_per_epoch = config.training.max_steps_per_epoch
+        self.max_steps_per_episode = config.training.max_steps_per_episode
         self.validation_steps_per_epoch = config.training.validation_steps_per_epoch
+        self.validation_steps_per_episode = config.training.validation_steps_per_episode
         self.min_train_batch_size = config.training.min_train_batch_size
 
         # Validation policies
@@ -250,13 +252,14 @@ class ArcD4PG:
         # Create training stepper
         logger.info("Creating training stepper...")
         self.training_stepper = PixelWiseArcStepper(
-            max_steps_per_epoch=self.max_steps_per_epoch,
+            max_steps_per_episode=self.max_steps_per_episode,
             dataset=config.dataset,
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
             actor=self.actor,
             device_config=self.cuda_config,
             batch_size=self.batch_size,
+            augmentation_enabled=config.training.augmentation_enabled,
             max_examples=10,
             dataset_shuffle_seed=ds_shuffle_seed,
             augmentation_generator=aug_gen,
@@ -268,16 +271,17 @@ class ArcD4PG:
         # Create validation stepper (use same seeds)
         logger.info("Creating validation stepper...")
         self.validation_stepper = PixelWiseArcStepper(
-            max_steps_per_epoch=self.validation_steps_per_epoch,
+            max_steps_per_episode=self.validation_steps_per_episode,
             dataset=config.dataset,
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
             actor=self.actor,
             device_config=self.cuda_config,
             batch_size=self.batch_size,
+            augmentation_enabled=False,
             max_examples=10,
             dataset_shuffle_seed=ds_shuffle_seed,
-            augmentation_generator=aug_gen,
+            augmentation_generator=None,
             max_penalty=config.env.max_penalty,
             n_step_config=config.d4pg.n_step_config,
         )
@@ -637,16 +641,19 @@ class ArcD4PG:
             ctx: Step ctx containing training information
         """
         if ctx.iteration % self.exp_config.logging.log_frequency == 0:
-            msg = f"Epoch {ctx.epoch}, Step {ctx.step_idx}, " + (
-                f"Buffer Warmup: {ctx.buffer_warmup:.1f}%, "
-                if ctx.buffer_warmup is not None
-                else ""
+            msg = (
+                f"Epoch {ctx.epoch}, "
+                + f"Step [Episode/Epoch] {ctx.episode_step_idx}/{ctx.epoch_step_idx}"
             )
             if ctx.warmup:
-                msg += " (Warmup) "
+                msg += (
+                    f", Buffer Warmup: {ctx.buffer_warmup:.1f}%"
+                    if ctx.buffer_warmup is not None
+                    else ""
+                )
             if ctx.loss_actor is not None:
                 msg += (
-                    f", Iteration {ctx.iteration}: "
+                    f". Iteration {ctx.iteration}: "
                     f"Actor Loss: {ctx.loss_actor:.7f}, "
                     f"Critic Loss: {ctx.loss_critic:.7f}"
                 )
