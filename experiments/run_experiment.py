@@ -44,14 +44,20 @@ def _maybe_init_distributed() -> tuple[int, int]:
     import torch
     import torch.distributed as dist
 
-    if dist.is_available() and not dist.is_initialized():
-        backend = "nccl" if torch.cuda.is_available() else "gloo"
-        dist.init_process_group(backend=backend, init_method="env://")
-
     rank = int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
+
+    if dist.is_available() and not dist.is_initialized():
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        # torch>=2.2 supports device_id to silence barrier() warnings and avoid hangs
+        try:
+            dist.init_process_group(
+                backend=backend, init_method="env://", device_id=local_rank
+            )
+        except TypeError:
+            dist.init_process_group(backend=backend, init_method="env://")
 
     return rank, world_size
 

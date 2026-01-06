@@ -549,6 +549,11 @@ class Trainer:
         """
         if self.validation_step_stream_factory is None:
             raise ValueError("Validation step stream factory is not set")
+        logger.info(
+            "Running validation loop, epochs: {}, max_steps_per_epoch: {}".format(
+                epochs, max_steps_per_epoch
+            )
+        )
         self._run(
             step_stream_factory=self.validation_step_stream_factory,
             on_step=self.on_validation_step,

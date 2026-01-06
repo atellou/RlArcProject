@@ -105,12 +105,11 @@ class SagemakerExperiment:
         )
         logger.info("Compute: %s", self.compute)
 
-        if self.enable_spot_instance:
-            s3_uri = self.output_data_config.s3_output_path
-            self.checkpoint_config = CheckpointConfig(
-                s3_uri=f"{s3_uri}/checkpoints",
-                local_path="/opt/ml/checkpoints",
-            )
+        s3_uri = self.output_data_config.s3_output_path
+        self.checkpoint_config = CheckpointConfig(
+            s3_uri=f"{s3_uri}/checkpoints",
+            local_path="/opt/ml/checkpoints",
+        )
 
         self.create_model_trainer()
 
@@ -145,6 +144,8 @@ class SagemakerExperiment:
             max_wait_time_in_seconds=wait_time,
         )
 
+        tensorboard_logdir = f"{self.checkpoint_config.local_path}/tensorboard"
+
         self.model_trainer = ModelTrainer(
             training_image=self.training_image,
             training_mode="SAGEMAKER_TRAINING_JOB",
@@ -171,13 +172,12 @@ class SagemakerExperiment:
                 "TORCH_NCCL_ASYNC_ERROR_HANDLING": "1",
                 "NCCL_DEBUG": "WARN",
                 "PYTORCH_ALLOC_CONF": "max_split_size_mb:128,expandable_segments:True",
-                "TENSORBOARD_LOGDIR": "/opt/ml/output/data/tensorboard",
+                "TENSORBOARD_LOGDIR": tensorboard_logdir,
             },
         )
         logger.info(f"Model trainer created: {self.model_trainer}")
 
-        if hasattr(self, "checkpoint_config"):
-            self.model_trainer.with_checkpoint_config(self.checkpoint_config)
+        self.model_trainer.with_checkpoint_config(self.checkpoint_config)
 
     def train(
         self, s3_train_data_tar: str, wait: bool = True, logs: bool = True

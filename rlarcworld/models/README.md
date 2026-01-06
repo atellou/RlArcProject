@@ -93,6 +93,63 @@ class ViTARCEncoderOutput:
     example_mask: torch.Tensor       # Example attention mask (optional)
 ```
 
+#### `RlArcWorldViTARC.forward()` data flow (step-by-step)
+
+This section describes the *runtime* forward pass inside `RlArcWorldViTARC` and how the intermediate tensors relate.
+
+- **[Input state]** The forward pass receives a `TensorDict` containing some subset of:
+  - **`grid`**: current grid `[B, 1, H, W]`
+  - **`initial` / `last_grid`**: optional temporal context grids `[B, 1, H, W]`
+  - **`examples`**: optional example pairs `[B, num_examples, 2, H, W]`
+  - **`index_grid`**: optional index/timestamp grid aligned with the current grid
+
+- **[Tokenization via GridEncoder]** The `GridEncoder` converts grid tensors into token sequences.
+  - **Non-temporal mode** (`use_temporal=False`):
+    - `input_ids`: `[B, seq_len]`
+    - `attention_mask`: `[B, seq_len]`
+    - `object_idx`: `[B, seq_len]` (used for OPE)
+    - Optional `index_ids`: `[B, seq_len]` aligned with the grid tokens when `use_index_grid=True`
+  - **Temporal mode** (`use_temporal=True`):
+    - `input_ids`: `[B, seq_len]` representing `<s> [initial] <sep> [last] <sep> [current] </s>`
+    - `temporal_ids`: `[B, seq_len]` identifying which segment each token belongs to
+    - `attention_mask`, `object_idx` as above
+
+- **[Optional grid compression (before encoder)]** If `grid_compression_tokens=K` is set, the model reduces the sequence length *before* the transformer encoder to reduce attention memory.
+  - Convert tokens to embeddings: `inputs_embeds = embed_tokens(input_ids)` → `[B, seq_len, d_model]`
+  - Compress to `K` tokens:
+    - **Learned** (`compression_method="learned"`): `grid_compressor(inputs_embeds, mask=attention_mask)` → `[B, K, d_model]`
+    - **Pooling**: projection + adaptive pooling → `[B, K, d_model]`
+  - Re-align metadata to the compressed sequence:
+    - `attention_mask` becomes `[B, K]` (all ones)
+    - `object_idx` is pooled to `object_idx_compressed: [B, K]` when OPE is enabled
+
+- **[Transformer encoding: CustomT5Stack]** The encoder produces contextual representations.
+  - Inputs are either:
+    - Uncompressed: `input_ids` + `attention_mask` (+ `object_idx`)
+    - Compressed: `inputs_embeds` + `attention_mask` (+ `object_idx_compressed`)
+  - **RPE vs compression**:
+    - Uncompressed grid tokens use the 2D distance matrix for relative position bias.
+    - Compressed sequences use a 1D distance matrix keyed by the compressed length.
+  - **OPE** uses `object_idx` / `object_idx_compressed` to preserve object/spatial anchors.
+  - Output: `hidden_states = encoder_outputs.last_hidden_state` with shape `[B, seq_len_or_K, d_model]`.
+
+- **[Add index/temporal embeddings (post-encoder)]** These are added additively to the encoder hidden states.
+  - If `use_index_grid=True`, add `index_embed(index_ids)` (or compressed `index_ids_compressed` when the grid is compressed).
+  - If `use_temporal=True`, add `temporal_embed(temporal_ids)` (or compressed `temporal_ids_compressed` when the grid is compressed).
+
+- **[Optional example conditioning]** If `use_examples=True` and examples exist:
+  - Each example pair is tokenized and encoded (optionally compressed similarly to the grid).
+  - Example encodings are collected into `example_hidden` with an `example_mask`.
+  - The model uses `ExampleCrossAttention` so the grid representation can attend over the example representations.
+
+- **[Output relationship to downstream heads]**
+  - The returned `ViTARCEncoderOutput.hidden_states` is the *shared* representation consumed by:
+    - `ActionHeadFromEncoder` (actor) → action distributions (x, y, color, submit)
+    - `CriticHeadFromEncoder` (critic) → distributional Q-value heads (binary / pixel-wise / optional n-step)
+  - Optional fields (`example_hidden`, `example_mask`, `temporal_ids`, `object_idx`) are either:
+    - used internally for conditioning/positional structure
+    - or returned for debugging/inspection and potential auxiliary heads
+
 ---
 
 ### 2. `GridEncoder` (grid_encoder.py)

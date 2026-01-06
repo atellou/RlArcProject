@@ -510,6 +510,11 @@ class ArcD4PG:
         """
         callbacks: OrderedDict[str, Callable[[OnStepContext], Any]] = OrderedDict()
 
+        self._validation_loss_actor_accumulator: list[float] = []
+        self._validation_loss_critic_accumulator: list[float] = []
+        self._validation_rewards_accumulator: dict[str, list[float]] = {}
+        callbacks["val_end_log"] = self._validation_end_log
+
         if self.exp_config.checkpoint.improvement_checkpoint_enabled:
             logger.info("Validation improvement checkpoint enabled")
             # Initialize tracking for validation-based improvement
@@ -518,6 +523,84 @@ class ArcD4PG:
             callbacks["improvement_ckpt"] = self._validation_improvement_checkpoint
 
         return callbacks
+
+    def _validation_end_log(self, ctx: OnStepContext) -> None:
+        if ctx.loss_actor is not None:
+            try:
+                self._validation_loss_actor_accumulator.append(
+                    float(ctx.loss_actor.item())
+                )
+            except Exception:
+                pass
+        if ctx.loss_critic is not None:
+            try:
+                self._validation_loss_critic_accumulator.append(
+                    float(ctx.loss_critic.item())
+                )
+            except Exception:
+                pass
+
+        if ctx.batch is not None:
+            reward_keys = [rk.value for rk in RewardKeys]
+            for key in reward_keys:
+                if key not in ctx.batch.keys():
+                    continue
+                try:
+                    reward_val = float(ctx.batch[key].mean().item())
+                except Exception:
+                    continue
+                if key not in self._validation_rewards_accumulator:
+                    self._validation_rewards_accumulator[key] = []
+                self._validation_rewards_accumulator[key].append(reward_val)
+
+        if not ctx.run_end:
+            return
+        if not self._is_rank0():
+            self._validation_loss_actor_accumulator.clear()
+            self._validation_loss_critic_accumulator.clear()
+            self._validation_rewards_accumulator.clear()
+            return
+
+        mean_loss_actor = (
+            sum(self._validation_loss_actor_accumulator)
+            / len(self._validation_loss_actor_accumulator)
+            if self._validation_loss_actor_accumulator
+            else None
+        )
+        mean_loss_critic = (
+            sum(self._validation_loss_critic_accumulator)
+            / len(self._validation_loss_critic_accumulator)
+            if self._validation_loss_critic_accumulator
+            else None
+        )
+        rewards_str = ""
+        if self._validation_rewards_accumulator:
+            rewards_str = ", ".join(
+                f"{k}: {sum(v) / len(v):.6f}"
+                for k, v in self._validation_rewards_accumulator.items()
+                if v
+            )
+
+        msg = (
+            f"Validation summary @ train_iter={self.trainer.train_iteration}: "
+            + (
+                f"loss_actor={mean_loss_actor:.7f}, "
+                if mean_loss_actor is not None
+                else ""
+            )
+            + (
+                f"loss_critic={mean_loss_critic:.7f}"
+                if mean_loss_critic is not None
+                else ""
+            )
+        )
+        if rewards_str:
+            msg += f", rewards=[{rewards_str}]"
+        logger.info(msg)
+
+        self._validation_loss_actor_accumulator.clear()
+        self._validation_loss_critic_accumulator.clear()
+        self._validation_rewards_accumulator.clear()
 
     def _on_train_callbacks(
         self,
@@ -730,12 +813,11 @@ class ArcD4PG:
                         datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
                     ),
                 ),
-                save_replay_buffer=failed,
             )
 
     def save_checkpoint(
         self,
-        path: str | Path,
+        checkpoint_path: str,
         *,
         save_replay_buffer: bool = False,
         include_core: bool = True,
@@ -750,7 +832,7 @@ class ArcD4PG:
         """Save model checkpoint.
 
         Args:
-            path: Path to save checkpoint
+            checkpoint_path: Path to save checkpoint
             save_replay_buffer: Whether to save replay buffer
             include_core: Whether to include core checkpoint
             include_env: Whether to include environment checkpoint
@@ -767,7 +849,7 @@ class ArcD4PG:
             logger.info("Non-rank0 process: skipping save_checkpoint")
             return
         # Resolve target path (file or directory semantics)
-        checkpoint_path = resolve_save_path(path, self.__class__.__name__)
+        checkpoint_path = resolve_save_path(checkpoint_path, self.__class__.__name__)
         if not (
             hasattr(self, "trainer")
             and hasattr(self, "training_stepper")
@@ -873,15 +955,9 @@ class ArcD4PG:
         }
         checkpoint = add_schema_and_class(payload, self.__class__.__name__)
 
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
-
         if self._is_rank0():
             torch.save(checkpoint, checkpoint_path)
             logger.info(f"Checkpoint saved to {checkpoint_path}")
-
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
 
     def load_checkpoint(
         self,
