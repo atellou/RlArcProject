@@ -12,6 +12,7 @@ import logging
 import os
 import random
 import sys
+import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -521,6 +522,10 @@ class ArcD4PG:
         self._validation_loss_actor_accumulator: list[float] = []
         self._validation_loss_critic_accumulator: list[float] = []
         self._validation_rewards_accumulator: dict[str, list[float]] = {}
+
+        # Keep basic progress visibility during validation (which may be slow)
+        self._validation_run_start_t: float | None = None
+        callbacks["val_progress_log"] = self._validation_progress_log
         callbacks["val_end_log"] = self._validation_end_log
 
         if self.exp_config.checkpoint.improvement_checkpoint_enabled:
@@ -531,6 +536,37 @@ class ArcD4PG:
             callbacks["improvement_ckpt"] = self._validation_improvement_checkpoint
 
         return callbacks
+
+    def _validation_progress_log(self, ctx: OnStepContext) -> None:
+        if ctx.run_end:
+            self._validation_run_start_t = None
+            return
+        if not self._is_rank0():
+            return
+
+        # Initialize timer on first step
+        if ctx.epoch_step_idx == 0 or self._validation_run_start_t is None:
+            self._validation_run_start_t = time.monotonic()
+
+        # Log every 10 validation steps by default (cheap visibility)
+        if ctx.epoch_step_idx % 10 != 0:
+            return
+
+        elapsed_s = time.monotonic() - self._validation_run_start_t
+        # We usually run validation for a single epoch; estimate remaining steps
+        remaining = max(
+            int(self.validation_steps_per_epoch) - int(ctx.epoch_step_idx) - 1, 0
+        )
+        per_step = elapsed_s / max(int(ctx.epoch_step_idx) + 1, 1)
+        eta_s = remaining * per_step
+
+        logger.info(
+            "Validation progress: step %d/%s (elapsed %.1fs, eta %.1fs)",
+            int(ctx.epoch_step_idx),
+            str(self.validation_steps_per_epoch),
+            float(elapsed_s),
+            float(eta_s),
+        )
 
     def _validation_end_log(self, ctx: OnStepContext) -> None:
         if ctx.loss_actor is not None:

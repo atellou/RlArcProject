@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import datetime
 import logging
 import os
 import tempfile
@@ -340,6 +341,15 @@ def main() -> None:
 
     logger.info(f"Loading experiment: {args.experiment}")
     config = load_experiment(args.experiment, args.config, args.base)
+
+    base_checkpoint_dir = config.checkpoint.checkpoint_dir or "checkpoints"
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir_name = f"{args.experiment}_{timestamp}"
+    config.checkpoint.checkpoint_dir = os.path.join(base_checkpoint_dir, run_dir_name)
+    logger.info(
+        "Checkpoint directory set to: %s",
+        os.path.abspath(config.checkpoint.checkpoint_dir),
+    )
 
     if args.dataset and args.samples_path_list:
         raise ValueError("Cannot specify both --dataset and --samples-path-list")

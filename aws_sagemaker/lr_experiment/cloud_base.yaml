@@ -11,7 +11,7 @@ env:
   grid_size: 30
   color_values: 10
   max_penalty: 1.0
-  batch_size: 64
+  batch_size: 32
 
 network:
   d_model: 128
@@ -70,7 +70,7 @@ training:
   validation_steps_per_epoch: 100
   validation_steps_per_episode: 100
   validation_steps_frequency: 100
-  min_train_batch_size: 2
+  min_train_batch_size: 16
   augmentation_enabled: false
 
 world_model:
