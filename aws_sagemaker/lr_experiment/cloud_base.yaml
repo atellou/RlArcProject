@@ -83,7 +83,7 @@ world_model:
   model_update_frequency: 10
 
 checkpoint:
-  save_frequency: 500
+  save_frequency: 100
   checkpoint_dir: "/opt/ml/checkpoints"
   improvement_checkpoint_enabled: true
 

@@ -836,31 +836,39 @@ class ArcD4PG:
             failed = True
             raise
         finally:
-            # Flush and close TensorBoard writer to ensure all data is written
-            if hasattr(self, "tb_manager") and self.tb_manager is not None:
-                try:
-                    logger.info("Flushing TensorBoard writer...")
-                    self.tb_manager.close()
-                except Exception as e:
-                    logger.warning(f"Failed to close TensorBoard writer: {e}")
+            self.save_final_checkpoint(failed=failed)
 
-            _buffer_warmup, warmup = self.trainer.warmup_info()
-            if warmup:
-                logger.warning("Skipping final checkpoint during warmup period")
-                return
-            if not self._is_rank0() and not self.fsdp_enabled:
-                logger.info("Non-rank0 process: skipping final checkpoint")
-                return
-            logger.info("Saving final checkpoint...")
-            self.save_checkpoint(
-                os.path.join(
-                    self.checkpoint_dir,
-                    "checkpoints/{}/d4pg_cp-failed-{}.pth".format(
-                        "failure" if failed else "success",
-                        datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
-                    ),
-                ),
+    def save_final_checkpoint(self, *, failed: bool, reason: str | None = None) -> None:
+        """Save final checkpoint."""
+        if hasattr(self, "tb_manager") and self.tb_manager is not None:
+            try:
+                logger.info("Flushing TensorBoard writer...")
+                self.tb_manager.close()
+            except Exception as e:
+                logger.warning(f"Failed to close TensorBoard writer: {e}")
+
+        if not hasattr(self, "trainer") or self.trainer is None:
+            logger.warning("Skipping final checkpoint: trainer not initialized")
+            return
+
+        _buffer_warmup, warmup = self.trainer.warmup_info()
+        if warmup:
+            logger.warning("Skipping final checkpoint during warmup period")
+            return
+        if not self._is_rank0() and not self.fsdp_enabled:
+            logger.info("Non-rank0 process: skipping final checkpoint")
+            return
+
+        now_str = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        if reason == "spot":
+            rel = f"checkpoints/spot/d4pg_cp-spot-{now_str}.pth"
+        else:
+            rel = "checkpoints/{}/d4pg_cp-failed-{}.pth".format(
+                "failure" if failed else "success",
+                now_str,
             )
+        logger.info("Saving final checkpoint...")
+        self.save_checkpoint(os.path.join(self.checkpoint_dir, rel))
 
     def save_checkpoint(
         self,

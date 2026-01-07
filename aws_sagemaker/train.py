@@ -11,6 +11,7 @@ existing experiment runner via the ArcD4PG trainer.
 import argparse
 import logging
 import os
+import re
 import tarfile
 from pathlib import Path
 
@@ -22,6 +23,65 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _find_latest_checkpoint(checkpoint_dir: str | Path) -> str | None:
+    ckpt_dir = Path(checkpoint_dir)
+    if not ckpt_dir.exists():
+        return None
+
+    candidates: list[Path] = []
+    for p in ckpt_dir.rglob("*.pth"):
+        if p.is_file():
+            candidates.append(p)
+    if not candidates:
+        return None
+
+    spot_candidates: list[Path] = []
+    periodic_candidates: list[Path] = []
+    best_candidates: list[Path] = []
+    for cand in candidates:
+        cand_str = str(cand)
+        if "checkpoints/spot" in cand_str or "spot" in cand_str:
+            spot_candidates.append(cand)
+        elif "checkpoints/periodic" in cand_str or "periodic" in cand_str:
+            periodic_candidates.append(cand)
+        elif "checkpoints/best" in cand_str or "best" in cand_str:
+            best_candidates.append(cand)
+
+    iter_re = re.compile(r"(?:^|[_-])i_(\d{6})(?:$|\D)")
+    ts_re = re.compile(r"(\d{8}-\d{6})")
+
+    def score(candidate: Path) -> tuple[int, int]:
+        # Prefer timestamp in the name (spot / success / failure).
+        m_ts = ts_re.search(candidate.name)
+        if m_ts:
+            try:
+                ts_val = int(m_ts.group(1).replace("-", ""))
+            except ValueError:
+                ts_val = 0
+            return (1, ts_val)
+
+        # Otherwise try iteration if present (periodic / best).
+        m_iter = iter_re.search(candidate.name)
+        if m_iter:
+            return (2, int(m_iter.group(1)))
+
+        # Final fallback: filesystem mtime.
+        try:
+            mtime_val = int(candidate.stat().st_mtime)
+        except OSError:
+            mtime_val = 0
+        return (0, mtime_val)
+
+    if spot_candidates:
+        return str(max(spot_candidates, key=score))
+    if periodic_candidates:
+        return str(max(periodic_candidates, key=score))
+    if best_candidates:
+        return str(max(best_candidates, key=score))
+
+    return None
 
 
 def _maybe_init_distributed() -> tuple[int, int]:
@@ -214,6 +274,13 @@ def main() -> None:
         world_size,
     )
     experiment = ArcD4PG(config)
+
+    # Auto-resume if SageMaker has restored checkpoints from S3.
+    latest_ckpt = _find_latest_checkpoint(config.checkpoint.checkpoint_dir)
+    if latest_ckpt is not None:
+        logger.info("Resuming from checkpoint: %s", latest_ckpt)
+        experiment.load_checkpoint(latest_ckpt)
+
     experiment.train(epochs=args.epochs)
 
     _maybe_destroy_distributed()

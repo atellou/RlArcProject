@@ -66,6 +66,7 @@ class SagemakerExperiment:
             volume_size: EBS volume size in GB for training.
             enable_spot_instance: Enable spot instances for training.
             max_run: Maximum job runtime in seconds.
+            max_wait: Maximum job wait time in seconds.
             job_name: Custom name for the training job.
             pytorch_version: PyTorch version to use.
             py_version: Python version to use.
