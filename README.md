@@ -2,8 +2,83 @@
 
 This project implements a Deep Reinforcement Learning (RL) approach to solve tasks from the Abstraction and Reasoning Corpus (ARC) challenge. It uses the Distributional Deep Deterministic Policy Gradient (D4PG) algorithm with specialized neural network architectures for the ARC environment.
 
+## Quickstart
+
+### Local
+
+1. Install (Python 3.12)
+
+   ```bash
+   python -m pip install -e .
+   ```
+
+2. List available experiments
+
+   ```bash
+   python experiments/run_experiment.py --list
+   ```
+
+3. Run an experiment
+
+   ```bash
+   python experiments/run_experiment.py \
+     --experiment stable_baseline \
+     --epochs 10 \
+     --config experiments/configs/experiments.yaml \
+     --base experiments/configs/base.yaml
+   ```
+
+4. Override dataset path (optional)
+
+   ```bash
+   python experiments/run_experiment.py \
+     --experiment stable_baseline \
+     --epochs 10 \
+     --dataset /path/to/arc/dataset
+   ```
+
+5. Healthcheck (quick checkpoint save/load test)
+
+   ```bash
+   python experiments/run_experiment.py --healthcheck
+   ```
+
+### SageMaker
+
+1. Install SageMaker dependencies locally
+
+   ```bash
+   python -m pip install -e ".[aws-sagemaker]"
+   ```
+
+2. Upload a dataset tarball to S3
+
+   SageMaker expects a single tarball in the train channel. You can create one from a text file listing JSON samples:
+
+   - `dataset_ids.txt` in the repo is an example of a sample list file.
+
+3. Launch a job
+
+   ```bash
+   python aws_sagemaker/launch.py \
+     --role-arn arn:aws:iam::<acct>:role/SageMakerExecRole \
+     --s3-train-tar s3://<bucket>/datasets/arc_train.tar.gz \
+     --experiment lr_3e4_nstep_1 \
+     --instance-type ml.g5.12xlarge \
+     --epochs 10
+   ```
+
+   - The container entrypoint is `aws_sagemaker/train.py`.
+   - SageMaker checkpoints are synced via `/opt/ml/checkpoints`.
+   - Logs stream to CloudWatch under `/aws/sagemaker/TrainingJobs`.
+
+For more details, see `aws_sagemaker/README.md`.
+
 ## Table of Contents
 
+- [Quickstart](#quickstart)
+  - [Local](#local)
+  - [SageMaker](#sagemaker)
 - [Infrastructure](#infrastructure)
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
@@ -21,9 +96,6 @@ This project implements a Deep Reinforcement Learning (RL) approach to solve tas
 - [Acknowledgments](#acknowledgments)
 - [Dataset](#dataset)
 - [Cloud Integration](#cloud-integration)
-- [Acknowledgments](#acknowledgments)
-- [Dataset](#dataset)
-- [Cloud Integration](#cloud-integration)
 
 ## Infrastructure
 
@@ -36,19 +108,17 @@ TheProject is designed to run in containerized environments with support for GPU
 
 Key components:
 
-- `devops/`: Contains Docker configuration and deployment scripts
-  - `Dockerfile`: Base image with all dependencies
-  - `dev.docker-compose.yml`: Local development setup
-  - `.env`: Environment configuration
+- `aws_sagemaker/`: SageMaker launcher, entrypoint, and container image
+- `experiments/`: Experiment runner and YAML configs
+- `rlarcworld/`: Core library (env, models, algorithms, trainers)
 
 ## Installation
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- NVIDIA GPU with appropriate drivers installed
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (for GPU support in Docker)
-- Python 3.8+
+- Python 3.12
+- (Optional) NVIDIA GPU + CUDA for faster training
+- (Optional) Docker for building the SageMaker training image (`aws_sagemaker/Dockerfile`)
 
 ### Setup
 
@@ -59,67 +129,35 @@ Key components:
    cd RlArcProject
    ```
 
-2. Build the Docker image:
+2. Install the package (editable mode):
 
    ```bash
-   docker-compose -f devops/dev.docker-compose.yml build
+   python -m pip install -e .
    ```
 
-3. Enable GPU support:
-
-   The project uses a GPU-enabled Docker image. To enable GPU support, you need to modify the `dev.docker-compose.yml` file to include the GPU runtime. Add the following under the `rl_train_job` service:
-
-   ```yaml
-   services:
-   rl_train_job:
-      # ... existing configuration ...
-      deploy:
-         resources:
-         reservations:
-            devices:
-               - driver: nvidia
-               count: 1
-               capabilities: [gpu]
-   ```
-
-4. Start the development container with GPU support:
+3. (Optional) Install SageMaker extras for launching jobs:
 
    ```bash
-   # For Docker Compose v1.28.0+
-   docker-compose -f devops/dev.docker-compose.yml up -d
-
-   # For older versions, you might need to use:
-   # docker-compose -f devops/dev.docker-compose.yml --compatibility up -d
-   ```
-
-5. Verify GPU access:
-
-   ```bash
-   # Enter the container
-   docker exec -it <container_name> bash
-   ```
-
-   Check if PyTorch can see the GPU:
-
-   ```bash
-   python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+   python -m pip install -e ".[aws-sagemaker]"
    ```
 
 ## Project Structure
 
 ```text
 RlArcProject/
-├── rlarcworld/              # Main package
-│   ├── agent/               # Agent implementations
-│   ├── algorithms/          # RL algorithms (D4PG)
-│   ├── dataset/             # Data loading and processing
-│   ├── environments/        # ARC environment and wrappers
-│   └── jobs/                # Training and evaluation scripts
-│       ├── config.yaml      # Configuration templates
-│       └── train.py         # Main training script
-├── tests/                   # Unit and integration tests
-├── devops/                  # Deployment and infrastructure
-└── runs/                    # Training outputs and checkpoints
+├── rlarcworld/              # Core library (env/models/algorithms/trainers/logging)
+├── experiments/             # Local experiment runner + YAML configs
+│   ├── run_experiment.py
+│   └── configs/
+│       ├── base.yaml
+│       └── experiments.yaml
+├── aws_sagemaker/            # SageMaker launcher + training entrypoint + Dockerfile
+│   ├── launch.py
+│   ├── train.py
+│   └── lr_experiment/        # Example SageMaker experiment configs
+├── checkpoints/              # Default local checkpoint root (runs create subfolders)
+├── logs/                     # Default local logs
+└── tests/                    # Unit/integration tests
 ```
 
 ## Configuration
@@ -131,20 +169,21 @@ The project uses YAML configuration files to manage hyperparameter and experimen
 - Training setting (batch sizes, buffer sizes)
 - Logging and validation frequency
 
-Example configuration can be found in `rlarcworld/jobs/config.yaml`.
+Example configurations:
+
+- `experiments/configs/base.yaml`
+- `experiments/configs/experiments.yaml`
+- `aws_sagemaker/lr_experiment/cloud_base.yaml`
+- `aws_sagemaker/lr_experiment/experiments.yaml`
 
 ## Training
 
 To train the model:
 
 ```bash
-python -m rlarcworld.jobs.train \
-    --config-key default \
-    --training-data-uri /path/to/training/data \
-    --validation-data-uri /path/to/validation/data \
-    --models-dir /path/to/save/models \
-    --checkpoint-dir /path/to/save/checkpoints \
-    --tensorboard-log-dir /path/for/tensorboard/logs
+python experiments/run_experiment.py \
+  --experiment stable_baseline \
+  --epochs 10
 ```
 
 ## Monitoring with TensorBoard
