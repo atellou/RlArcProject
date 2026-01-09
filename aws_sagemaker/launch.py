@@ -22,7 +22,6 @@ from sagemaker.core.training.configs import (
     StoppingCondition,
 )
 from sagemaker.train import ModelTrainer
-from sagemaker.train.distributed import Torchrun
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +119,7 @@ class SagemakerExperiment:
 
         source_code = SourceCode(
             source_dir=str(code_dir),
-            entry_script="train.py",
+            command="bash entrypoint.sh",
             ignore_patterns=[
                 "*.ipynb",
                 ".git",
@@ -154,7 +153,6 @@ class SagemakerExperiment:
             role=self.__role_arn,
             base_job_name=self.experiment,
             source_code=self.source_code,
-            distributed=Torchrun(process_count_per_node=None),
             output_data_config=self.output_data_config,
             compute=self.compute,
             stopping_condition=stopping_condition,

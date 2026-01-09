@@ -12,6 +12,7 @@ import argparse
 import logging
 import os
 import re
+import signal
 import tarfile
 from pathlib import Path
 
@@ -82,6 +83,22 @@ def _find_latest_checkpoint(checkpoint_dir: str | Path) -> str | None:
         return str(max(best_candidates, key=score))
 
     return None
+
+
+def _flush_logs() -> None:
+    root = logging.getLogger()
+    for h in root.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+
+
+def _stderr_unbuffered(msg: str) -> None:
+    try:
+        os.write(2, (msg + "\n").encode("utf-8", errors="replace"))
+    except Exception:
+        return
 
 
 def _maybe_init_distributed() -> tuple[int, int]:
@@ -280,6 +297,36 @@ def main() -> None:
     if latest_ckpt is not None:
         logger.info("Resuming from checkpoint: %s", latest_ckpt)
         experiment.load_checkpoint(latest_ckpt)
+
+    # Best-effort spot interruption handling.
+    # SageMaker typically sends SIGTERM before stopping the container.
+    def _sigterm_handler(signum: int, _frame) -> None:
+        try:
+            _stderr_unbuffered(
+                f"[train.py] received signal {signum} (rank={rank}); attempting final checkpoint"  # noqa: E501
+            )
+            logger.warning(
+                "Received signal %s; saving final checkpoint (best-effort)...",
+                signum,
+            )
+            _flush_logs()
+
+            # Only rank0 should attempt writing checkpoints to avoid corruption.
+            if rank == 0:
+                experiment.save_final_checkpoint(failed=False, reason="spot")
+                logger.warning("Final checkpoint saved after SIGTERM")
+            else:
+                logger.warning("Non-rank0 process: skipping SIGTERM checkpoint")
+            _flush_logs()
+        except Exception as e:
+            logger.exception("Failed to save SIGTERM checkpoint: %s", e)
+            _flush_logs()
+        finally:
+            _maybe_destroy_distributed()
+            raise SystemExit(0)
+
+    logger.info("Registering SIGTERM handler (rank=%s)", rank)
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     experiment.train(epochs=args.epochs)
 
