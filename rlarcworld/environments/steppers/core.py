@@ -4,6 +4,7 @@ This module provides a class to handle environment interactions in a clean way,
 separating environment stepping logic from the training loop.
 """
 
+import logging
 from collections.abc import Callable, Generator, Iterator
 from typing import Any
 
@@ -14,6 +15,8 @@ from tensordict import TensorDict
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.utils.checkpointing import add_schema_and_class
 from rlarcworld.utils.device import AmpScaler
+
+logger = logging.getLogger(__name__)
 
 # Step callback type: receives
 # (env, state, action_probs, reward, observation, terminated, truncated, info)
@@ -93,6 +96,7 @@ class EnvStepper:
         self.amp_cm = AmpScaler(amp_enabled=self.amp_enabled, device=self.device)
         # Progress tracking for checkpointing
         self._samples_processed: int = 0
+        self._episode_step_idx: int = 0
 
     def step(self, env: Env, state: TensorDict | None = None) -> TensorDict:
         """Take a single step in the environment.
@@ -231,7 +235,7 @@ class EnvStepper:
             Tuples of (done, step_number, step_data) where step_data is a TensorDict
             with keys: state, reward, actions, next_state, terminated, truncated
         """
-        step_number = 0
+        step_number = int(self._episode_step_idx)
         done = False
 
         while not done and (self.max_steps <= -1 or step_number < self.max_steps):
@@ -246,6 +250,8 @@ class EnvStepper:
                 step_data,
             )
             step_number += 1
+            self._episode_step_idx = int(step_number)
+        logger.info(f"Episode finished with {step_number} steps")
 
     def _reset_env(self, sample, **kwargs) -> None:
         """Reset the environment with a sample.
@@ -280,6 +286,7 @@ class EnvStepper:
 
     def stream_on_reset(self, sample, **kwargs):
         """Stream on reset callback."""
+        self._episode_step_idx = 0
         self._reset_env(sample, **kwargs)
         for done, step_number, step_data in self.create_episode_stream():
             yield done, step_number, step_data
@@ -296,6 +303,7 @@ class EnvStepper:
             "state": {
                 "max_steps": self.max_steps,
                 "samples_processed": self._samples_processed,
+                "episode_step_idx": self._episode_step_idx,
                 "amp_enabled": self.amp_enabled,
                 "loaded_checkpoint": self.loaded_checkpoint,
             }
@@ -312,5 +320,6 @@ class EnvStepper:
         state = checkpoint.get("state", {})
         self.max_steps = int(state.get("max_steps", self.max_steps))
         self._samples_processed = int(state.get("samples_processed", 0))
+        self._episode_step_idx = int(state.get("episode_step_idx", 0))
         self.amp_enabled = bool(state.get("amp_enabled", self.amp_enabled))
         self.loaded_checkpoint = bool(state.get("loaded_checkpoint", False))

@@ -435,8 +435,13 @@ class Trainer:
                     # Early termination
                     if (
                         max_steps_per_epoch > 0
-                        and epoch_step >= max_steps_per_epoch - 1
+                        and int(ctx.epoch_step_idx) + 1 >= max_steps_per_epoch
                     ):
+                        logger.warning(
+                            "Early termination ({}): max_steps_per_epoch reached".format(  # noqa: E501
+                                "training" if training else "validation"
+                            )
+                        )
                         break
 
                     iteration += 1
