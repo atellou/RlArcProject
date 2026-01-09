@@ -67,8 +67,8 @@ training:
   max_steps_per_epoch: 10000
   max_steps_per_episode: 1000 # Max possible steps and a little more
   validation_epochs: 1
-  validation_steps_per_epoch: 100
-  validation_steps_per_episode: 100
+  validation_steps_per_epoch: 50
+  validation_steps_per_episode: 50
   validation_steps_frequency: 100
   min_train_batch_size: 16
   augmentation_enabled: false
@@ -83,7 +83,7 @@ world_model:
   model_update_frequency: 10
 
 checkpoint:
-  save_frequency: 100
+  save_frequency: 50
   checkpoint_dir: "/opt/ml/checkpoints"
   improvement_checkpoint_enabled: true
 

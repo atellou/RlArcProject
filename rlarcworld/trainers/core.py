@@ -159,6 +159,8 @@ class Trainer:
         # Internal progress tracking for checkpointing
         self._train_epoch: int = 0
         self._train_iteration: int = 0
+        self._train_epoch_step_idx: int = 0
+        self._train_episode_step_idx: int = 0
 
         if self.replay_buffer is None and self.batch_size is None:
             raise ValueError("batch_size must be provided when replay_buffer is None")
@@ -314,6 +316,12 @@ class Trainer:
                 pass
         try:
             for current_epoch in range(epoch, epochs):
+                epoch_step_offset = 0
+                episode_step_offset = 0
+                if training and current_epoch == epoch:
+                    epoch_step_offset = int(self._train_epoch_step_idx)
+                    episode_step_offset = int(self._train_episode_step_idx)
+
                 loss_actor, loss_critic, td_error = (
                     torch.tensor(0.0),
                     torch.tensor(0.0),
@@ -379,8 +387,8 @@ class Trainer:
                     buffer_warmup, warmup = self.warmup_info()
                     ctx = OnStepContext(
                         epoch=current_epoch,
-                        epoch_step_idx=epoch_step,
-                        episode_step_idx=step_idx,
+                        epoch_step_idx=epoch_step + epoch_step_offset,
+                        episode_step_idx=step_idx + episode_step_offset,
                         iteration=iteration,
                         batch=batch,
                         loss_actor=loss_actor,
@@ -391,6 +399,10 @@ class Trainer:
                         warmup=warmup,
                         buffer_warmup=buffer_warmup,
                     )
+
+                    if training:
+                        self._train_epoch_step_idx = int(ctx.epoch_step_idx)
+                        self._train_episode_step_idx = int(ctx.episode_step_idx)
 
                     if (
                         self.replay_buffer is not None
@@ -435,6 +447,8 @@ class Trainer:
                 # update stored epoch at end of epoch loop iteration
                 if training:
                     self._train_epoch += 1
+                    self._train_epoch_step_idx = 0
+                    self._train_episode_step_idx = 0
         except Exception as e:
             logger.exception(
                 f"Exception during training step iteration {iteration}: {e}"
@@ -587,6 +601,8 @@ class Trainer:
                 "state": {
                     "epoch": self._train_epoch,
                     "iteration": self._train_iteration,
+                    "epoch_step_idx": self._train_epoch_step_idx,
+                    "episode_step_idx": self._train_episode_step_idx,
                     "batch_size": self.batch_size,
                     "warmup_buffer_ratio": self.warmup_buffer_ratio,
                     "min_train_batch_size": self.min_train_batch_size,
@@ -605,6 +621,8 @@ class Trainer:
         state = checkpoint.get("state", {})
         self._train_epoch = int(state.get("epoch", 0))
         self._train_iteration = int(state.get("iteration", 0))
+        self._train_epoch_step_idx = int(state.get("epoch_step_idx", 0))
+        self._train_episode_step_idx = int(state.get("episode_step_idx", 0))
         # Optionally restore basic config
         self.batch_size = int(state.get("batch_size", self.batch_size))
         self.warmup_buffer_ratio = float(

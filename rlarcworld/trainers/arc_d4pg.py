@@ -584,13 +584,13 @@ class ArcD4PG:
             except Exception:
                 pass
 
-        if ctx.batch is not None:
-            reward_keys = [rk.value for rk in RewardKeys]
-            for key in reward_keys:
-                if key not in ctx.batch.keys():
+        if ctx.batch is not None and ctx.batch.get("reward") is not None:
+            for key in [rk.value for rk in RewardKeys]:
+                reward_tensor = ctx.batch["reward"].get(key)
+                if reward_tensor is None:
                     continue
                 try:
-                    reward_val = float(ctx.batch[key].mean().item())
+                    reward_val = float(reward_tensor.mean().item())
                 except Exception:
                     continue
                 if key not in self._validation_rewards_accumulator:
@@ -749,23 +749,34 @@ class ArcD4PG:
             ctx: Step ctx containing validation information
         """
         # Accumulate rewards during validation
-        if ctx.batch is not None:
+        if ctx.batch is not None and ctx.batch.get("reward") is not None:
             # Extract reward from batch - prefer n-step reward if available
-            reward_key = (
-                RewardKeys.PIXEL_WISE_N_REWARD.value
-                if RewardKeys.PIXEL_WISE_N_REWARD.value in ctx.batch.keys()
-                else RewardKeys.PIXEL_WISE.value
-            )
-            if reward_key in ctx.batch.keys():
-                reward = ctx.batch[reward_key].mean().item()
-                self._validation_reward_accumulator.append(reward)
+            reward_td: dict = ctx.batch["reward"]
+            if RewardKeys.PIXEL_WISE_N_REWARD.value in reward_td.keys():
+                reward = float(
+                    reward_td[RewardKeys.PIXEL_WISE_N_REWARD.value].mean().item()
+                )
+            elif RewardKeys.PIXEL_WISE.value in reward_td.keys():
+                reward = float(reward_td[RewardKeys.PIXEL_WISE.value].mean().item())
+            else:
+                logger.warning(
+                    "No expected reward keys found in validation batch. "
+                    "Expected rewards are {}. Got {}.".format(
+                        ["pixel_wise_n_reward", "pixel_wise"], ctx.batch["reward"]
+                    )
+                )
+                return
+            self._validation_reward_accumulator.append(reward)
 
         # Only checkpoint at end of validation run
         if not ctx.run_end:
             return
 
         if not self._validation_reward_accumulator:
-            logger.debug("No validation rewards accumulated, skipping checkpoint")
+            logger.info(
+                "No validation rewards accumulated; skipping improvement checkpoint. "
+                "(Expected rewards under ctx.batch['reward'].)"
+            )
             return
 
         mean_reward = sum(self._validation_reward_accumulator) / len(
