@@ -109,10 +109,16 @@ class PixelWiseArcStepper:
             collate_fn=self._collate_fn,
         )
 
+        env_device = self.device
+        if isinstance(env_device, str) and (
+            env_device.startswith("cuda") or env_device == "mps"
+        ):
+            env_device = "cpu"
+
         base_env = ArcBatchGridEnv(
             grid_size=grid_size,
             color_values=color_values,
-            device=self.device,
+            device=env_device,
             max_penalty=max_penalty,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API

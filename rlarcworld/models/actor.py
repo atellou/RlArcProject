@@ -130,9 +130,7 @@ class ViTARCActor(nn.Module):
             TensorDict with action probabilities for each action type.
         """
         current_device = next(self.parameters()).device
-        state = state.clone().to(current_device)
-
-        # Extract and remove optional keys (not used in ViTARC encoding)
+        state = state.clone(recurse=False).to(current_device)
         state.pop(StateKeys.TERMINATED.value, None)
 
         self.input_val(state)

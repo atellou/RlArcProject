@@ -175,9 +175,7 @@ class VitARCCritic(torch.nn.Module):
             AssertionError: If a NaN is detected in the output.
         """
         current_device = next(self.parameters()).device
-        state = state.clone().to(current_device)
-
-        # Only present in training
+        state = state.clone(recurse=False).to(current_device)
         state.pop(StateKeys.TERMINATED.value, None)
 
         # Validate input

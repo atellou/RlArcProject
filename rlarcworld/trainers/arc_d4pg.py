@@ -704,6 +704,18 @@ class ArcD4PG:
                     msg += (
                         f", Imaginations: {self.world_model_stepper.imagination_count}"
                     )
+                reward_td = ctx.batch["reward"]
+                items_iter = reward_td.items() if hasattr(reward_td, "items") else []
+                reward_pairs: list[str] = []
+                for key, val in items_iter:
+                    try:
+                        mean_val = float(val.float().mean().detach().cpu().item())
+                    except Exception:
+                        mean_val = float(val)
+                    reward_pairs.append(f"{key}={mean_val:.4f}")
+                if reward_pairs:
+                    reward_pairs.sort()
+                    msg += ", Rewards: [" + ",".join(reward_pairs) + "]"
             logger.info(msg)
 
     def _periodic_checkpoint(self, ctx: OnStepContext):
