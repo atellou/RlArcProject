@@ -27,7 +27,7 @@ import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import StateKeys
-from rlarcworld.common.types import ACTION_KEYS_SET, STATE_REQUIRED_KEYS
+from rlarcworld.common.types import ACTION_KEYS_SET
 from rlarcworld.models.nn_modules import (
     ActionHeadFromEncoder,
     RlArcWorldViTARC,
@@ -102,8 +102,16 @@ class ViTARCActor(nn.Module):
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict"
         )
-        assert set(state.keys()) == STATE_REQUIRED_KEYS, ValueError(
-            f"State keys must be {STATE_REQUIRED_KEYS}. Keys found {set(state.keys())}"
+        expected_keys = {StateKeys.GRID.value, StateKeys.INITIAL.value}
+        if bool(getattr(self.rl_vit_arc_config, "use_temporal", True)):
+            expected_keys.add(StateKeys.LAST_GRID.value)
+        if bool(getattr(self.rl_vit_arc_config, "use_index_grid", True)):
+            expected_keys.add(StateKeys.INDEX.value)
+        if bool(getattr(self.rl_vit_arc_config, "use_examples", True)):
+            expected_keys.add(StateKeys.EXAMPLES.value)
+
+        assert set(state.keys()) == expected_keys, ValueError(
+            f"State keys must be {expected_keys}. Keys found {set(state.keys())}"
         )
 
     @torch.jit.export

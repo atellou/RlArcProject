@@ -741,7 +741,8 @@ class RlArcWorldViTARC(nn.Module):
                 num_layers=2,
                 dropout=config.dropout,
             )
-
+        else:
+            self.example_compression_tokens = None
         # ViTARC encoder (using CustomT5Stack with all enhancements)
         if self.use_temporal:
             self.t5_config.max_grids = 3
