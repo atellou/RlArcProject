@@ -96,6 +96,14 @@ class ViTARCActor(nn.Module):
             f"\t- Total params: {total_params:,} total, {trainable_params:,} trainable"
         )
 
+    def clear_example_cache(self) -> None:
+        """Clear example embedding cache after model weight updates."""
+        self.rl_vit_arc.clear_example_cache()
+
+    def enable_example_cache(self) -> None:
+        """Enable example embedding cache for reuse across steps."""
+        self.rl_vit_arc.enable_example_cache()
+
     @torch.jit.export
     def input_val(self, state: TensorDict) -> None:
         """Validate that the state contains exactly the required keys."""

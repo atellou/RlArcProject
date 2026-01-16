@@ -339,6 +339,7 @@ class ArcD4PG:
             entropy_coef=config.d4pg.entropy_coef,
             entropy_coef_decay=config.d4pg.entropy_coef_decay,
             target_update_frequency=config.d4pg.target_update_frequency,
+            model_update_frequency=config.d4pg.model_update_frequency,
             max_grad_norm=config.d4pg.max_grad_norm,
             compute_td_error=config.d4pg.compute_td_error,
             **kwargs,

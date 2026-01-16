@@ -55,6 +55,7 @@ class D4PGCore:
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
         target_update_frequency: int = 10,
+        model_update_frequency: int = 1,
         device_config: CudaConfig | None = None,
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
@@ -91,6 +92,8 @@ class D4PGCore:
                 GPUs. Defaults to False.
             target_update_frequency (int, optional): Frequency of target
                 network updates. Defaults to 10.
+            model_update_frequency (int, optional): Frequency of model weight
+                updates (backward passes). Defaults to 1 (update every step).
             compute_td_error (bool, optional): Whether to compute TD error.
                 Defaults to True.
         """
@@ -130,6 +133,14 @@ class D4PGCore:
         self.entropy_coef_decay = entropy_coef_decay
         self.max_grad_norm = max_grad_norm
         self.target_update_frequency = target_update_frequency
+        self.model_update_frequency = model_update_frequency
+        self._update_counter = 0
+        self._accumulated_steps = 0
+
+        self._loss_actor_window_sum = 0.0
+        self._loss_critic_window_sum = 0.0
+        self.loss_actor_window_avg = None
+        self.loss_critic_window_avg = None
 
         # Networks
         self.actor = actor.to(self.device)
@@ -515,6 +526,7 @@ class D4PGCore:
         batch: TensorDict,
         *,
         training: bool = True,
+        force_update: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, TensorDict]:
         """Compute actor and critic losses for a batch of transitions.
 
@@ -523,12 +535,18 @@ class D4PGCore:
                 next_state, and terminated.
             training (bool, optional): Whether to compute gradients and update
                 networks. Defaults to True.
+            force_update (bool, optional): Force weight update regardless of
+                model_update_frequency. Defaults to False.
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor, TensorDict]: Actor loss, critic loss,
                 and TD error.
         """
         with getattr(torch, "enable_grad" if training else "no_grad")():
+            should_step = force_update or (
+                (self._update_counter + 1) % self.model_update_frequency == 0
+            )
+
             target_probs = self.compute_target_distribution(
                 batch["reward"], batch["next_state"], batch["terminated"]
             )
@@ -542,18 +560,71 @@ class D4PGCore:
             loss_critic = sum(loss_critic_td.values()) / max(1, len(loss_critic_td))
 
             if training:
-                self.critic_optimizer.zero_grad()
-                self.amp_scaler.scale(loss_critic).backward()
-                if self.max_grad_norm and self.max_grad_norm > 0:
-                    self.amp_scaler.unscale(self.critic_optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.critic.parameters(), self.max_grad_norm, norm_type=2.0
-                    )
-                self.amp_scaler.step(self.critic_optimizer)
                 # Actor uses fresh target_probs
                 loss_actor_td = self.compute_actor_loss(
                     batch["state"], target_q=target_probs
                 )
+
+                # Zero gradients only when starting a new accumulation cycle
+                if self._update_counter % self.model_update_frequency == 0:
+                    self.critic_optimizer.zero_grad()
+                    self.actor_optimizer.zero_grad()
+                    self._accumulated_steps = 0
+                    self._loss_actor_window_sum = 0.0
+                    self._loss_critic_window_sum = 0.0
+                    self.loss_actor_window_avg = None
+                    self.loss_critic_window_avg = None
+
+                loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
+
+                # Scale losses for gradient accumulation (AMP-safe, CPU/MPS-safe)
+                loss_critic_scaled = loss_critic / self.model_update_frequency
+                loss_actor_scaled = loss_actor / self.model_update_frequency
+
+                # Accumulate gradients
+                self.amp_scaler.scale(loss_critic_scaled).backward()
+                self.amp_scaler.scale(loss_actor_scaled).backward()
+                self._accumulated_steps += 1
+
+                # Window averages for logging
+                self._loss_actor_window_sum += float(loss_actor.detach())
+                self._loss_critic_window_sum += float(loss_critic.detach())
+                self.loss_actor_window_avg = (
+                    self._loss_actor_window_sum / self._accumulated_steps
+                )
+                self.loss_critic_window_avg = (
+                    self._loss_critic_window_sum / self._accumulated_steps
+                )
+
+                # Step optimizer only after accumulating N gradients
+                if should_step:
+                    # Clip gradients if needed
+                    if self.max_grad_norm and self.max_grad_norm > 0:
+                        self.amp_scaler.unscale(self.critic_optimizer)
+                        self.amp_scaler.unscale(self.actor_optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.critic.parameters(), self.max_grad_norm, norm_type=2.0
+                        )
+                        torch.nn.utils.clip_grad_norm_(
+                            self.actor.parameters(), self.max_grad_norm, norm_type=2.0
+                        )
+
+                    self.amp_scaler.step(self.critic_optimizer)
+                    self.amp_scaler.step(self.actor_optimizer)
+                    self.amp_scaler.update()
+
+                    logger.info(
+                        f"Model stepped (counter={self._update_counter}, "
+                        f"accumulated={self._accumulated_steps}), clearing cache"
+                    )
+                    self.actor.clear_example_cache()
+                    self.critic.clear_example_cache()
+                    self.actor.enable_example_cache()
+                    self.critic.enable_example_cache()
+                else:
+                    # Keep cache enabled during accumulation to allow cache hits
+                    self.actor.enable_example_cache()
+                    self.critic.enable_example_cache()
             else:
                 loss_actor_td = self.compute_actor_loss(
                     batch["state"],
@@ -561,18 +632,10 @@ class D4PGCore:
                     action_probs=batch["actions"],
                     critic_probs=q_dist,
                 )
-
-            loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
+                loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
 
             if training:
-                self.actor_optimizer.zero_grad()
-                self.amp_scaler.scale(loss_actor).backward()
-                if self.max_grad_norm and self.max_grad_norm > 0:
-                    self.amp_scaler.unscale(self.actor_optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.actor.parameters(), self.max_grad_norm, norm_type=2.0
-                    )
-                self.amp_scaler.step(self.actor_optimizer)
+                self._update_counter += 1
         return loss_actor, loss_critic, td_err
 
     def on_step(self, ctx: OnStepContext):
@@ -624,6 +687,8 @@ class D4PGCore:
             if self.critic_scheduler is not None
             else None,
             "hyperparameters": self.hyperparameters,
+            "update_counter": self._update_counter,
+            "accumulated_steps": self._accumulated_steps,
         }
         return add_schema_and_class(payload, self.__class__.__name__)
 
@@ -777,6 +842,14 @@ class D4PGCore:
                 self.carsm = hp.get("carsm", self.carsm)
             except Exception as e:
                 logger.warning("Failed to restore hyperparameters: %s", e)
+
+        # Restore gradient accumulation counters
+        self._update_counter = checkpoint.get("update_counter", 0)
+        self._accumulated_steps = checkpoint.get("accumulated_steps", 0)
+        logger.info(
+            f"Restored counters: update_counter={self._update_counter}, "
+            f"accumulated_steps={self._accumulated_steps}"
+        )
 
     @property
     def hyperparameters(self):

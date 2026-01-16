@@ -210,6 +210,7 @@ class D4PGConfig:
     entropy_coef: float = 0.0
     entropy_coef_decay: float = 1.0
     target_update_frequency: int = 10
+    model_update_frequency: int = 32
     max_grad_norm: float = 0.0
 
 

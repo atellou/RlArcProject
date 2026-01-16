@@ -148,9 +148,13 @@ class AmpScaler:
         """Conditionally step optimizer and update scaler."""
         if self.scaler is not None:
             self.scaler.step(optimizer)
-            self.scaler.update()
         else:
             optimizer.step()
+
+    def update(self) -> None:
+        """Conditionally update scaler."""
+        if self.scaler is not None:
+            self.scaler.update()
 
     def unscale(self, optimizer: torch.optim.Optimizer) -> None:
         """Unscale gradients for a given optimizer when AMP is enabled.

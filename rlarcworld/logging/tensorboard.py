@@ -126,8 +126,27 @@ class TensorBoardWriterManager:
                 f"{phase}/loss/critic", float(ctx.loss_critic.detach()), iteration
             )
 
-        # Optimizer learning rates
         core = ctx.core
+        if (
+            hasattr(core, "loss_actor_window_avg")
+            and core.loss_actor_window_avg is not None
+        ):
+            self.writer.add_scalar(
+                f"{phase}/loss/actor_window_avg",
+                float(core.loss_actor_window_avg),
+                iteration,
+            )
+        if (
+            hasattr(core, "loss_critic_window_avg")
+            and core.loss_critic_window_avg is not None
+        ):
+            self.writer.add_scalar(
+                f"{phase}/loss/critic_window_avg",
+                float(core.loss_critic_window_avg),
+                iteration,
+            )
+
+        # Optimizer learning rates
         if hasattr(core, "actor_scheduler") and isinstance(
             core.actor_scheduler, optim.lr_scheduler.StepLR
         ):

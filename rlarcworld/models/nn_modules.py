@@ -743,6 +743,10 @@ class RlArcWorldViTARC(nn.Module):
             )
         else:
             self.example_compression_tokens = None
+        # Example embedding cache for performance
+        self._example_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._cache_valid = False
+
         # ViTARC encoder (using CustomT5Stack with all enhancements)
         if self.use_temporal:
             self.t5_config.max_grids = 3
@@ -773,6 +777,14 @@ class RlArcWorldViTARC(nn.Module):
                 f"  - Example compression: {self.example_compression_tokens}\n"
                 f"  - Params: {total_params:,} total, {trainable_params:,} trainable"
             )
+
+    def clear_example_cache(self) -> None:
+        """Clear example embedding cache after model weight updates."""
+        self._example_cache.clear()
+
+    def enable_example_cache(self) -> None:
+        """Enable example embedding cache for reuse across steps."""
+        self._cache_valid = True
 
     def forward(self, state: TensorDict) -> ViTARCEncoderOutput:
         """Forward pass that encodes ARC state information.
@@ -934,81 +946,103 @@ class RlArcWorldViTARC(nn.Module):
         # Encode examples and apply cross-attention
         if self.use_examples and examples is not None:
             batch_size, num_examples = examples.shape[:2]
-            example_hidden_list = []
 
-            for ex_idx in range(num_examples):
-                ex_pair = examples[:, ex_idx]  # [B, 2, H, W]
-                ex_ids, ex_mask, ex_obj_idx = self.grid_encoder.encode_example_pair(
-                    ex_pair
-                )
+            # Create cache key from tensor shape and sample of data
+            # This is stable within an episode when examples don't change
+            cache_key_data = (
+                examples.shape,
+                examples[0, 0, 0, 0, 0].item() if examples.numel() > 0 else 0,
+                examples.flatten()[-1].item() if examples.numel() > 0 else 0,
+            )
+            example_cache_key = hash(cache_key_data)
 
-                # Compress examples BEFORE encoder to reduce memory in attention
-                if self.grid_compression_tokens is not None:
-                    # Get embeddings and compress:
-                    # [B, seq_len, d_model] -> [B, K, d_model]
-                    ex_embeds = self.embed_tokens(ex_ids)
+            if self._cache_valid and example_cache_key in self._example_cache:
+                example_hidden, example_mask = self._example_cache[example_cache_key]
+                logger.debug(f"Example cache HIT (key={example_cache_key})")
+            else:
+                logger.debug(f"Example cache MISS (key={example_cache_key})")
+                example_hidden_list = []
 
-                    if self.compression_method == "learned":
-                        ex_embeds = self.example_compressor(ex_embeds, mask=ex_mask)
-                    else:  # pooling
-                        ex_embeds = self.example_projection(ex_embeds)
-                        # Pool: [B, d_model, seq_len] -> [B, d_model, K]
-                        ex_embeds = self.example_pooling(ex_embeds.transpose(1, 2))
-                        # Reshape: [B, d_model, K] -> [B, K, d_model]
-                        ex_embeds = ex_embeds.transpose(1, 2)
-
-                    # Update mask to match compressed sequence
-                    ex_mask = torch.ones(
-                        batch_size,
-                        self.example_compression_tokens,
-                        dtype=ex_mask.dtype,
-                        device=ex_mask.device,
+                for ex_idx in range(num_examples):
+                    ex_pair = examples[:, ex_idx]  # [B, 2, H, W]
+                    ex_ids, ex_mask, ex_obj_idx = self.grid_encoder.encode_example_pair(
+                        ex_pair
                     )
 
-                    # Compress object_idx if OPE is enabled
-                    if ex_obj_idx is not None and self.use_ope:
-                        ex_obj_idx = (
-                            torch.nn.functional.adaptive_max_pool1d(
-                                ex_obj_idx.unsqueeze(1).float(),
-                                output_size=self.example_compression_tokens,
+                    # Compress examples BEFORE encoder to reduce memory in attention
+                    if self.grid_compression_tokens is not None:
+                        # Get embeddings and compress:
+                        # [B, seq_len, d_model] -> [B, K, d_model]
+                        ex_embeds = self.embed_tokens(ex_ids)
+
+                        if self.compression_method == "learned":
+                            ex_embeds = self.example_compressor(ex_embeds, mask=ex_mask)
+                        else:  # pooling
+                            ex_embeds = self.example_projection(ex_embeds)
+                            # Pool: [B, d_model, seq_len] -> [B, d_model, K]
+                            ex_embeds = self.example_pooling(ex_embeds.transpose(1, 2))
+                            # Reshape: [B, d_model, K] -> [B, K, d_model]
+                            ex_embeds = ex_embeds.transpose(1, 2)
+
+                        # Update mask to match compressed sequence
+                        ex_mask = torch.ones(
+                            batch_size,
+                            self.example_compression_tokens,
+                            dtype=ex_mask.dtype,
+                            device=ex_mask.device,
+                        )
+
+                        # Compress object_idx if OPE is enabled
+                        if ex_obj_idx is not None and self.use_ope:
+                            ex_obj_idx = (
+                                torch.nn.functional.adaptive_max_pool1d(
+                                    ex_obj_idx.unsqueeze(1).float(),
+                                    output_size=self.example_compression_tokens,
+                                )
+                                .squeeze(1)
+                                .long()
                             )
-                            .squeeze(1)
-                            .long()
+                        else:
+                            ex_obj_idx = None
+
+                        # Encode compressed examples
+                        # 1D Alibi RPE is selected based on sequence length
+                        ex_output = self.encoder(
+                            inputs_embeds=ex_embeds,
+                            attention_mask=ex_mask,
+                            object_idx=ex_obj_idx,
+                            return_dict=True,
                         )
                     else:
-                        ex_obj_idx = None
+                        # Encode normally without compression
+                        ex_output = self.encoder(
+                            input_ids=ex_ids,
+                            attention_mask=ex_mask,
+                            object_idx=ex_obj_idx,
+                            return_dict=True,
+                        )
 
-                    # Encode compressed examples
-                    # 1D Alibi RPE is automatically selected based on sequence length
-                    ex_output = self.encoder(
-                        inputs_embeds=ex_embeds,
-                        attention_mask=ex_mask,
-                        object_idx=ex_obj_idx,
-                        return_dict=True,
-                    )
-                else:
-                    # Encode normally without compression
-                    ex_output = self.encoder(
-                        input_ids=ex_ids,
-                        attention_mask=ex_mask,
-                        object_idx=ex_obj_idx,
-                        return_dict=True,
-                    )
+                    # Get encoded example hidden states (already compressed if enabled)
+                    ex_hidden = ex_output.last_hidden_state
+                    example_hidden_list.append(ex_hidden)
 
-                # Get encoded example hidden states (already compressed if enabled)
-                ex_hidden = ex_output.last_hidden_state
-                example_hidden_list.append(ex_hidden)
+                # Concatenate all examples: [B, num_ex * seq_len, d_model]
+                example_hidden = torch.cat(example_hidden_list, dim=1)
+                # Create mask matching actual sequence length
+                # (all ones since no padding)
+                # Use actual shape from concatenated examples
+                example_mask = torch.ones(
+                    batch_size,
+                    example_hidden.shape[1],  # Use actual sequence length
+                    dtype=torch.bool,
+                    device=example_hidden.device,
+                )
 
-            # Concatenate all examples: [B, num_ex * seq_len, d_model]
-            example_hidden = torch.cat(example_hidden_list, dim=1)
-            # Create mask matching actual sequence length (all ones since no padding)
-            # Use actual shape from concatenated examples
-            example_mask = torch.ones(
-                batch_size,
-                example_hidden.shape[1],  # Use actual sequence length
-                dtype=torch.bool,
-                device=example_hidden.device,
-            )
+                # Store in cache for reuse (detach to avoid keeping computation graph)
+                self._example_cache[example_cache_key] = (
+                    example_hidden.detach(),
+                    example_mask,
+                )
 
             # Apply cross-attention: grid attends to compressed examples
             hidden_states = self.example_cross_attention(
