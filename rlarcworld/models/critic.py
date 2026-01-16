@@ -145,8 +145,9 @@ class VitARCCritic(torch.nn.Module):
         if bool(getattr(self.rl_vit_arc_config, "use_examples", True)):
             expected_keys.add(StateKeys.EXAMPLES.value)
 
-        assert set(state.keys()) == expected_keys, ValueError(
-            f"State keys must be {expected_keys}. Keys found {set(state.keys())}"
+        state_keys = set(state.keys())
+        assert expected_keys.issubset(state_keys), ValueError(
+            f"State keys must include {expected_keys}. Keys found {state_keys}"
         )
 
     @torch.jit.export

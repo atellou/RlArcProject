@@ -748,12 +748,11 @@ class RlArcWorldViTARC(nn.Module):
         self._cache_valid = False
 
         # ViTARC encoder (using CustomT5Stack with all enhancements)
+        self.t5_config.max_grids = 1
         if self.use_temporal:
-            self.t5_config.max_grids = 3
-        elif self.use_examples:
-            self.t5_config.max_grids = 2
-        else:
-            self.t5_config.max_grids = 1
+            self.t5_config.max_grids += 1
+        if self.use_examples:
+            self.t5_config.max_grids += 1
         encoder_config = T5Config(**self.t5_config.to_dict())
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
@@ -807,7 +806,6 @@ class RlArcWorldViTARC(nn.Module):
         index_grid = state.get(StateKeys.INDEX.value)
 
         example_hidden: torch.Tensor | None = None
-        example_mask: torch.Tensor | None = None
         index_ids: torch.Tensor | None = None
 
         # Encode temporal grids: <s> [initial] <sep> [last] <sep> [current] </s>
@@ -951,13 +949,13 @@ class RlArcWorldViTARC(nn.Module):
             # This is stable within an episode when examples don't change
             cache_key_data = (
                 examples.shape,
-                examples[0, 0, 0, 0, 0].item() if examples.numel() > 0 else 0,
-                examples.flatten()[-1].item() if examples.numel() > 0 else 0,
+                examples[0, 0, 0, 0, :].sum().item() if examples.numel() > 0 else 0,
+                examples[-1, -1, 0, :, 0].sum().item() if examples.numel() > 0 else 0,
             )
             example_cache_key = hash(cache_key_data)
 
             if self._cache_valid and example_cache_key in self._example_cache:
-                example_hidden, example_mask = self._example_cache[example_cache_key]
+                example_hidden = self._example_cache[example_cache_key]
                 logger.debug(f"Example cache HIT (key={example_cache_key})")
             else:
                 logger.debug(f"Example cache MISS (key={example_cache_key})")
@@ -1028,28 +1026,15 @@ class RlArcWorldViTARC(nn.Module):
 
                 # Concatenate all examples: [B, num_ex * seq_len, d_model]
                 example_hidden = torch.cat(example_hidden_list, dim=1)
-                # Create mask matching actual sequence length
-                # (all ones since no padding)
-                # Use actual shape from concatenated examples
-                example_mask = torch.ones(
-                    batch_size,
-                    example_hidden.shape[1],  # Use actual sequence length
-                    dtype=torch.bool,
-                    device=example_hidden.device,
-                )
 
                 # Store in cache for reuse (detach to avoid keeping computation graph)
-                self._example_cache[example_cache_key] = (
-                    example_hidden.detach(),
-                    example_mask,
-                )
+                self._example_cache[example_cache_key] = example_hidden.detach()
 
             # Apply cross-attention: grid attends to compressed examples
             hidden_states = self.example_cross_attention(
                 grid_hidden=hidden_states,
                 example_hidden=example_hidden,
                 grid_mask=attention_mask,
-                example_mask=example_mask,
             )
 
         return ViTARCEncoderOutput(
@@ -1060,6 +1045,6 @@ class RlArcWorldViTARC(nn.Module):
             temporal_ids=temporal_ids,
             object_idx=object_idx,
             example_hidden=example_hidden,
-            example_mask=example_mask,
+            example_mask=None,
             index_ids=index_ids,
         )
