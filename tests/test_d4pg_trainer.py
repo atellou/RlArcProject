@@ -237,9 +237,9 @@ def test_d4pg_trainer_warmup_with_prioritized_sampler(
 
     trainer.train(epochs=1, max_steps_per_epoch=max_steps)
 
-    assert first_training_step is not None, (
-        "Training did not start after warmup threshold"
-    )
+    assert (
+        first_training_step is not None
+    ), "Training did not start after warmup threshold"
     assert first_training_step >= expected_min_steps - 1  # step is zero-based index
     # After warmup, we should have at least one finite loss recorded
     assert any(torch.isfinite(v) for v in losses_actor)
@@ -303,12 +303,12 @@ def test_d4pg_trainer_real_replay_buffer_and_step_handlers(
     assert len(losses_actor) > 0 and len(losses_critic) > 0
     assert all(torch.isfinite(v) for v in losses_actor)
     assert all(torch.isfinite(v) for v in losses_critic)
-    assert all(abs(v) < 1e3 for v in losses_actor), (
-        f"Actor loss out of range: {losses_actor}"
-    )
-    assert all(abs(v) < 1e3 for v in losses_critic), (
-        f"Critic loss out of range: {losses_critic}"
-    )
+    assert all(
+        abs(v) < 1e3 for v in losses_actor
+    ), f"Actor loss out of range: {losses_actor}"
+    assert all(
+        abs(v) < 1e3 for v in losses_critic
+    ), f"Critic loss out of range: {losses_critic}"
 
 
 def _build_simple_core(
@@ -331,11 +331,11 @@ def _build_simple_core(
     )
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=rl_vit_arc_config,
+        rl_vit_arc=rl_vit_arc_config,
     ).to(device)
     critic = VitARCCritic(
         color_values=color_values,
-        rl_vit_arc_config=rl_vit_arc_config,
+        rl_vit_arc=rl_vit_arc_config,
         num_atoms={"pixel_wise": 51, "binary": 3},
         v_min={"pixel_wise": -40, "binary": 0},
         v_max={"pixel_wise": 2, "binary": 1},

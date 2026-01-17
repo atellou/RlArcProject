@@ -23,11 +23,10 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import StateKeys
-from rlarcworld.common.types import ACTION_KEYS_SET, STATE_REQUIRED_KEYS
+from rlarcworld.common.types import ACTION_KEYS_SET
 from rlarcworld.models.nn_modules import (
     ActionHeadFromEncoder,
     RlArcWorldViTARC,
@@ -59,28 +58,38 @@ class ViTARCActor(nn.Module):
     def __init__(
         self,
         color_values: int,
-        rl_vit_arc_config: RlArcWorldViTARCConfig,
+        rl_vit_arc: RlArcWorldViTARCConfig | RlArcWorldViTARC,
         device_config: CudaConfig | None = None,
     ):
         """Initialize the ViTARC actor.
 
         Args:
             color_values: Number of colors (default 11 for ARC).
-            rl_vit_arc_config: Configuration for the ViTARC model.
+            rl_vit_arc: Configuration for the ViTARC model or the model itself.
             device_config: CUDA configuration for device management.
         """
         super().__init__()
-        self.rl_vit_arc_config = rl_vit_arc_config
-        self.rl_vit_arc = RlArcWorldViTARC(rl_vit_arc_config, verbose=True)
+        if isinstance(rl_vit_arc, RlArcWorldViTARC):
+            self.rl_vit_arc_config = rl_vit_arc.config
+            self.rl_vit_arc = rl_vit_arc
+        else:
+            self.rl_vit_arc_config = rl_vit_arc
+            self.rl_vit_arc = RlArcWorldViTARC(
+                self.rl_vit_arc_config,
+                verbose=True,
+                checkpoint=device_config.get("use_checkpointing", False)
+                if device_config
+                else False,
+            )
 
         # Action heads
         self.action_head_keys = set(ACTION_KEYS_SET)
         self.action_heads = ActionHeadFromEncoder(
-            hidden_size=rl_vit_arc_config.d_model,
-            grid_size=rl_vit_arc_config.grid_size,
+            hidden_size=self.rl_vit_arc_config.d_model,
+            grid_size=self.rl_vit_arc_config.grid_size,
             color_values=color_values,
-            num_heads=rl_vit_arc_config.num_heads,
-            dropout=rl_vit_arc_config.dropout,
+            num_heads=self.rl_vit_arc_config.num_heads,
+            dropout=self.rl_vit_arc_config.dropout,
         )
 
         # Device configuration
@@ -96,14 +105,31 @@ class ViTARCActor(nn.Module):
             f"\t- Total params: {total_params:,} total, {trainable_params:,} trainable"
         )
 
+    def clear_example_cache(self) -> None:
+        """Clear example embedding cache after model weight updates."""
+        self.rl_vit_arc.clear_example_cache()
+
+    def enable_example_cache(self) -> None:
+        """Enable example embedding cache for reuse across steps."""
+        self.rl_vit_arc.enable_example_cache()
+
     @torch.jit.export
     def input_val(self, state: TensorDict) -> None:
         """Validate that the state contains exactly the required keys."""
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict"
         )
-        assert set(state.keys()) == STATE_REQUIRED_KEYS, ValueError(
-            f"State keys must be {STATE_REQUIRED_KEYS}. Keys found {set(state.keys())}"
+        expected_keys = {StateKeys.GRID.value, StateKeys.INITIAL.value}
+        if bool(getattr(self.rl_vit_arc_config, "use_temporal", True)):
+            expected_keys.add(StateKeys.LAST_GRID.value)
+        if bool(getattr(self.rl_vit_arc_config, "use_index_grid", True)):
+            expected_keys.add(StateKeys.INDEX.value)
+        if bool(getattr(self.rl_vit_arc_config, "use_examples", True)):
+            expected_keys.add(StateKeys.EXAMPLES.value)
+
+        state_keys = set(state.keys())
+        assert expected_keys.issubset(state_keys), ValueError(
+            f"State keys must include {expected_keys}. Keys found {state_keys}"
         )
 
     @torch.jit.export
@@ -130,20 +156,25 @@ class ViTARCActor(nn.Module):
             TensorDict with action probabilities for each action type.
         """
         current_device = next(self.parameters()).device
-        state = state.clone().to(current_device)
-
-        # Extract and remove optional keys (not used in ViTARC encoding)
+        state = state.clone(recurse=False).to(current_device)
         state.pop(StateKeys.TERMINATED.value, None)
 
         self.input_val(state)
 
         # Encode state using shared ViTARC encoder
-        if self.device_config.get("use_checkpointing"):
-            vitarc_output = checkpoint.checkpoint(
-                self.rl_vit_arc, state, use_reentrant=False
+        example_hidden = None
+        if (
+            self.rl_vit_arc.use_examples
+            and state.get(StateKeys.EXAMPLES.value) is not None
+        ):
+            example_hidden = self.rl_vit_arc._encode_examples(
+                state[StateKeys.EXAMPLES.value]
             )
-        else:
-            vitarc_output = self.rl_vit_arc(state)
+
+        vitarc_output = self.rl_vit_arc(
+            state,
+            example_hidden=example_hidden,
+        )
 
         # Extract action logits from encoder hidden states
         action_logits = self.action_heads(
@@ -207,7 +238,7 @@ class ViTARCActorFromPretrained(ViTARCActor):
 
         actor = cls(
             color_values=color_values,
-            rl_vit_arc_config=rl_vit_arc_config,
+            rl_vit_arc=rl_vit_arc_config,
             device_config=config,
         )
 

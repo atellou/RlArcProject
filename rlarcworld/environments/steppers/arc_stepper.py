@@ -73,7 +73,7 @@ class PixelWiseArcStepper:
         # IMPORTANT: ArcSampleTransformer must come FIRST to convert lists to tensors
         # and apply the padding and zero-based correction.
         # Then augmentation can operate on the tensor data.
-        transform = [
+        transform: list[Callable[[dict], dict]] = [
             ArcSampleTransformer(
                 output_size=(grid_size, grid_size),
                 padding_constant_value=-1,
@@ -109,10 +109,16 @@ class PixelWiseArcStepper:
             collate_fn=self._collate_fn,
         )
 
+        env_device = self.device
+        if isinstance(env_device, str) and (
+            env_device.startswith("cuda") or env_device == "mps"
+        ):
+            env_device = "cpu"
+
         base_env = ArcBatchGridEnv(
             grid_size=grid_size,
             color_values=color_values,
-            device=self.device,
+            device=env_device,
             max_penalty=max_penalty,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API

@@ -45,6 +45,9 @@ def enable_cuda(
             and 'device'.
     """
     cuda_available = torch.cuda.is_available()
+    mps_available = (
+        bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+    )
     if cuda_available and device_index is not None:
         # Ensure we query and use the intended device (e.g. LOCAL_RANK under torchrun)
         try:
@@ -61,6 +64,10 @@ def enable_cuda(
             capability_major = 0
             device_name = "cuda"
         device_type = "CUDA"
+    elif mps_available:
+        capability_major = 0
+        device_name = "mps"
+        device_type = "MPS"
     else:
         capability_major = 0
         device_name = "cpu"
@@ -80,16 +87,17 @@ def enable_cuda(
         use_checkpointing,
     )
 
+    if cuda_available:
+        device = f"cuda:{int(device_index)}" if device_index is not None else "cuda"
+    elif mps_available:
+        device = "mps"
+    else:
+        device = "cpu"
+
     return {
         "amp_enabled": amp_enabled and amp_available,
         "use_checkpointing": use_checkpointing and amp_available,
-        "device": (
-            f"cuda:{int(device_index)}"
-            if cuda_available and device_index is not None
-            else "cuda"
-        )
-        if cuda_available
-        else "cpu",
+        "device": device,
     }
 
 
@@ -140,9 +148,13 @@ class AmpScaler:
         """Conditionally step optimizer and update scaler."""
         if self.scaler is not None:
             self.scaler.step(optimizer)
-            self.scaler.update()
         else:
             optimizer.step()
+
+    def update(self) -> None:
+        """Conditionally update scaler."""
+        if self.scaler is not None:
+            self.scaler.update()
 
     def unscale(self, optimizer: torch.optim.Optimizer) -> None:
         """Unscale gradients for a given optimizer when AMP is enabled.

@@ -138,7 +138,12 @@ class EnvStepper:
             ).to(self.device)
 
             # Step environment
-            observation, reward, terminated, truncated, info = env.step(actions)
+            env_device = getattr(env, "device", None)
+            if env_device is not None:
+                actions_env = actions.to(env_device)
+            else:
+                actions_env = actions
+            observation, reward, terminated, truncated, info = env.step(actions_env)
 
             if self.on_step:
                 (
@@ -162,7 +167,7 @@ class EnvStepper:
                 )
 
             # Get next state
-            next_state = env.get_state(unsqueeze=1)
+            next_state = env.get_state(unsqueeze=1).to(self.device)
 
             # Determine batch size (B) for this transition
             batch_size = None

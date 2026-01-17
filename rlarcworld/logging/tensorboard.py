@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import torch
+import torch.optim as optim
+from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
 
 from rlarcworld.trainers.core import OnStepContext, ReplayBufferProto
@@ -109,135 +111,151 @@ class TensorBoardWriterManager:
             ctx: Training step ctx.
             phase: Phase of the training step.
         """
-        step = int(getattr(ctx, "iteration", 0))
-        if step <= 0:
-            # Avoid writing at step 0 for nicer charts
-            step = 1
+        # Nicer visualizations
+        iteration = ctx.iteration
 
-        # Always log step progress (cheap scalar, useful for monitoring)
-        self.writer.add_scalar(f"{phase}/progress/step", step, step)
-        if hasattr(ctx, "epoch") and ctx.epoch is not None:
-            self.writer.add_scalar(f"{phase}/progress/epoch", int(ctx.epoch), step)
-
-        if ctx.iteration % self.minimal_frequency != 0:
+        if iteration % self.minimal_frequency != 0 or ctx.warmup:
             return
 
-        # Losses (if available)
-        try:
-            if ctx.loss_actor is not None:
-                self.writer.add_scalar(
-                    f"{phase}/loss/actor", float(ctx.loss_actor.detach()), step
-                )
-            if ctx.loss_critic is not None:
-                self.writer.add_scalar(
-                    f"{phase}/loss/critic", float(ctx.loss_critic.detach()), step
-                )
-        except Exception:
-            logger.error("Failed to log loss metrics")
-            pass
+        # Losses
+        if ctx.loss_actor is not None:
+            self.writer.add_scalar(
+                f"{phase}/loss/actor", float(ctx.loss_actor.detach()), iteration
+            )
+        if ctx.loss_critic is not None:
+            self.writer.add_scalar(
+                f"{phase}/loss/critic", float(ctx.loss_critic.detach()), iteration
+            )
+
+        core = ctx.core
+        if (
+            hasattr(core, "loss_actor_window_avg")
+            and core.loss_actor_window_avg is not None
+        ):
+            self.writer.add_scalar(
+                f"{phase}/loss/actor_window_avg",
+                float(core.loss_actor_window_avg),
+                iteration,
+            )
+        if (
+            hasattr(core, "loss_critic_window_avg")
+            and core.loss_critic_window_avg is not None
+        ):
+            self.writer.add_scalar(
+                f"{phase}/loss/critic_window_avg",
+                float(core.loss_critic_window_avg),
+                iteration,
+            )
 
         # Optimizer learning rates
-        try:
-            core = ctx.core
-            actor_lr = None
-            critic_lr = None
-            if hasattr(core, "actor_optimizer"):
-                for g in core.actor_optimizer.param_groups:
-                    actor_lr = float(g.get("lr", None))
-                    break
-            if hasattr(core, "critic_optimizer"):
-                for g in core.critic_optimizer.param_groups:
-                    critic_lr = float(g.get("lr", None))
-                    break
-            if actor_lr is not None:
-                self.writer.add_scalar(f"{phase}/optim/actor_lr", actor_lr, step)
-            if critic_lr is not None:
-                self.writer.add_scalar(f"{phase}/optim/critic_lr", critic_lr, step)
-        except Exception:
-            logger.warning("Failed to log optimizer learning rates")
-            pass
+        if hasattr(core, "actor_scheduler") and isinstance(
+            core.actor_scheduler, optim.lr_scheduler.StepLR
+        ):
+            actor_lr = core.actor_scheduler.get_last_lr()[0]
+            self.writer.add_scalar(f"{phase}/optim/actor_lr", actor_lr, iteration)
+        if hasattr(core, "critic_scheduler") and isinstance(
+            core.critic_scheduler, optim.lr_scheduler.StepLR
+        ):
+            critic_lr = core.critic_scheduler.get_last_lr()[0]
+            self.writer.add_scalar(f"{phase}/optim/critic_lr", critic_lr, iteration)
 
         # Algo hyperparams that change over time (e.g., entropy coef)
-        try:
-            if hasattr(ctx.core, "entropy_coef"):
-                self.writer.add_scalar(
-                    f"{phase}/algo/entropy_coef", float(ctx.core.entropy_coef), step
-                )
-        except Exception:
-            logger.debug("Failed to log entropy coefficient")
-            pass
+        if (
+            hasattr(core, "entropy_coef")
+            and hasattr(core, "entropy_coef_decay")
+            and core.entropy_coef_decay != 1.0
+        ):
+            self.writer.add_scalar(
+                f"{phase}/algo/entropy_coef", float(core.entropy_coef), iteration
+            )
 
         # Reward heads: log per-batch average for each reward key
-        try:
-            batch = getattr(ctx, "batch", None)
-            if batch is not None and (
-                (hasattr(batch, "get") and batch.get("reward") is not None)
-                or (isinstance(batch, dict) and "reward" in batch)
-            ):
-                reward_td = batch["reward"]
-                # Handle dict-like rewards (TensorDict or plain dict)
-                items_iter = reward_td.items() if hasattr(reward_td, "items") else []
-                for key, val in items_iter:
-                    try:
-                        # Compute mean across all dimensions
-                        mean_val = float(val.float().mean().detach().cpu().item())
-                        self.writer.add_scalar(f"{phase}/reward/{key}", mean_val, step)
-                    except Exception:
-                        continue
-        except Exception:
-            logger.debug("Failed to log reward heads")
-            pass
+        batch: TensorDict = ctx.batch
 
-        # Replay buffer stats (size and warmup progress)
-        try:
-            if self.replay_buffer is not None and hasattr(
-                self.replay_buffer, "storage"
-            ):
-                size = len(self.replay_buffer.storage)
-                cap = getattr(self.replay_buffer.storage, "max_size", None)
-                if cap is None:
-                    cap = getattr(self.replay_buffer.storage, "_max_size", None)
-                if isinstance(cap, (int, float)) and cap:
-                    warmup_progress = float(size) / float(cap)
-                else:
-                    warmup_progress = 0.0
-                self.writer.add_scalar(f"{phase}/replay/size", int(size), step)
-                self.writer.add_scalar(f"{phase}/replay/capacity", int(cap or 0), step)
+        reward_td = batch["reward"]
+        # Handle dict-like rewards
+        for key, val in reward_td.items():
+            # Compute mean across all dimensions
+            mean_val = float(val.float().mean().detach().cpu().item())
+            self.writer.add_scalar(f"{phase}/reward/{key}", mean_val, iteration)
+
+        # Submission stats (rate, success, failure)
+        submit_raw: torch.Tensor = batch["actions"]["submit"]
+        if submit_raw.ndim >= 2:
+            # action probabilities -> discrete submit decision
+            submit = torch.argmax(submit_raw, dim=-1)
+        else:
+            # already discrete
+            submit = submit_raw
+
+        submit = submit.reshape(-1).to(dtype=torch.long)
+        batch_size = int(submit.shape[0])
+        submit_count = int(submit.sum().detach().cpu().item())
+
+        self.writer.add_scalar(
+            f"{phase}/submission/rate",
+            float(submit_count) / float(max(1, batch_size)),
+            iteration,
+        )
+        self.writer.add_scalar(
+            f"{phase}/submission/count",
+            float(submit_count),
+            iteration,
+        )
+
+        # Success/failure: use binary reward if available
+        binary_reward = reward_td["binary"]
+
+        if isinstance(binary_reward, torch.Tensor):
+            binary_reward = binary_reward.reshape(-1)
+            submitted_mask = submit == 1
+            n_submitted = int(submitted_mask.sum().detach().cpu().item())
+            if n_submitted > 0:
+                submitted_reward = binary_reward[submitted_mask]
+                success_count = int((submitted_reward > 0).sum().detach().cpu().item())
+                failure_count = int((submitted_reward < 0).sum().detach().cpu().item())
+
                 self.writer.add_scalar(
-                    f"{phase}/replay/warmup_progress",
-                    warmup_progress,
-                    step,
+                    f"{phase}/submission/success_rate",
+                    float(success_count) / float(n_submitted),
+                    iteration,
                 )
                 self.writer.add_scalar(
-                    f"{phase}/replay/warmup_threshold",
-                    float(self.warmup_buffer_ratio),
-                    step,
+                    f"{phase}/submission/failure_rate",
+                    float(failure_count) / float(n_submitted),
+                    iteration,
                 )
-            # Sampler hyperparams if present
-            sampler = (
-                getattr(self.replay_buffer, "sampler", None)
-                if self.replay_buffer is not None
-                else None
-            )
-            if sampler is not None:
-                if hasattr(sampler, "alpha") and sampler.alpha is not None:
-                    self.writer.add_scalar(
-                        f"{phase}/replay/alpha", float(sampler.alpha), step
-                    )
-                if hasattr(sampler, "beta") and sampler.beta is not None:
-                    self.writer.add_scalar(
-                        f"{phase}/replay/beta", float(sampler.beta), step
-                    )
-        except Exception:
-            logger.debug("Failed to log replay buffer stats")
-            pass
+                self.writer.add_scalar(
+                    f"{phase}/submission/success_count",
+                    float(success_count),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    f"{phase}/submission/failure_count",
+                    float(failure_count),
+                    iteration,
+                )
+
+        # Sampler hyperparams if present
+        sampler = None
+        if self.replay_buffer is not None:
+            sampler = getattr(self.replay_buffer, "sampler", None)
+        if sampler is not None:
+            if hasattr(sampler, "alpha") and sampler.alpha is not None:
+                self.writer.add_scalar(
+                    f"{phase}/replay/alpha", float(sampler.alpha), iteration
+                )
+            if hasattr(sampler, "beta") and sampler.beta is not None:
+                self.writer.add_scalar(
+                    f"{phase}/replay/beta", float(sampler.beta), iteration
+                )
 
         # Ensure periodic flush for visibility without too much overhead
         try:
-            if step % self.medium_frequency == 0:
+            if iteration % self.medium_frequency == 0:
                 self.writer.flush()
         except Exception:
-            logger.debug("Failed to flush TensorBoard writer")
+            logger.warning("Failed to flush TensorBoard writer")
             pass
 
     def _maybe_log_medium_metrics(self, ctx: OnStepContext, *, phase: str) -> None:
@@ -246,81 +264,64 @@ class TensorBoardWriterManager:
         Computed safely with no_grad, gated by `medium_frequency` to keep
         overhead small.
         """
-        try:
-            step = int(getattr(ctx, "iteration", 0))
-            if step <= 0 or step % self.medium_frequency != 0:
-                return
-            if ctx.batch is None:
-                return
-            state = ctx.batch.get("state") if hasattr(ctx.batch, "get") else None
-            if state is None:
-                return
-            core = ctx.core
-            # actor -> action_probs
+        iteration = ctx.iteration
+        if iteration % self.medium_frequency != 0 or ctx.warmup:
+            return
+
+        logger.debug(
+            "Logging medium metrics for iteration %d [phase: %s]", iteration, phase
+        )
+
+        batch: TensorDict = ctx.batch
+        state = batch["state"]
+        core = ctx.core
+
+        # actor -> action_probs
+        with torch.no_grad():
+            action_probs = core.actor(state)
+
+        # Policy entropy across action heads
+        entropy = 0.0
+        n_heads = 0
+        for probs in action_probs.values():
+            p = probs.clamp(min=1e-10)
+            entropy_t = -torch.sum(p * torch.log(p + 1e-10), dim=-1).mean()
+            entropy += float(entropy_t.detach().cpu())
+            n_heads += 1
+        if n_heads > 0:
+            entropy /= n_heads
+            self.writer.add_scalar(f"{phase}/policy/entropy", entropy, iteration)
+
+        # Critic expected Q per head (mean)
+        if hasattr(core, "critic") and hasattr(core.critic, "z_atoms"):
             with torch.no_grad():
-                action_probs = core.actor(state)
-            # Policy entropy across action heads
-            try:
-                entropy = 0.0
-                n_heads = 0
-                for probs in action_probs.values():
-                    # clamp for numerical stability
-                    p = probs.clamp(min=1e-10)
-                    entropy_t = -torch.sum(p * torch.log(p + 1e-10), dim=-1).mean()
-                    entropy += float(entropy_t.detach().cpu())
-                    n_heads += 1
-                if n_heads > 0:
-                    entropy /= n_heads
-                    self.writer.add_scalar(f"{phase}/policy/entropy", entropy, step)
-            except Exception:
-                logger.debug("Failed to log policy entropy")
-                pass
-            # Critic expected Q per head (mean)
-            try:
-                if hasattr(core, "critic") and hasattr(core.critic, "z_atoms"):
-                    with torch.no_grad():
-                        critic_probs = core.critic(state, action_probs)
-                    for key, probs in critic_probs.items():
-                        z = core.critic.z_atoms.get(key)
-                        if z is None:
-                            continue
-                        # move z to probs device for multiply
-                        z = z.to(probs.device)
-                        q = torch.sum(probs * z, dim=-1)
-                        q_mean = float(q.mean().detach().cpu())
-                        self.writer.add_scalar(
-                            f"{phase}/critic/q_expected_mean/{key}",
-                            q_mean,
-                            step,
-                        )
-            except Exception:
-                logger.debug("Failed to log critic expected Q")
-                pass
-            # Weight norms (L2) for actor and critic
-            try:
-
-                def l2_norm(module) -> float:
-                    total = 0.0
-                    for p in module.parameters():
-                        if p is None:
-                            continue
-                        total += float(p.detach().norm(2).item())
-                    return total
-
-                actor_norm = l2_norm(core.actor)
-                critic_norm = l2_norm(core.critic)
+                critic_probs = core.critic(state, action_probs)
+            for key, probs in critic_probs.items():
+                z = core.critic.z_atoms.get(key)
+                if z is None:
+                    continue
+                z = z.to(probs.device)
+                q = torch.sum(probs * z, dim=-1)
+                q_mean = float(q.mean().detach().cpu())
                 self.writer.add_scalar(
-                    f"{phase}/actor/weight_l2_norm", actor_norm, step
+                    f"{phase}/critic/q_expected_mean/{key}",
+                    q_mean,
+                    iteration,
                 )
-                self.writer.add_scalar(
-                    f"{phase}/critic/weight_l2_norm", critic_norm, step
-                )
-            except Exception:
-                logger.debug("Failed to log weight norms")
-                pass
-        except Exception:
-            logger.debug("Failed to log medium metrics")
-            pass
+
+        # Weight norms (L2) for actor and critic
+        def l2_norm(module) -> float:
+            total = 0.0
+            for p in module.parameters():
+                if p is None:
+                    continue
+                total += float(p.detach().norm(2).item())
+            return total
+
+        actor_norm = l2_norm(core.actor)
+        critic_norm = l2_norm(core.critic)
+        self.writer.add_scalar(f"{phase}/actor/weight_l2_norm", actor_norm, iteration)
+        self.writer.add_scalar(f"{phase}/critic/weight_l2_norm", critic_norm, iteration)
 
 
 def make_tensorboard_callbacks(

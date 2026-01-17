@@ -2,11 +2,11 @@
 
 import copy
 import logging
+from inspect import Parameter
 from pathlib import Path
-from typing import cast
+from typing import Iterable, cast
 
 import torch
-import torch.distributed as dist
 import torch.optim as optim
 from tensordict import TensorDict
 
@@ -46,6 +46,7 @@ class D4PGCore:
         *,
         policy_lr: float = 3e-4,
         critic_lr: float = 3e-3,
+        shared_params: Iterable[Parameter] | None = None,
         lr_scheduler_kwargs: dict | None = None,
         gamma: float = 0.99,
         tau: float = 0.005,
@@ -55,10 +56,11 @@ class D4PGCore:
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
         target_update_frequency: int = 10,
+        model_update_frequency: int = 1,
+        cache_enabled: bool = False,
         device_config: CudaConfig | None = None,
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
-        fsdp_enabled: bool = False,
     ) -> None:
         """Initialize the D4PGCore.
 
@@ -69,6 +71,8 @@ class D4PGCore:
                 Defaults to 3e-4.
             critic_lr (float, optional): Learning rate for critic network.
                 Defaults to 3e-3.
+            shared_params (Iterable[Parameter]): List of parameters shared by
+                actor and critic networks.
             lr_scheduler_kwargs (Optional[Dict], optional): Keyword arguments
                 for learning rate scheduler StepLR. Defaults to None.
             gamma (float, optional): Discount factor. Defaults to 0.99.
@@ -86,11 +90,11 @@ class D4PGCore:
                 0.0.
             amp_enabled (bool, optional): Whether to use automatic mixed
                 precision. Defaults to True.
-            fsdp_enabled (bool, optional): Enable FSDP wrapping when running
-                under torch.distributed to shard model/optimizer state across
-                GPUs. Defaults to False.
             target_update_frequency (int, optional): Frequency of target
                 network updates. Defaults to 10.
+            model_update_frequency (int, optional): Frequency of model weight
+                updates (backward passes). Defaults to 1 (update every step).
+            cache_enabled (bool, optional): Enable caching for imagined rollouts.
             compute_td_error (bool, optional): Whether to compute TD error.
                 Defaults to True.
         """
@@ -106,20 +110,6 @@ class D4PGCore:
         self.device = self.device_config["device"]
         self.amp_scaler = AmpScaler(amp_enabled=amp_enabled, device=self.device)
 
-        self.fsdp_enabled = bool(fsdp_enabled)
-        self._using_fsdp = (
-            self.fsdp_enabled
-            and dist.is_available()
-            and dist.is_initialized()
-            and str(self.device).startswith("cuda")
-        )
-        if self._using_fsdp:
-            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
-            self._FSDP = FSDP
-        else:
-            self._FSDP = None
-
         # Hyperparameters
         self.gamma = gamma
         self.tau = tau
@@ -130,6 +120,15 @@ class D4PGCore:
         self.entropy_coef_decay = entropy_coef_decay
         self.max_grad_norm = max_grad_norm
         self.target_update_frequency = target_update_frequency
+        self.model_update_frequency = model_update_frequency
+        self._update_counter = 0
+        self._accumulated_steps = 0
+        self.cache_enabled = cache_enabled
+
+        self._loss_actor_window_sum = 0.0
+        self._loss_critic_window_sum = 0.0
+        self.loss_actor_window_avg: float | None = None
+        self.loss_critic_window_avg: float | None = None
 
         # Networks
         self.actor = actor.to(self.device)
@@ -139,137 +138,14 @@ class D4PGCore:
         self.actor_target = copy.deepcopy(self.actor)
         self.critic_target = copy.deepcopy(self.critic)
 
-        # Optional FSDP wrapping (shards params / grads / optimizer state)
-        if self._using_fsdp and self._FSDP is not None:
-            import functools
-
-            from transformers.models.t5.modeling_t5 import T5LayerNorm
-
-            device_id = torch.device(self.device)
-
-            # Collect embedding and small modules to exclude from FSDP wrapping
-            # Must collect both main and target networks since targets are deepcopies
-            from rlarcworld.models.nn_modules import LearnedCompression
-            from rlarcworld.models.vit_arc import (
-                CustomT5Attention,
-                CustomT5Block,
-                ViTARCEmbedding,
-            )
-
-            ignored_modules = []
-            # Collect from actor and actor_target
-            for module in self.actor.modules():
-                if isinstance(
-                    module,
-                    (
-                        LearnedCompression,
-                        CustomT5Attention,
-                        CustomT5Block,
-                        torch.nn.Embedding,
-                        torch.nn.EmbeddingBag,
-                        ViTARCEmbedding,
-                        torch.nn.LayerNorm,
-                        T5LayerNorm,
-                    ),
-                ):
-                    ignored_modules.append(module)
-            for module in self.actor_target.modules():
-                if isinstance(
-                    module,
-                    (
-                        LearnedCompression,
-                        CustomT5Attention,
-                        CustomT5Block,
-                        torch.nn.Embedding,
-                        torch.nn.EmbeddingBag,
-                        ViTARCEmbedding,
-                        torch.nn.LayerNorm,
-                        T5LayerNorm,
-                    ),
-                ):
-                    ignored_modules.append(module)
-            # Collect from critic and critic_target
-            for module in self.critic.modules():
-                if isinstance(
-                    module,
-                    (
-                        LearnedCompression,
-                        CustomT5Attention,
-                        CustomT5Block,
-                        torch.nn.Embedding,
-                        torch.nn.EmbeddingBag,
-                        ViTARCEmbedding,
-                        torch.nn.LayerNorm,
-                        T5LayerNorm,
-                    ),
-                ):
-                    ignored_modules.append(module)
-            for module in self.critic_target.modules():
-                if isinstance(
-                    module,
-                    (
-                        LearnedCompression,
-                        CustomT5Attention,
-                        CustomT5Block,
-                        torch.nn.Embedding,
-                        torch.nn.EmbeddingBag,
-                        ViTARCEmbedding,
-                        torch.nn.LayerNorm,
-                        T5LayerNorm,
-                    ),
-                ):
-                    ignored_modules.append(module)
-
-            # Custom policy: exclude embeddings but use size-based wrapping for others
-            def custom_fsdp_policy(
-                module, recurse, nonwrapped_numel, min_num_params=100_000_000
-            ):
-                # Never wrap embedding layers to prevent shape corruption
-                if isinstance(module, (torch.nn.Embedding, torch.nn.EmbeddingBag)):
-                    return False
-                # Use size-based wrapping for other modules
-                return nonwrapped_numel >= min_num_params
-
-            fsdp_wrap_policy = functools.partial(
-                custom_fsdp_policy, min_num_params=100_000_000
-            )
-
-            self.actor = self._FSDP(
-                self.actor,
-                device_id=device_id,
-                use_orig_params=True,
-                auto_wrap_policy=fsdp_wrap_policy,
-                ignored_modules=ignored_modules,
-            )
-            self.critic = self._FSDP(
-                self.critic,
-                device_id=device_id,
-                use_orig_params=True,
-                auto_wrap_policy=fsdp_wrap_policy,
-                ignored_modules=ignored_modules,
-            )
-            self.actor_target = self._FSDP(
-                self.actor_target.to(self.device).eval(),
-                device_id=device_id,
-                use_orig_params=True,
-                auto_wrap_policy=fsdp_wrap_policy,
-                ignored_modules=ignored_modules,
-            )
-            self.critic_target = self._FSDP(
-                self.critic_target.to(self.device).eval(),
-                device_id=device_id,
-                use_orig_params=True,
-                auto_wrap_policy=fsdp_wrap_policy,
-                ignored_modules=ignored_modules,
-            )
-
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.critic_target.load_state_dict(self.critic.state_dict())
         self.actor_target.to(self.device).eval()
         self.critic_target.to(self.device).eval()
 
         # Optimizers and schedulers
-        self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=policy_lr)
+        self.shared_params = shared_params
+        self.actor_optimizer = self._build_actor_optimizer(policy_lr)
         self.critic_optimizer = optim.AdamW(self.critic.parameters(), lr=critic_lr)
 
         self._t0_actor_lr = policy_lr
@@ -288,34 +164,11 @@ class D4PGCore:
         # Loss
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
-    def _fsdp_full_state_dict(self, module: torch.nn.Module) -> dict:
-        if not self._using_fsdp or self._FSDP is None:
-            return module.state_dict()
-
-        from torch.distributed.fsdp import (
-            FullStateDictConfig,
-            StateDictType,
-        )
-
-        # rank0_only keeps non-rank0 memory low; all ranks must still participate.
-        cfg = FullStateDictConfig(rank0_only=True, offload_to_cpu=True)
-        with self._FSDP.state_dict_type(module, StateDictType.FULL_STATE_DICT, cfg):
-            return module.state_dict()
-
-    def _fsdp_full_optim_state_dict(
-        self, module: torch.nn.Module, optimizer: optim.Optimizer
-    ) -> dict:
-        if not self._using_fsdp or self._FSDP is None:
-            return optimizer.state_dict()
-
-        from torch.distributed.fsdp import FullOptimStateDictConfig
-
-        cfg = FullOptimStateDictConfig(rank0_only=True, offload_to_cpu=True)
-        return self._FSDP.optim_state_dict(
-            module,
-            optimizer,
-            optim_state_dict_config=cfg,
-        )
+    def _build_actor_optimizer(self, lr: float) -> optim.AdamW:
+        if self.shared_params is None:
+            return optim.AdamW(self.actor.parameters(), lr=lr)
+        actor_head = [p for p in self.actor.parameters() if p not in self.shared_params]
+        return optim.AdamW(actor_head, lr=lr)
 
     # ---------- Core computations ----------
     def compute_target_distribution(
@@ -441,9 +294,9 @@ class D4PGCore:
         Returns:
             TensorDict: Actor loss.
         """
-        assert not self.carsm or target_q is not None, (
-            "target_q must be provided when using CARSM loss."
-        )
+        assert (
+            not self.carsm or target_q is not None
+        ), "target_q must be provided when using CARSM loss."
 
         # Action probabilities
         if action_probs is None:
@@ -515,6 +368,7 @@ class D4PGCore:
         batch: TensorDict,
         *,
         training: bool = True,
+        force_update: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, TensorDict]:
         """Compute actor and critic losses for a batch of transitions.
 
@@ -523,12 +377,18 @@ class D4PGCore:
                 next_state, and terminated.
             training (bool, optional): Whether to compute gradients and update
                 networks. Defaults to True.
+            force_update (bool, optional): Force weight update regardless of
+                model_update_frequency. Defaults to False.
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor, TensorDict]: Actor loss, critic loss,
                 and TD error.
         """
         with getattr(torch, "enable_grad" if training else "no_grad")():
+            should_step = force_update or (
+                (self._update_counter + 1) % self.model_update_frequency == 0
+            )
+
             target_probs = self.compute_target_distribution(
                 batch["reward"], batch["next_state"], batch["terminated"]
             )
@@ -542,18 +402,72 @@ class D4PGCore:
             loss_critic = sum(loss_critic_td.values()) / max(1, len(loss_critic_td))
 
             if training:
-                self.critic_optimizer.zero_grad()
-                self.amp_scaler.scale(loss_critic).backward()
-                if self.max_grad_norm and self.max_grad_norm > 0:
-                    self.amp_scaler.unscale(self.critic_optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.critic.parameters(), self.max_grad_norm, norm_type=2.0
-                    )
-                self.amp_scaler.step(self.critic_optimizer)
                 # Actor uses fresh target_probs
                 loss_actor_td = self.compute_actor_loss(
                     batch["state"], target_q=target_probs
                 )
+
+                # Zero gradients only when starting a new accumulation cycle
+                if self._update_counter % self.model_update_frequency == 0:
+                    self.critic_optimizer.zero_grad()
+                    self.actor_optimizer.zero_grad()
+                    self._accumulated_steps = 0
+                    self._loss_actor_window_sum = 0.0
+                    self._loss_critic_window_sum = 0.0
+                    self.loss_actor_window_avg = None
+                    self.loss_critic_window_avg = None
+
+                loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
+
+                # Scale losses for gradient accumulation (AMP-safe, CPU/MPS-safe)
+                loss_critic_scaled = loss_critic / self.model_update_frequency
+                loss_actor_scaled = loss_actor / self.model_update_frequency
+
+                # Accumulate gradients
+                self.amp_scaler.scale(loss_critic_scaled).backward()
+                self.amp_scaler.scale(loss_actor_scaled).backward()
+                self._accumulated_steps += 1
+
+                # Step optimizer only after accumulating N gradients
+                if should_step:
+                    # Clip gradients if needed
+                    if self.max_grad_norm and self.max_grad_norm > 0:
+                        self.amp_scaler.unscale(self.critic_optimizer)
+                        self.amp_scaler.unscale(self.actor_optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.critic.parameters(), self.max_grad_norm, norm_type=2.0
+                        )
+                        torch.nn.utils.clip_grad_norm_(
+                            self.actor.parameters(), self.max_grad_norm, norm_type=2.0
+                        )
+
+                    self.amp_scaler.step(self.critic_optimizer)
+                    self.amp_scaler.step(self.actor_optimizer)
+                    self.amp_scaler.update()
+
+                    if self.cache_enabled:
+                        logger.debug(
+                            f"Model stepped (counter={self._update_counter}, "
+                            f"accumulated={self._accumulated_steps}), clearing cache"
+                        )
+                        # Window averages for logging
+                        self._loss_actor_window_sum += float(loss_actor.detach())
+                        self._loss_critic_window_sum += float(loss_critic.detach())
+                        self.loss_actor_window_avg = (
+                            self._loss_actor_window_sum / self._accumulated_steps
+                        )
+                        self.loss_critic_window_avg = (
+                            self._loss_critic_window_sum / self._accumulated_steps
+                        )
+                        self.actor.clear_example_cache()
+                        self.critic.clear_example_cache()
+                        self.actor.enable_example_cache()
+                        self.critic.enable_example_cache()
+                else:
+                    # Keep cache enabled during accumulation to allow cache hits
+                    if self.cache_enabled:
+                        self.actor.enable_example_cache()
+                        self.critic.enable_example_cache()
             else:
                 loss_actor_td = self.compute_actor_loss(
                     batch["state"],
@@ -561,18 +475,10 @@ class D4PGCore:
                     action_probs=batch["actions"],
                     critic_probs=q_dist,
                 )
-
-            loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
+                loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
 
             if training:
-                self.actor_optimizer.zero_grad()
-                self.amp_scaler.scale(loss_actor).backward()
-                if self.max_grad_norm and self.max_grad_norm > 0:
-                    self.amp_scaler.unscale(self.actor_optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.actor.parameters(), self.max_grad_norm, norm_type=2.0
-                    )
-                self.amp_scaler.step(self.actor_optimizer)
+                self._update_counter += 1
         return loss_actor, loss_critic, td_err
 
     def on_step(self, ctx: OnStepContext):
@@ -609,14 +515,10 @@ class D4PGCore:
     def checkpoint(self):
         """Generates a dictionary with checkpointing."""
         payload = {
-            "actor": self._fsdp_full_state_dict(self.actor),
-            "critic": self._fsdp_full_state_dict(self.critic),
-            "actor_optimizer": self._fsdp_full_optim_state_dict(
-                self.actor, self.actor_optimizer
-            ),
-            "critic_optimizer": self._fsdp_full_optim_state_dict(
-                self.critic, self.critic_optimizer
-            ),
+            "actor": self.actor.state_dict(),
+            "critic": self.critic.state_dict(),
+            "actor_optimizer": self.actor_optimizer.state_dict(),
+            "critic_optimizer": self.critic_optimizer.state_dict(),
             "actor_scheduler": self.actor_scheduler.state_dict()
             if self.actor_scheduler is not None
             else None,
@@ -624,6 +526,8 @@ class D4PGCore:
             if self.critic_scheduler is not None
             else None,
             "hyperparameters": self.hyperparameters,
+            "update_counter": self._update_counter,
+            "accumulated_steps": self._accumulated_steps,
         }
         return add_schema_and_class(payload, self.__class__.__name__)
 
@@ -673,36 +577,12 @@ class D4PGCore:
         # Load networks
         if "actor" in checkpoint:
             try:
-                if self._using_fsdp and self._FSDP is not None:
-                    from torch.distributed.fsdp import (
-                        FullStateDictConfig,
-                        StateDictType,
-                    )
-
-                    cfg = FullStateDictConfig(rank0_only=True, offload_to_cpu=True)
-                    with self._FSDP.state_dict_type(
-                        self.actor, StateDictType.FULL_STATE_DICT, cfg
-                    ):
-                        self.actor.load_state_dict(checkpoint["actor"], strict=strict)
-                else:
-                    self.actor.load_state_dict(checkpoint["actor"], strict=strict)
+                self.actor.load_state_dict(checkpoint["actor"], strict=strict)
             except Exception as e:
                 logger.warning("Failed to load actor state_dict: %s", e)
         if "critic" in checkpoint:
             try:
-                if self._using_fsdp and self._FSDP is not None:
-                    from torch.distributed.fsdp import (
-                        FullStateDictConfig,
-                        StateDictType,
-                    )
-
-                    cfg = FullStateDictConfig(rank0_only=True, offload_to_cpu=True)
-                    with self._FSDP.state_dict_type(
-                        self.critic, StateDictType.FULL_STATE_DICT, cfg
-                    ):
-                        self.critic.load_state_dict(checkpoint["critic"], strict=strict)
-                else:
-                    self.critic.load_state_dict(checkpoint["critic"], strict=strict)
+                self.critic.load_state_dict(checkpoint["critic"], strict=strict)
             except Exception as e:
                 logger.warning("Failed to load critic state_dict: %s", e)
 
@@ -715,25 +595,13 @@ class D4PGCore:
             try:
                 actor_opt_sd = checkpoint.get("actor_optimizer")
                 if actor_opt_sd is not None:
-                    if self._using_fsdp and self._FSDP is not None:
-                        sharded = self._FSDP.optim_state_dict_to_load(
-                            self.actor, self.actor_optimizer, actor_opt_sd
-                        )
-                        self.actor_optimizer.load_state_dict(sharded)
-                    else:
-                        self.actor_optimizer.load_state_dict(actor_opt_sd)
+                    self.actor_optimizer.load_state_dict(actor_opt_sd)
             except Exception as e:
                 logger.warning("Failed to load actor optimizer state: %s", e)
             try:
                 critic_opt_sd = checkpoint.get("critic_optimizer")
                 if critic_opt_sd is not None:
-                    if self._using_fsdp and self._FSDP is not None:
-                        sharded = self._FSDP.optim_state_dict_to_load(
-                            self.critic, self.critic_optimizer, critic_opt_sd
-                        )
-                        self.critic_optimizer.load_state_dict(sharded)
-                    else:
-                        self.critic_optimizer.load_state_dict(critic_opt_sd)
+                    self.critic_optimizer.load_state_dict(critic_opt_sd)
             except Exception as e:
                 logger.warning("Failed to load critic optimizer state: %s", e)
 
@@ -777,6 +645,14 @@ class D4PGCore:
                 self.carsm = hp.get("carsm", self.carsm)
             except Exception as e:
                 logger.warning("Failed to restore hyperparameters: %s", e)
+
+        # Restore gradient accumulation counters
+        self._update_counter = checkpoint.get("update_counter", 0)
+        self._accumulated_steps = checkpoint.get("accumulated_steps", 0)
+        logger.info(
+            f"Restored counters: update_counter={self._update_counter}, "
+            f"accumulated_steps={self._accumulated_steps}"
+        )
 
     @property
     def hyperparameters(self):

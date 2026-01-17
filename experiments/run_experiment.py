@@ -171,6 +171,20 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
         loaded_iteration = experiment2.trainer.train_iteration
         logger.info(f"After load: epoch={loaded_epoch}, iteration={loaded_iteration}")
 
+        # Safety check: Shared params should NOT in actor optimizer after load
+        actor_opt = experiment2.d4pg_core.actor_optimizer
+        shared_ids = {
+            id(p) for p in experiment2.d4pg_core.actor.rl_vit_arc.parameters()
+        }
+        actor_opt_ids = {
+            id(p) for group in actor_opt.param_groups for p in group["params"]
+        }
+        duplicate_ids = shared_ids & actor_opt_ids
+        if duplicate_ids:
+            raise RuntimeError(
+                "Shared parameters found in actor optimizer after checkpoint load"
+            )
+
         # Verify state was restored
         if loaded_epoch != initial_epoch:
             raise RuntimeError(

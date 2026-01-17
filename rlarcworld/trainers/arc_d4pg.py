@@ -44,6 +44,7 @@ from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelSte
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
+from rlarcworld.models.nn_modules import RlArcWorldViTARC
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.trainers.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
@@ -81,8 +82,6 @@ class ArcD4PG:
         # Store full config for reference
         config = config.get_validated_config()
         self.exp_config = config
-
-        self.fsdp_enabled = bool(getattr(config.system, "fsdp_enabled", False))
 
         self.global_seed: int | None = None
         if config.reproducibility.global_seed is not None:
@@ -205,10 +204,21 @@ class ArcD4PG:
             config.env.grid_size
         )
 
+        if config.d4pg.share_network:
+            self.rl_vit_arc = RlArcWorldViTARC(
+                self.rl_vit_arc_config,
+                verbose=True,
+                checkpoint=self.cuda_config.get("use_checkpointing", False)
+                if self.cuda_config
+                else False,
+            )
+
         logger.info("Creating actor network...")
         self.actor = ViTARCActor(
             color_values=config.env.color_values,
-            rl_vit_arc_config=self.rl_vit_arc_config,
+            rl_vit_arc=self.rl_vit_arc
+            if config.d4pg.share_network
+            else self.rl_vit_arc_config,
             device_config=self.cuda_config,
         )
         logger.info("Actor network created successfully")
@@ -225,7 +235,9 @@ class ArcD4PG:
         logger.info("Creating critic network...")
         self.critic = VitARCCritic(
             color_values=config.env.color_values,
-            rl_vit_arc_config=self.rl_vit_arc_config,
+            rl_vit_arc=self.rl_vit_arc_config
+            if not config.d4pg.share_network
+            else self.rl_vit_arc,
             num_atoms=config.distributional.num_atoms,
             v_min=config.distributional.v_min,
             v_max=config.distributional.v_max,
@@ -328,17 +340,21 @@ class ArcD4PG:
             critic=self.critic,
             policy_lr=config.d4pg.policy_lr,
             critic_lr=config.d4pg.critic_lr,
+            shared_params=self.rl_vit_arc.parameters()
+            if config.d4pg.share_network
+            else None,
             gamma=config.d4pg.gamma,
             tau=config.d4pg.tau,
             lr_scheduler_kwargs=config.d4pg.lr_scheduler_kwargs,
             n_steps=config.d4pg.n_step_config.n_steps,
             device_config=self.cuda_config,
             amp_enabled=config.system.amp_enabled,
-            fsdp_enabled=config.system.fsdp_enabled,
             carsm=config.d4pg.carsm,
             entropy_coef=config.d4pg.entropy_coef,
             entropy_coef_decay=config.d4pg.entropy_coef_decay,
             target_update_frequency=config.d4pg.target_update_frequency,
+            model_update_frequency=config.d4pg.model_update_frequency,
+            cache_enabled=config.d4pg.cache_enabled,
             max_grad_norm=config.d4pg.max_grad_norm,
             compute_td_error=config.d4pg.compute_td_error,
             **kwargs,
@@ -704,6 +720,19 @@ class ArcD4PG:
                     msg += (
                         f", Imaginations: {self.world_model_stepper.imagination_count}"
                     )
+                batch: TensorDict = ctx.batch
+                reward_td: TensorDict = batch["reward"]
+                items_iter = reward_td.items() if hasattr(reward_td, "items") else []
+                reward_pairs: list[str] = []
+                for key, val in items_iter:
+                    try:
+                        mean_val = float(val.float().mean().detach().cpu().item())
+                    except Exception:
+                        mean_val = float(val)
+                    reward_pairs.append(f"{key}={mean_val:.4f}")
+                if reward_pairs:
+                    reward_pairs.sort()
+                    msg += ", Rewards: [" + ",".join(reward_pairs) + "]"
             logger.info(msg)
 
     def _periodic_checkpoint(self, ctx: OnStepContext):
@@ -866,9 +895,6 @@ class ArcD4PG:
         if warmup:
             logger.warning("Skipping final checkpoint during warmup period")
             return
-        if not self._is_rank0() and not self.fsdp_enabled:
-            logger.info("Non-rank0 process: skipping final checkpoint")
-            return
 
         now_str = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         if reason == "spot":
@@ -883,7 +909,7 @@ class ArcD4PG:
 
     def save_checkpoint(
         self,
-        checkpoint_path: str,
+        checkpoint_path: str | Path,
         *,
         save_replay_buffer: bool = False,
         include_core: bool = True,
@@ -909,11 +935,6 @@ class ArcD4PG:
             include_config: Whether to include config checkpoint
             include_provenance: Whether to include provenance checkpoint
         """
-        # With FSDP full-state-dict gathering, all ranks must participate in
-        # state_dict/optim_state_dict collection, but only rank0 should write.
-        if not self._is_rank0() and not self.fsdp_enabled:
-            logger.info("Non-rank0 process: skipping save_checkpoint")
-            return
         # Resolve target path (file or directory semantics)
         checkpoint_path = resolve_save_path(checkpoint_path, self.__class__.__name__)
         if not (

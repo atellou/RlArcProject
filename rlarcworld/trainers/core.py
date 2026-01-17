@@ -207,8 +207,13 @@ class Trainer:
         if len(step_state.batch_size) == 0:
             step_state = step_state.auto_batch_size_()
 
-        # Add to replay buffer without introducing an extra leading time dimension
-        indices = self.replay_buffer.extend(step_state)
+        # Add to replay buffer without introducing an extra leading time dimension.
+        try:
+            step_state_for_storage = step_state.to("cpu")
+        except Exception:
+            step_state_for_storage = step_state
+
+        indices = self.replay_buffer.extend(step_state_for_storage)
         storage_len = len(self.replay_buffer.storage)
         storage_cap = self.replay_buffer.storage.max_size
 

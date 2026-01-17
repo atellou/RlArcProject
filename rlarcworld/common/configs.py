@@ -1,5 +1,6 @@
 """Common configurations."""
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -8,6 +9,8 @@ import torch
 from transformers.modeling_outputs import BaseModelOutput
 
 from rlarcworld.common.enums import RewardKeys
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -102,6 +105,7 @@ class RlArcWorldViTARCConfig:
     example_compression_tokens: int = 64
     grid_compression_tokens: int | None = 128
     compression_method: str = "learned"  # "pooling" or "learned"
+    max_learnable_examples: int = 1
     color_values: int | None = None
 
     @classmethod
@@ -183,6 +187,7 @@ class D4PGConfig:
     """D4PG algorithm configuration.
 
     Attributes:
+        share_network (bool): Whether to share the network between actor and critic.
         policy_lr (float): Learning rate for the policy.
         critic_lr (float): Learning rate for the critic.
         gamma (float): Discount factor.
@@ -197,6 +202,7 @@ class D4PGConfig:
         max_grad_norm (float): Maximum gradient norm for clipping.
     """
 
+    share_network: bool = True
     policy_lr: float = 3e-4
     critic_lr: float = 3e-3
     gamma: float = 0.99
@@ -210,6 +216,8 @@ class D4PGConfig:
     entropy_coef: float = 0.0
     entropy_coef_decay: float = 1.0
     target_update_frequency: int = 10
+    model_update_frequency: int = 1
+    cache_enabled: bool = False
     max_grad_norm: float = 0.0
 
 
@@ -364,7 +372,6 @@ class SystemConfig:
 
     amp_enabled: bool = True
     use_checkpointing: bool = False
-    fsdp_enabled: bool = False
     device: Optional[str] = None
 
 
@@ -431,6 +438,15 @@ class ArcD4PGConfig:
         """Get a validated version of the configuration."""
         self.network.grid_size = self.env.grid_size
         self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
+
+        if self.d4pg.model_update_frequency == 0:
+            self.d4pg.model_update_frequency = 1
+
+        if self.d4pg.model_update_frequency > 1:
+            logger.warning(
+                "Model update frequency is greater than 1. Enabling example cache."
+            )
+            self.d4pg.cache_enabled = True
 
         if self.d4pg.n_step_config.n_steps > 1:
             step_keys = RewardKeys.get_n_step_keys()

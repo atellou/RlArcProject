@@ -404,10 +404,16 @@ class ArcBatchGridEnv(gym.Env):
             - ``terminated``: The termination status of the episode.
             - ``examples``: The batch of examples.
         """
-        state = self.information
-        state.update({StateKeys.GRID.value: self.observations[StateKeys.GRID.value]})
-        state.update({StateKeys.LAST_GRID.value: self.last_grid})
-        return state.clone()
+        state = TensorDict({}, batch_size=self.batch_size).to(self.device)
+        state[StateKeys.GRID.value] = self.observations[StateKeys.GRID.value].clone()
+        state[StateKeys.LAST_GRID.value] = self.last_grid.clone()
+        state[StateKeys.INITIAL.value] = self.information[StateKeys.INITIAL.value]
+        state[StateKeys.INDEX.value] = self.information[StateKeys.INDEX.value].clone()
+        state[StateKeys.TERMINATED.value] = self.information[
+            StateKeys.TERMINATED.value
+        ].clone()
+        state[StateKeys.EXAMPLES.value] = self.information[StateKeys.EXAMPLES.value]
+        return state
 
     def get_state(self, unsqueeze: Optional[int] = None) -> TensorDict:
         """Return the current state, optionally adding a batch dim.

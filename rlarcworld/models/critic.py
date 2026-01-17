@@ -18,11 +18,9 @@ algorithm.
 import logging
 
 import torch
-import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys, StateKeys
-from rlarcworld.common.types import STATE_REQUIRED_KEYS
 from rlarcworld.models.nn_modules import (
     CriticHeadFromEncoder,
     RlArcWorldViTARC,
@@ -39,7 +37,7 @@ class VitARCCritic(torch.nn.Module):
     def __init__(
         self,
         color_values: int,
-        rl_vit_arc_config: RlArcWorldViTARCConfig,
+        rl_vit_arc: RlArcWorldViTARCConfig | RlArcWorldViTARC,
         num_atoms: dict[str, int],
         v_min: dict[str, int],
         v_max: dict[str, int],
@@ -54,13 +52,25 @@ class VitARCCritic(torch.nn.Module):
                 for each reward type.
             v_min (Dict[str, int]): The minimum value for each reward type.
             v_max (Dict[str, int]): The maximum value for each reward type.
-            rl_vit_arc_config (RlArcWorldViTARCConfig): The ViTARC configuration.
+            rl_vit_arc: Configuration for the ViTARC model or the model itself.
             device_config (CudaConfig, optional): CUDA configuration. Defaults to None.
         """
         super().__init__()
+        if isinstance(rl_vit_arc, RlArcWorldViTARC):
+            self.rl_vit_arc_config = rl_vit_arc.config
+            self.rl_vit_arc = rl_vit_arc
+        else:
+            self.rl_vit_arc_config = rl_vit_arc
+            self.rl_vit_arc = RlArcWorldViTARC(
+                self.rl_vit_arc_config,
+                verbose=True,
+                checkpoint=device_config.get("use_checkpointing", False)
+                if device_config
+                else False,
+            )
+
         self.num_atoms = num_atoms
-        self.rl_vit_arc_config = rl_vit_arc_config
-        self.grid_size = rl_vit_arc_config.grid_size
+        self.grid_size = self.rl_vit_arc_config.grid_size
         self.color_values = color_values
         self.v_min = v_min
         self.v_max = v_max
@@ -84,17 +94,14 @@ class VitARCCritic(torch.nn.Module):
             ActionKeys.SUBMIT.value,
         ]
 
-        # Shared ViTARC encoder for state processing
-        self.rl_vit_arc = RlArcWorldViTARC(rl_vit_arc_config, verbose=True)
-
         # Critic head that converts encoder output + actions into Q-distributions
         self.critic_head = CriticHeadFromEncoder(
-            hidden_size=rl_vit_arc_config.d_model,
+            hidden_size=self.rl_vit_arc_config.d_model,
             grid_size=self.grid_size,
             color_values=self.color_values,
             num_atoms=self.num_atoms,
-            num_heads=rl_vit_arc_config.num_heads,
-            dropout=rl_vit_arc_config.dropout,
+            num_heads=self.rl_vit_arc_config.num_heads,
+            dropout=self.rl_vit_arc_config.dropout,
         )
 
         self.to(self.device)
@@ -106,6 +113,14 @@ class VitARCCritic(torch.nn.Module):
             "ViTARCCritic initialized:\n"
             f"\t- Total params: {total_params:,} total, {trainable_params:,} trainable"
         )
+
+    def clear_example_cache(self) -> None:
+        """Clear example embedding cache after model weight updates."""
+        self.rl_vit_arc.clear_example_cache()
+
+    def enable_example_cache(self) -> None:
+        """Enable example embedding cache for reuse across steps."""
+        self.rl_vit_arc.enable_example_cache()
 
     @torch.jit.export
     def input_val(self, state: TensorDict):
@@ -130,9 +145,17 @@ class VitARCCritic(torch.nn.Module):
         assert isinstance(state, TensorDict), TypeError(
             "Input State must be a TensorDict"
         )
-        in_keys = set(STATE_REQUIRED_KEYS)
-        assert set(state.keys()) == in_keys, ValueError(
-            f"State keys must be {in_keys}. Keys found {set(state.keys())}"
+        expected_keys = {StateKeys.GRID.value, StateKeys.INITIAL.value}
+        if bool(getattr(self.rl_vit_arc_config, "use_temporal", True)):
+            expected_keys.add(StateKeys.LAST_GRID.value)
+        if bool(getattr(self.rl_vit_arc_config, "use_index_grid", True)):
+            expected_keys.add(StateKeys.INDEX.value)
+        if bool(getattr(self.rl_vit_arc_config, "use_examples", True)):
+            expected_keys.add(StateKeys.EXAMPLES.value)
+
+        state_keys = set(state.keys())
+        assert expected_keys.issubset(state_keys), ValueError(
+            f"State keys must include {expected_keys}. Keys found {state_keys}"
         )
 
     @torch.jit.export
@@ -175,21 +198,26 @@ class VitARCCritic(torch.nn.Module):
             AssertionError: If a NaN is detected in the output.
         """
         current_device = next(self.parameters()).device
-        state = state.clone().to(current_device)
-
-        # Only present in training
+        state = state.clone(recurse=False).to(current_device)
         state.pop(StateKeys.TERMINATED.value, None)
 
         # Validate input
         self.input_val(state)
 
         # Encode state using shared ViTARC encoder
-        if self.device_config.get("use_checkpointing"):
-            vitarc_output = checkpoint.checkpoint(
-                self.rl_vit_arc, state, use_reentrant=False
+        example_hidden = None
+        if (
+            self.rl_vit_arc.use_examples
+            and state.get(StateKeys.EXAMPLES.value) is not None
+        ):
+            example_hidden = self.rl_vit_arc._encode_examples(
+                state[StateKeys.EXAMPLES.value]
             )
-        else:
-            vitarc_output = self.rl_vit_arc(state)
+
+        vitarc_output = self.rl_vit_arc(
+            state,
+            example_hidden=example_hidden,
+        )
 
         # Use critic head to produce per-reward distributions
         action = action.to(current_device)

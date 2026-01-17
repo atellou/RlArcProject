@@ -372,4 +372,3 @@ lr_3e5_nstep_50:
     num_atoms:
       pixel_wise_n_reward: 21
       binary_n_reward: 21
-

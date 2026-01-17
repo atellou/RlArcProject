@@ -23,12 +23,14 @@ network:
   use_index_grid: true
   use_temporal: true
   use_examples: true
-  example_compression_tokens: 64
+  example_compression_tokens: 32
   grid_compression_tokens: 128
   compression_method: "learned"
+  max_learnable_examples: 2
 
 
 d4pg:
+  share_network: true
   policy_lr: 3.0e-4
   critic_lr: 3.0e-3
   gamma: 0.99
@@ -41,6 +43,8 @@ d4pg:
   entropy_coef: 0.0
   entropy_coef_decay: 1.0
   target_update_frequency: 10
+  model_update_frequency: 1
+  cache_enabled: true
   max_grad_norm: 0.0
 
 distributional:
@@ -61,7 +65,7 @@ replay_buffer:
   warmup_ratio: 0.1
 
 training:
-  max_steps_per_epoch: 10000
+  max_steps_per_epoch: 3000
   max_steps_per_episode: 1000 # Max possible steps and a little more
   validation_epochs: 1
   validation_steps_per_epoch: 100
@@ -91,7 +95,6 @@ logging:
 system:
   amp_enabled: true
   use_checkpointing: true
-  fsdp_enabled: false
   device: null
 
 reproducibility:

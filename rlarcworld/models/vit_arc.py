@@ -891,27 +891,38 @@ class CustomT5Stack(T5Stack):
             )
 
             # For RlArcWorld we may encode up to three grids in a temporal
-            # sequence (initial, last, current), plus BOS/EOS. Build a
-            # distance matrix large enough to cover this worst case so that
-            # real_seq_length/key_length never exceed total_length.
-            total_length = self.max_grids * grid_height * grid_width + 2
-            distance_matrix = torch.full(
-                (total_length, total_length), fill_value=large_dist, dtype=torch.float
-            )
+            # sequence (initial, last, current), plus BOS/EOS. Build a distance
+            # matrix only when the full 2-D token layout is preserved. When the
+            # grid is compressed (``grid_compression_tokens`` not ``None``) we
+            # skip the large 2-D matrix and later rely on the lighter 1-D
+            # matrices created below.
+            grid_compressed_len = getattr(config, "grid_compression_tokens", None)
+            if grid_compressed_len is None:
+                total_length = self.max_grids * grid_height * grid_width + 2
+                distance_matrix = torch.full(
+                    (total_length, total_length),
+                    fill_value=large_dist,
+                    dtype=torch.float,
+                )
 
-            # Assign the 2D relative positions to the correct part of the matrix
-            distance_matrix[
-                1 : 1 + grid_height * grid_width, 1 : 1 + grid_height * grid_width
-            ] = relative_position_2d
+                # Assign the 2D relative positions to the correct part of the matrix
+                distance_matrix[
+                    1 : 1 + grid_height * grid_width,
+                    1 : 1 + grid_height * grid_width,
+                ] = relative_position_2d
 
-            # Optionally handle <s> and </s> relative positions
-            distance_matrix[0, :] = large_dist  # <s> is far from everything
-            distance_matrix[:, 0] = large_dist
-            distance_matrix[-1, :] = large_dist + 1  # </s> is far from everything
-            distance_matrix[:, -1] = large_dist + 1
+                # Optionally handle <s> and </s> relative positions
+                distance_matrix[0, :] = large_dist  # <s> is far from everything
+                distance_matrix[:, 0] = large_dist
+                distance_matrix[-1, :] = large_dist + 1  # </s> is far from everything
+                distance_matrix[:, -1] = large_dist + 1
 
-            self.distance_matrix_2D = distance_matrix
-            logger.info(f"Using 2D RPE with {total_length} tokens")
+                self.distance_matrix_2D = distance_matrix
+                logger.info(f"Using 2D RPE with {total_length} tokens")
+            else:
+                # No 2-D matrix needed when grids are compressed.
+                self.distance_matrix_2D = None
+                logger.info("Grid compression enabled; skipping 2D RPE distance matrix")
 
             # Create 1D distance matrices for compressed sequences
             # This enables RPE with compression using simple sequential distances
@@ -1152,37 +1163,41 @@ class CustomT5Stack(T5Stack):
 
             # Build your 2D embeddings
             # object_idx-based embeddings only in encoder
-            if self.use_OPE and (not self.is_decoder):
+            position_embeds_2d = None
+            if self.use_OPE and (not self.is_decoder) and (object_idx is not None):
                 # 2D + object embeddings
                 # e.g. self.wpe_obj_enc, self.wpe_x_enc, self.wpe_y_enc
                 # Strip BOS/EOS so that we only use grid content tokens for OPE
                 object_idx_content = object_idx[:, 1:-1]
                 content_len = object_idx_content.shape[1]
 
-                object_embeds = self.wpe_obj_enc(
-                    object_idx_content
-                )  # [batch, content_len, d_model/2]
+                # Only apply 2D OPE if content_len matches the full 2D grid length
+                full_grid_len = grid_len * 1  # grid_len already accounts for max_grids
+                if content_len == full_grid_len:
+                    object_embeds = self.wpe_obj_enc(
+                        object_idx_content
+                    )  # [batch, content_len, d_model/2]
 
-                # Slice 2D position ids to match object_embeds length
-                # (handles temporal sequences where content_len spans multiple grids)
-                position_embeds_x = self.wpe_x_enc(position_ids_x[:, :content_len])
-                position_embeds_y = self.wpe_y_enc(position_ids_y[:, :content_len])
+                    # Slice 2D position ids to match object_embeds length
+                    # handles temporal sequences where content_len spans multiple grids
+                    position_embeds_x = self.wpe_x_enc(position_ids_x[:, :content_len])
+                    position_embeds_y = self.wpe_y_enc(position_ids_y[:, :content_len])
 
-                # Expand X, Y if needed
-                position_embeds_x = position_embeds_x.expand(
-                    object_embeds.size(0), -1, -1
-                )
-                position_embeds_y = position_embeds_y.expand(
-                    object_embeds.size(0), -1, -1
-                )
+                    # Expand X, Y if needed
+                    position_embeds_x = position_embeds_x.expand(
+                        object_embeds.size(0), -1, -1
+                    )
+                    position_embeds_y = position_embeds_y.expand(
+                        object_embeds.size(0), -1, -1
+                    )
 
-                # Concatenate them
-                position_embeds_2d = torch.cat(
-                    (object_embeds, position_embeds_x, position_embeds_y), dim=-1
-                )
+                    # Concatenate them
+                    position_embeds_2d = torch.cat(
+                        (object_embeds, position_embeds_x, position_embeds_y), dim=-1
+                    )
 
-            else:
-                # Normal 2D scenario => x,y
+            if position_embeds_2d is None:
+                # Normal 2D scenario => x,y (or fallback when OPE is not applicable)
                 position_embeds_x = self.wpe_x(
                     position_ids_x
                 )  # shape [batch, grid_len, embed_dim/2]
