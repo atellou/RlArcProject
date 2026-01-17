@@ -179,6 +179,63 @@ class TensorBoardWriterManager:
             mean_val = float(val.float().mean().detach().cpu().item())
             self.writer.add_scalar(f"{phase}/reward/{key}", mean_val, iteration)
 
+        # Submission stats (rate, success, failure)
+        submit_raw: torch.Tensor = batch["actions"]["submit"]
+        if submit_raw.ndim >= 2:
+            # action probabilities -> discrete submit decision
+            submit = torch.argmax(submit_raw, dim=-1)
+        else:
+            # already discrete
+            submit = submit_raw
+
+        submit = submit.reshape(-1).to(dtype=torch.long)
+        batch_size = int(submit.shape[0])
+        submit_count = int(submit.sum().detach().cpu().item())
+
+        self.writer.add_scalar(
+            f"{phase}/submission/rate",
+            float(submit_count) / float(max(1, batch_size)),
+            iteration,
+        )
+        self.writer.add_scalar(
+            f"{phase}/submission/count",
+            float(submit_count),
+            iteration,
+        )
+
+        # Success/failure: use binary reward if available
+        binary_reward = reward_td["binary"]
+
+        if isinstance(binary_reward, torch.Tensor):
+            binary_reward = binary_reward.reshape(-1)
+            submitted_mask = submit == 1
+            n_submitted = int(submitted_mask.sum().detach().cpu().item())
+            if n_submitted > 0:
+                submitted_reward = binary_reward[submitted_mask]
+                success_count = int((submitted_reward > 0).sum().detach().cpu().item())
+                failure_count = int((submitted_reward < 0).sum().detach().cpu().item())
+
+                self.writer.add_scalar(
+                    f"{phase}/submission/success_rate",
+                    float(success_count) / float(n_submitted),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    f"{phase}/submission/failure_rate",
+                    float(failure_count) / float(n_submitted),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    f"{phase}/submission/success_count",
+                    float(success_count),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    f"{phase}/submission/failure_count",
+                    float(failure_count),
+                    iteration,
+                )
+
         # Sampler hyperparams if present
         sampler = None
         if self.replay_buffer is not None:

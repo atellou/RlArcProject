@@ -446,7 +446,7 @@ class D4PGCore:
                     self.amp_scaler.update()
 
                     if self.cache_enabled:
-                        logger.info(
+                        logger.debug(
                             f"Model stepped (counter={self._update_counter}, "
                             f"accumulated={self._accumulated_steps}), clearing cache"
                         )

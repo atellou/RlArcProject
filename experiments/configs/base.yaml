@@ -43,7 +43,7 @@ d4pg:
   entropy_coef: 0.0
   entropy_coef_decay: 1.0
   target_update_frequency: 10
-  model_update_frequency: 4
+  model_update_frequency: 1
   cache_enabled: true
   max_grad_norm: 0.0
 
@@ -59,13 +59,13 @@ distributional:
     binary: 1
 
 replay_buffer:
-  size: 1000
+  size: 10000
   alpha: 0.2
   beta: 0.2
   warmup_ratio: 0.1
 
 training:
-  max_steps_per_epoch: 2000
+  max_steps_per_epoch: 3000
   max_steps_per_episode: 1000 # Max possible steps and a little more
   validation_epochs: 1
   validation_steps_per_epoch: 100
@@ -90,7 +90,7 @@ checkpoint:
 
 logging:
   tensorboard_enabled: true
-  log_frequency: 1
+  log_frequency: 10
 
 system:
   amp_enabled: true
