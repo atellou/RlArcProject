@@ -687,6 +687,7 @@ class TestRlArcWorldViTARC:
             num_heads=4,
             use_ope=False,
             use_temporal=True,
+            use_examples=False,
         )
         model = RlArcWorldViTARC(config)
 
@@ -726,6 +727,7 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
+            use_temporal=False,
             use_examples=True,
         )
         model = RlArcWorldViTARC(config)
@@ -746,7 +748,8 @@ class TestRlArcWorldViTARC:
         assert isinstance(output, ViTARCEncoderOutput)
         assert output.hidden_states is not None
         assert output.example_hidden is not None
-        assert output.example_mask is not None
+        # No padding so example mask is None
+        assert output.example_mask is None
 
     def test_forward_with_index_grid(self):
         """Test forward pass when using the index grid (timestamp grid)."""
@@ -847,6 +850,9 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
+            use_examples=False,
+            use_temporal=False,
+            use_index_grid=False,
         )
         model = RlArcWorldViTARC(config)
 
@@ -900,6 +906,9 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=True,  # OPE enabled
+            use_examples=False,
+            use_temporal=False,
+            use_index_grid=False,
         )
         model = RlArcWorldViTARC(config)
 
@@ -932,6 +941,9 @@ class TestRlArcWorldViTARC:
             num_layers=2,
             num_heads=4,
             use_ope=False,
+            use_examples=False,
+            use_temporal=False,
+            use_index_grid=False,
         )
         model = RlArcWorldViTARC(config)
 

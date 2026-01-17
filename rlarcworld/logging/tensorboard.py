@@ -111,10 +111,10 @@ class TensorBoardWriterManager:
             ctx: Training step ctx.
             phase: Phase of the training step.
         """
+        # Nicer visualizations
         iteration = ctx.iteration
-        warmup = ctx.warmup
 
-        if iteration % self.minimal_frequency != 0 or warmup:
+        if iteration % self.minimal_frequency != 0 or ctx.warmup:
             return
 
         # Losses

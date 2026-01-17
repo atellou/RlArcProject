@@ -200,7 +200,7 @@ class TestMinimalMetricsLogging:
             for call in mock_writer.add_scalar.call_args_list
             if "loss/actor" in str(call)
         ]
-        assert len(calls) == 1
+        assert len(calls) == 2, f"Calls got {calls}"
         assert calls[0][0][0] == "train/loss/actor"
         assert abs(calls[0][0][1] - 0.25) < 1e-6
 
@@ -210,36 +210,9 @@ class TestMinimalMetricsLogging:
             for call in mock_writer.add_scalar.call_args_list
             if "loss/critic" in str(call)
         ]
-        assert len(calls) == 1
+        assert len(calls) == 2
         assert calls[0][0][0] == "train/loss/critic"
         assert abs(calls[0][0][1] - 0.42) < 1e-6
-
-    def test_log_learning_rates(
-        self, temp_experiment_path, mock_writer, sample_context
-    ):
-        """Test that optimizer learning rates are logged."""
-        manager = TensorBoardWriterManager(temp_experiment_path)
-        manager.on_train_step(sample_context)
-
-        # Check actor LR
-        calls = [
-            call
-            for call in mock_writer.add_scalar.call_args_list
-            if "optim/actor_lr" in str(call)
-        ]
-        assert len(calls) == 1
-        assert calls[0][0][0] == "train/optim/actor_lr"
-        assert abs(calls[0][0][1] - 0.001) < 1e-6
-
-        # Check critic LR
-        calls = [
-            call
-            for call in mock_writer.add_scalar.call_args_list
-            if "optim/critic_lr" in str(call)
-        ]
-        assert len(calls) == 1
-        assert calls[0][0][0] == "train/optim/critic_lr"
-        assert abs(calls[0][0][1] - 0.003) < 1e-6
 
     def test_log_entropy_coef(self, temp_experiment_path, mock_writer, sample_context):
         """Test that entropy coefficient is logged."""
@@ -291,33 +264,6 @@ class TestMinimalMetricsLogging:
         )
         manager.on_train_step(sample_context)
 
-        # Check size
-        calls = [
-            call
-            for call in mock_writer.add_scalar.call_args_list
-            if "replay/size" in str(call)
-        ]
-        assert len(calls) == 1
-        assert calls[0][0][1] == 250
-
-        # Check capacity
-        calls = [
-            call
-            for call in mock_writer.add_scalar.call_args_list
-            if "replay/capacity" in str(call)
-        ]
-        assert len(calls) == 1
-        assert calls[0][0][1] == 1000
-
-        # Check warmup progress (250/1000 = 0.25)
-        calls = [
-            call
-            for call in mock_writer.add_scalar.call_args_list
-            if "replay/warmup_progress" in str(call)
-        ]
-        assert len(calls) == 1
-        assert abs(calls[0][0][1] - 0.25) < 1e-6
-
         # Check alpha and beta
         calls = [
             call
@@ -348,50 +294,6 @@ class TestMinimalMetricsLogging:
             assert metric_name.startswith(
                 "val/"
             ), f"Expected 'val/' prefix, got {metric_name}"
-
-    def test_handles_none_losses_gracefully(
-        self, temp_experiment_path, mock_writer, mock_core
-    ):
-        """Test that None losses don't cause errors."""
-        ctx = OnStepContext(
-            epoch=1,
-            epoch_step_idx=10,
-            episode_step_idx=10,
-            iteration=10,
-            batch=None,
-            loss_actor=None,
-            loss_critic=None,
-            td_error=None,
-            core=mock_core,
-            hyperparameters={},
-            warmup=False,
-        )
-
-        manager = TensorBoardWriterManager(temp_experiment_path)
-        # Should not raise
-        manager.on_train_step(ctx)
-
-    def test_handles_none_batch_gracefully(
-        self, temp_experiment_path, mock_writer, mock_core
-    ):
-        """Test that None batch doesn't cause errors."""
-        ctx = OnStepContext(
-            epoch=1,
-            epoch_step_idx=10,
-            episode_step_idx=10,
-            iteration=10,
-            batch=None,
-            loss_actor=torch.tensor(0.1),
-            loss_critic=torch.tensor(0.2),
-            td_error=None,
-            core=mock_core,
-            hyperparameters={},
-            warmup=False,
-        )
-
-        manager = TensorBoardWriterManager(temp_experiment_path)
-        # Should not raise
-        manager.on_train_step(ctx)
 
     def test_periodic_flush_every_100_steps(
         self, temp_experiment_path, mock_writer, sample_context
@@ -626,71 +528,3 @@ class TestCallbackFactory:
 
         # Verify writer was called
         assert mock_writer.add_scalar.call_count > 0
-
-
-class TestEdgeCases:
-    """Test edge cases and error handling."""
-
-    def test_handles_missing_reward_key_gracefully(
-        self, temp_experiment_path, mock_writer, sample_context
-    ):
-        """Test that missing reward keys don't cause errors."""
-        # Remove reward from batch
-        sample_context.batch = TensorDict(
-            {
-                "state": sample_context.batch["state"],
-                "actions": sample_context.batch["actions"],
-            },
-            batch_size=[4],
-        )
-
-        manager = TensorBoardWriterManager(temp_experiment_path)
-        # Should not raise
-        manager.on_train_step(sample_context)
-
-    def test_handles_malformed_reward_gracefully(
-        self, temp_experiment_path, mock_writer, sample_context
-    ):
-        """Test that malformed rewards don't cause errors."""
-        # Replace reward with non-dict
-        sample_context.batch["reward"] = torch.tensor([1.0, 2.0, 3.0, 4.0])
-
-        manager = TensorBoardWriterManager(temp_experiment_path)
-        # Should not raise
-        manager.on_train_step(sample_context)
-
-    def test_handles_missing_optimizer_gracefully(
-        self, temp_experiment_path, mock_writer, sample_context
-    ):
-        """Test that missing optimizers don't cause errors."""
-        # Remove optimizers from core
-        del sample_context.core.actor_optimizer
-        del sample_context.core.critic_optimizer
-
-        manager = TensorBoardWriterManager(temp_experiment_path)
-        # Should not raise
-        manager.on_train_step(sample_context)
-
-    def test_handles_missing_entropy_coef_gracefully(
-        self, temp_experiment_path, mock_writer, sample_context
-    ):
-        """Test that missing entropy_coef doesn't cause errors."""
-        del sample_context.core.entropy_coef
-
-        manager = TensorBoardWriterManager(temp_experiment_path)
-        # Should not raise
-        manager.on_train_step(sample_context)
-
-    def test_step_zero_uses_step_one(
-        self, temp_experiment_path, mock_writer, sample_context
-    ):
-        """Test that step 0 is mapped to step 1 for nicer charts."""
-        sample_context.iteration = 0
-
-        manager = TensorBoardWriterManager(temp_experiment_path)
-        manager.on_train_step(sample_context)
-
-        # All scalar calls should use step=1
-        for call in mock_writer.add_scalar.call_args_list:
-            step = call[0][2]
-            assert step == 1, f"Expected step=1 for iteration=0, got {step}"

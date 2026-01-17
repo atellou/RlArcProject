@@ -184,6 +184,7 @@ def build_core(grid_size: int = 12, color_values: int = 7) -> D4PGCore:
         max_grad_norm=0.0,
         amp_enabled=config["amp_enabled"],
         device_config=config,
+        model_update_frequency=1,
     )
     return core
 
@@ -205,6 +206,8 @@ def test_checkpoint_and_load(from_path: bool, tmp_path: Path):
         "actor_scheduler",
         "critic_scheduler",
         "hyperparameters",
+        "update_counter",
+        "accumulated_steps",
     }
 
     # Optionally save to disk and prepare load input
@@ -373,10 +376,12 @@ def test_compute_loss_training_updates_and_finite(core_setup):
         p.detach().clone() for p in core.critic.parameters() if p.requires_grad
     ][:3]
 
-    loss_actor, loss_critic, td_error = core.compute_loss(
-        batch,
-        training=True,
-    )
+    for _ in range(10):
+        loss_actor, loss_critic, td_error = core.compute_loss(
+            batch,
+            training=True,
+            force_update=True,
+        )
 
     # Losses are finite
     assert torch.isfinite(loss_actor).all()
