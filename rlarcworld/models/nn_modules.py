@@ -8,7 +8,6 @@ attention, and cross-attention classifier heads.
 from __future__ import annotations
 
 import logging
-from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
@@ -802,6 +801,72 @@ class RlArcWorldViTARC(nn.Module):
         """Enable example embedding cache for reuse across steps."""
         self._cache_valid = True
 
+    def _encode_example_batch(
+        self,
+        ex_batch: torch.Tensor,
+    ) -> torch.Tensor:
+        """Encode a batch of example pairs and return concatenated hidden states.
+
+        Args:
+            ex_batch: Example batch tensor with shape [B, E, 2, H, W]
+
+        Returns:
+            Concatenated hidden states with shape [B, E*seq_len, d_model]
+        """
+        bsz, ex_count = ex_batch.shape[:2]
+        if ex_count == 0:
+            # Return a correctly-shaped empty tensor for concatenation.
+            device = ex_batch.device
+            return torch.empty((bsz, 0, self.t5_config.d_model), device=device)
+
+        ex_flat = ex_batch.reshape(bsz * ex_count, *ex_batch.shape[2:])
+        ex_ids, ex_mask, ex_obj_idx = self.grid_encoder.encode_example_pair(ex_flat)
+
+        # compression
+        if self.grid_compression_tokens is not None:
+            ex_embeds = self.embed_tokens(ex_ids)
+            if self.compression_method == "learned":
+                ex_embeds = self.example_compressor(ex_embeds, mask=ex_mask)
+            else:
+                ex_embeds = self.example_projection(ex_embeds)
+                ex_embeds = self.example_pooling(ex_embeds.transpose(1, 2)).transpose(
+                    1, 2
+                )
+            ex_mask = torch.ones(
+                bsz * ex_count,
+                self.example_compression_tokens,
+                dtype=ex_mask.dtype,
+                device=ex_mask.device,
+            )
+            if ex_obj_idx is not None and self.use_ope:
+                ex_obj_idx = (
+                    torch.nn.functional.adaptive_max_pool1d(
+                        ex_obj_idx.unsqueeze(1).float(),
+                        output_size=self.example_compression_tokens,
+                    )
+                    .squeeze(1)
+                    .long()
+                )
+            else:
+                ex_obj_idx = None
+            ex_output = self.encoder(
+                inputs_embeds=ex_embeds,
+                attention_mask=ex_mask,
+                object_idx=ex_obj_idx,
+                return_dict=True,
+            )
+        else:
+            ex_output = self.encoder(
+                input_ids=ex_ids,
+                attention_mask=ex_mask,
+                object_idx=ex_obj_idx,
+                return_dict=True,
+            )
+
+        h = ex_output.last_hidden_state  # [B*E, seq_len, d_model]
+        h = h.reshape(bsz, ex_count * h.size(1), h.size(2))
+        return h
+
     def _encode_examples(self, examples: torch.Tensor) -> torch.Tensor:
         """Encode example pairs and return concatenated hidden states.
 
@@ -820,66 +885,13 @@ class RlArcWorldViTARC(nn.Module):
             return self._example_cache[cache_key]
 
         logger.debug("Example cache MISS (key=%s)", cache_key)
-        hidden_list: list[torch.Tensor] = []
-        for ex_idx in range(num_examples):
-            grad_ctx = (
-                nullcontext()
-                if ex_idx < self.max_learnable_examples
-                else torch.no_grad()
-            )
-            with grad_ctx:
-                ex_pair = examples[:, ex_idx]
-                ex_ids, ex_mask, ex_obj_idx = self.grid_encoder.encode_example_pair(
-                    ex_pair
-                )
+        learnable_examples = min(int(self.max_learnable_examples), int(num_examples))
 
-                # compression
-                if self.grid_compression_tokens is not None:
-                    ex_embeds = self.embed_tokens(ex_ids)
-                    if self.compression_method == "learned":
-                        ex_embeds = self.example_compressor(ex_embeds, mask=ex_mask)
-                    else:
-                        ex_embeds = self.example_projection(ex_embeds)
-                        ex_embeds = self.example_pooling(
-                            ex_embeds.transpose(1, 2)
-                        ).transpose(1, 2)
-                    ex_mask = torch.ones(
-                        batch_size,
-                        self.example_compression_tokens,
-                        dtype=ex_mask.dtype,
-                        device=ex_mask.device,
-                    )
-                    if ex_obj_idx is not None and self.use_ope:
-                        ex_obj_idx = (
-                            torch.nn.functional.adaptive_max_pool1d(
-                                ex_obj_idx.unsqueeze(1).float(),
-                                output_size=self.example_compression_tokens,
-                            )
-                            .squeeze(1)
-                            .long()
-                        )
-                    else:
-                        ex_obj_idx = None
-                    ex_output = self.encoder(
-                        inputs_embeds=ex_embeds,
-                        attention_mask=ex_mask,
-                        object_idx=ex_obj_idx,
-                        return_dict=True,
-                    )
-                else:
-                    ex_output = self.encoder(
-                        input_ids=ex_ids,
-                        attention_mask=ex_mask,
-                        object_idx=ex_obj_idx,
-                        return_dict=True,
-                    )
-                h = ex_output.last_hidden_state
-            # Detach if beyond learnable quota
-            if ex_idx >= self.max_learnable_examples:
-                h = h.detach()
-            hidden_list.append(h)
+        hidden_learnable = self._encode_example_batch(examples[:, :learnable_examples])
+        with torch.no_grad():
+            hidden_frozen = self._encode_example_batch(examples[:, learnable_examples:])
 
-        hidden = torch.cat(hidden_list, dim=1)
+        hidden = torch.cat([hidden_learnable, hidden_frozen], dim=1)
         self._example_cache[cache_key] = hidden.detach()
         return hidden
 

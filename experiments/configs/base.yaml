@@ -26,7 +26,7 @@ network:
   example_compression_tokens: 32
   grid_compression_tokens: 128
   compression_method: "learned"
-  max_learnable_examples: 1
+  max_learnable_examples: 2
 
 
 d4pg:
