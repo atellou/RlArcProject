@@ -27,7 +27,7 @@ def _make_actor(grid_size: int, color_values: int, device: torch.device) -> ViTA
     )
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
         device_config={
             "device": str(device),
             "amp_enabled": False,
@@ -201,7 +201,7 @@ def test_env_stepper_multiple_steps_with_on_step(device):
 
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
     ).to(device)
     actor.eval()
 
@@ -304,7 +304,7 @@ def test_env_stepper_episode_stream(device):
 
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
     ).to(device)
     actor.eval()
 
@@ -407,7 +407,7 @@ def test_env_stepper_step_stream_from_samples(device):
 
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
     ).to(device)
     actor.eval()
 

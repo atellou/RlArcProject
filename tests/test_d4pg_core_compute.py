@@ -47,7 +47,7 @@ def core_setup(request):
     )
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
         device_config=CudaConfig(
             device=device,
             amp_enabled=config["amp_enabled"],
@@ -61,7 +61,7 @@ def core_setup(request):
     v_max = {"pixel_wise": 2, "binary": 1}
     critic = VitARCCritic(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,
@@ -150,7 +150,7 @@ def build_core(grid_size: int = 12, color_values: int = 7) -> D4PGCore:
 
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
     ).to(config["device"])
     actor.eval()
 
@@ -159,7 +159,7 @@ def build_core(grid_size: int = 12, color_values: int = 7) -> D4PGCore:
     v_max = {"pixel_wise": 2, "binary": 1}
     critic = VitARCCritic(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,

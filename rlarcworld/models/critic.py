@@ -37,7 +37,7 @@ class VitARCCritic(torch.nn.Module):
     def __init__(
         self,
         color_values: int,
-        rl_vit_arc_config: RlArcWorldViTARCConfig,
+        rl_vit_arc: RlArcWorldViTARCConfig | RlArcWorldViTARC,
         num_atoms: dict[str, int],
         v_min: dict[str, int],
         v_max: dict[str, int],
@@ -52,13 +52,25 @@ class VitARCCritic(torch.nn.Module):
                 for each reward type.
             v_min (Dict[str, int]): The minimum value for each reward type.
             v_max (Dict[str, int]): The maximum value for each reward type.
-            rl_vit_arc_config (RlArcWorldViTARCConfig): The ViTARC configuration.
+            rl_vit_arc: Configuration for the ViTARC model or the model itself.
             device_config (CudaConfig, optional): CUDA configuration. Defaults to None.
         """
         super().__init__()
+        if isinstance(rl_vit_arc, RlArcWorldViTARC):
+            self.rl_vit_arc_config = rl_vit_arc.config
+            self.rl_vit_arc = rl_vit_arc
+        else:
+            self.rl_vit_arc_config = rl_vit_arc
+            self.rl_vit_arc = RlArcWorldViTARC(
+                self.rl_vit_arc_config,
+                verbose=True,
+                checkpoint=device_config.get("use_checkpointing", False)
+                if device_config
+                else False,
+            )
+
         self.num_atoms = num_atoms
-        self.rl_vit_arc_config = rl_vit_arc_config
-        self.grid_size = rl_vit_arc_config.grid_size
+        self.grid_size = self.rl_vit_arc_config.grid_size
         self.color_values = color_values
         self.v_min = v_min
         self.v_max = v_max
@@ -82,23 +94,14 @@ class VitARCCritic(torch.nn.Module):
             ActionKeys.SUBMIT.value,
         ]
 
-        # Shared ViTARC encoder for state processing
-        self.rl_vit_arc = RlArcWorldViTARC(
-            rl_vit_arc_config,
-            verbose=True,
-            checkpoint=device_config.get("use_checkpointing", False)
-            if device_config
-            else False,
-        )
-
         # Critic head that converts encoder output + actions into Q-distributions
         self.critic_head = CriticHeadFromEncoder(
-            hidden_size=rl_vit_arc_config.d_model,
+            hidden_size=self.rl_vit_arc_config.d_model,
             grid_size=self.grid_size,
             color_values=self.color_values,
             num_atoms=self.num_atoms,
-            num_heads=rl_vit_arc_config.num_heads,
-            dropout=rl_vit_arc_config.dropout,
+            num_heads=self.rl_vit_arc_config.num_heads,
+            dropout=self.rl_vit_arc_config.dropout,
         )
 
         self.to(self.device)

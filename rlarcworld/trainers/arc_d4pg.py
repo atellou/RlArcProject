@@ -44,6 +44,7 @@ from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelSte
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.models.critic import VitARCCritic
+from rlarcworld.models.nn_modules import RlArcWorldViTARC
 from rlarcworld.models.reward_world_model import RewardWorldModel
 from rlarcworld.trainers.core import OnStepContext, ReplayBufferProto, Trainer
 from rlarcworld.utils.checkpointing import (
@@ -205,10 +206,21 @@ class ArcD4PG:
             config.env.grid_size
         )
 
+        if config.d4pg.share_network:
+            self.rl_vit_arc = RlArcWorldViTARC(
+                self.rl_vit_arc_config,
+                verbose=True,
+                checkpoint=self.cuda_config.get("use_checkpointing", False)
+                if self.cuda_config
+                else False,
+            )
+
         logger.info("Creating actor network...")
         self.actor = ViTARCActor(
             color_values=config.env.color_values,
-            rl_vit_arc_config=self.rl_vit_arc_config,
+            rl_vit_arc=self.rl_vit_arc
+            if config.d4pg.share_network
+            else self.rl_vit_arc_config,
             device_config=self.cuda_config,
         )
         logger.info("Actor network created successfully")
@@ -225,7 +237,9 @@ class ArcD4PG:
         logger.info("Creating critic network...")
         self.critic = VitARCCritic(
             color_values=config.env.color_values,
-            rl_vit_arc_config=self.rl_vit_arc_config,
+            rl_vit_arc=self.rl_vit_arc_config
+            if not config.d4pg.share_network
+            else self.rl_vit_arc,
             num_atoms=config.distributional.num_atoms,
             v_min=config.distributional.v_min,
             v_max=config.distributional.v_max,
@@ -328,6 +342,9 @@ class ArcD4PG:
             critic=self.critic,
             policy_lr=config.d4pg.policy_lr,
             critic_lr=config.d4pg.critic_lr,
+            shared_params=self.rl_vit_arc.parameters()
+            if config.d4pg.share_network
+            else None,
             gamma=config.d4pg.gamma,
             tau=config.d4pg.tau,
             lr_scheduler_kwargs=config.d4pg.lr_scheduler_kwargs,

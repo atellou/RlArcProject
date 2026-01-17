@@ -58,34 +58,38 @@ class ViTARCActor(nn.Module):
     def __init__(
         self,
         color_values: int,
-        rl_vit_arc_config: RlArcWorldViTARCConfig,
+        rl_vit_arc: RlArcWorldViTARCConfig | RlArcWorldViTARC,
         device_config: CudaConfig | None = None,
     ):
         """Initialize the ViTARC actor.
 
         Args:
             color_values: Number of colors (default 11 for ARC).
-            rl_vit_arc_config: Configuration for the ViTARC model.
+            rl_vit_arc: Configuration for the ViTARC model or the model itself.
             device_config: CUDA configuration for device management.
         """
         super().__init__()
-        self.rl_vit_arc_config = rl_vit_arc_config
-        self.rl_vit_arc = RlArcWorldViTARC(
-            rl_vit_arc_config,
-            verbose=True,
-            checkpoint=device_config.get("use_checkpointing", False)
-            if device_config
-            else False,
-        )
+        if isinstance(rl_vit_arc, RlArcWorldViTARC):
+            self.rl_vit_arc_config = rl_vit_arc.config
+            self.rl_vit_arc = rl_vit_arc
+        else:
+            self.rl_vit_arc_config = rl_vit_arc
+            self.rl_vit_arc = RlArcWorldViTARC(
+                self.rl_vit_arc_config,
+                verbose=True,
+                checkpoint=device_config.get("use_checkpointing", False)
+                if device_config
+                else False,
+            )
 
         # Action heads
         self.action_head_keys = set(ACTION_KEYS_SET)
         self.action_heads = ActionHeadFromEncoder(
-            hidden_size=rl_vit_arc_config.d_model,
-            grid_size=rl_vit_arc_config.grid_size,
+            hidden_size=self.rl_vit_arc_config.d_model,
+            grid_size=self.rl_vit_arc_config.grid_size,
             color_values=color_values,
-            num_heads=rl_vit_arc_config.num_heads,
-            dropout=rl_vit_arc_config.dropout,
+            num_heads=self.rl_vit_arc_config.num_heads,
+            dropout=self.rl_vit_arc_config.dropout,
         )
 
         # Device configuration
@@ -234,7 +238,7 @@ class ViTARCActorFromPretrained(ViTARCActor):
 
         actor = cls(
             color_values=color_values,
-            rl_vit_arc_config=rl_vit_arc_config,
+            rl_vit_arc=rl_vit_arc_config,
             device_config=config,
         )
 

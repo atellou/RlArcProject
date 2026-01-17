@@ -87,7 +87,7 @@ def rl_vit_arc_config(grid_size) -> RlArcWorldViTARCConfig:
 def actor(device, color_values, rl_vit_arc_config) -> ViTARCActor:
     return ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=rl_vit_arc_config,
+        rl_vit_arc=rl_vit_arc_config,
         device_config={
             "device": str(device),
             "amp_enabled": False,
@@ -103,7 +103,7 @@ def critic(device, color_values, rl_vit_arc_config) -> VitARCCritic:
     v_max = {RewardKeys.PIXEL_WISE.value: 2, RewardKeys.BINARY.value: 1}
     return VitARCCritic(
         color_values=color_values,
-        rl_vit_arc_config=rl_vit_arc_config,
+        rl_vit_arc=rl_vit_arc_config,
         num_atoms=num_atoms,
         v_min=v_min,
         v_max=v_max,

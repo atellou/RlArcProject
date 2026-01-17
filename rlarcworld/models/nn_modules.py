@@ -641,6 +641,7 @@ class RlArcWorldViTARC(nn.Module):
         """
         super().__init__()
         self.action_head_keys = set(ACTION_KEYS_SET)
+        self.config = config
 
         # Use best config from paper if not specified
         ape_type = config.ape_type or self.BEST_APE_TYPE

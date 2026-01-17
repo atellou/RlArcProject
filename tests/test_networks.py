@@ -203,7 +203,7 @@ def train_vitarc_actor(batch_size: int, device: str = "cpu"):
     # Use minimal config for faster training
     network = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=rl_vit_arc_config,
+        rl_vit_arc=rl_vit_arc_config,
         device_config=device_config,
     )
 
@@ -979,7 +979,7 @@ class TestViTARCActor:
         # Create actor with minimal config for faster test
         network = ViTARCActor(
             color_values=color_values,
-            rl_vit_arc_config=rl_vit_arc_config,
+            rl_vit_arc=rl_vit_arc_config,
         )
 
         input_sample = TensorDict(

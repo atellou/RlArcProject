@@ -23,13 +23,14 @@ network:
   use_index_grid: true
   use_temporal: true
   use_examples: true
-  example_compression_tokens: 16
+  example_compression_tokens: 32
   grid_compression_tokens: 128
   compression_method: "learned"
   max_learnable_examples: 1
 
 
 d4pg:
+  share_network: true
   policy_lr: 3.0e-4
   critic_lr: 3.0e-3
   gamma: 0.99
@@ -94,7 +95,7 @@ logging:
 system:
   amp_enabled: true
   use_checkpointing: true
-  fsdp_enabled: false
+  fsdp_enabled: true
   device: null
 
 reproducibility:

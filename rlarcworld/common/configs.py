@@ -187,6 +187,7 @@ class D4PGConfig:
     """D4PG algorithm configuration.
 
     Attributes:
+        share_network (bool): Whether to share the network between actor and critic.
         policy_lr (float): Learning rate for the policy.
         critic_lr (float): Learning rate for the critic.
         gamma (float): Discount factor.
@@ -201,6 +202,7 @@ class D4PGConfig:
         max_grad_norm (float): Maximum gradient norm for clipping.
     """
 
+    share_network: bool = True
     policy_lr: float = 3e-4
     critic_lr: float = 3e-3
     gamma: float = 0.99

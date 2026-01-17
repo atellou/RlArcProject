@@ -331,11 +331,11 @@ def _build_simple_core(
     )
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=rl_vit_arc_config,
+        rl_vit_arc=rl_vit_arc_config,
     ).to(device)
     critic = VitARCCritic(
         color_values=color_values,
-        rl_vit_arc_config=rl_vit_arc_config,
+        rl_vit_arc=rl_vit_arc_config,
         num_atoms={"pixel_wise": 51, "binary": 3},
         v_min={"pixel_wise": -40, "binary": 0},
         v_max={"pixel_wise": 2, "binary": 1},

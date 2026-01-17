@@ -2,8 +2,9 @@
 
 import copy
 import logging
+from inspect import Parameter
 from pathlib import Path
-from typing import cast
+from typing import Iterable, cast
 
 import torch
 import torch.distributed as dist
@@ -46,6 +47,7 @@ class D4PGCore:
         *,
         policy_lr: float = 3e-4,
         critic_lr: float = 3e-3,
+        shared_params: Iterable[Parameter] | None = None,
         lr_scheduler_kwargs: dict | None = None,
         gamma: float = 0.99,
         tau: float = 0.005,
@@ -71,6 +73,8 @@ class D4PGCore:
                 Defaults to 3e-4.
             critic_lr (float, optional): Learning rate for critic network.
                 Defaults to 3e-3.
+            shared_params (Iterable[Parameter]): List of parameters shared by
+                actor and critic networks.
             lr_scheduler_kwargs (Optional[Dict], optional): Keyword arguments
                 for learning rate scheduler StepLR. Defaults to None.
             gamma (float, optional): Discount factor. Defaults to 0.99.
@@ -283,7 +287,8 @@ class D4PGCore:
         self.critic_target.to(self.device).eval()
 
         # Optimizers and schedulers
-        self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=policy_lr)
+        self.shared_params = shared_params
+        self.actor_optimizer = self._build_actor_optimizer(policy_lr)
         self.critic_optimizer = optim.AdamW(self.critic.parameters(), lr=critic_lr)
 
         self._t0_actor_lr = policy_lr
@@ -301,6 +306,12 @@ class D4PGCore:
 
         # Loss
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
+
+    def _build_actor_optimizer(self, lr: float) -> optim.AdamW:
+        if self.shared_params is None:
+            return optim.AdamW(self.actor.parameters(), lr=lr)
+        actor_head = [p for p in self.actor.parameters() if p not in self.shared_params]
+        return optim.AdamW(actor_head, lr=lr)
 
     def _fsdp_full_state_dict(self, module: torch.nn.Module) -> dict:
         if not self._using_fsdp or self._FSDP is None:

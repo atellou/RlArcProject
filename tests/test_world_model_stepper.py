@@ -68,7 +68,7 @@ def actor(grid_size, color_values, config):
 
     actor = ViTARCActor(
         color_values=color_values,
-        rl_vit_arc_config=actor_config,
+        rl_vit_arc=actor_config,
     ).to(config["device"])
     actor.eval()
     return actor
