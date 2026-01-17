@@ -18,7 +18,6 @@ algorithm.
 import logging
 
 import torch
-import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys, StateKeys
@@ -84,7 +83,13 @@ class VitARCCritic(torch.nn.Module):
         ]
 
         # Shared ViTARC encoder for state processing
-        self.rl_vit_arc = RlArcWorldViTARC(rl_vit_arc_config, verbose=True)
+        self.rl_vit_arc = RlArcWorldViTARC(
+            rl_vit_arc_config,
+            verbose=True,
+            checkpoint=device_config.get("use_checkpointing", False)
+            if device_config
+            else False,
+        )
 
         # Critic head that converts encoder output + actions into Q-distributions
         self.critic_head = CriticHeadFromEncoder(
@@ -197,12 +202,19 @@ class VitARCCritic(torch.nn.Module):
         self.input_val(state)
 
         # Encode state using shared ViTARC encoder
-        if self.device_config.get("use_checkpointing"):
-            vitarc_output = checkpoint.checkpoint(
-                self.rl_vit_arc, state, use_reentrant=False
+        example_hidden = None
+        if (
+            self.rl_vit_arc.use_examples
+            and state.get(StateKeys.EXAMPLES.value) is not None
+        ):
+            example_hidden = self.rl_vit_arc._encode_examples(
+                state[StateKeys.EXAMPLES.value]
             )
-        else:
-            vitarc_output = self.rl_vit_arc(state)
+
+        vitarc_output = self.rl_vit_arc(
+            state,
+            example_hidden=example_hidden,
+        )
 
         # Use critic head to produce per-reward distributions
         action = action.to(current_device)

@@ -7,7 +7,7 @@ env:
   grid_size: 30
   color_values: 10
   max_penalty: 1.0
-  batch_size: 64
+  batch_size: 32
 
 network:
   d_model: 128
@@ -23,7 +23,7 @@ network:
   use_index_grid: true
   use_temporal: true
   use_examples: true
-  example_compression_tokens: 64
+  example_compression_tokens: 16
   grid_compression_tokens: 128
   compression_method: "learned"
 
@@ -41,7 +41,8 @@ d4pg:
   entropy_coef: 0.0
   entropy_coef_decay: 1.0
   target_update_frequency: 10
-  model_update_frequency: 32
+  model_update_frequency: 4
+  cache_enabled: true
   max_grad_norm: 0.0
 
 distributional:
@@ -93,7 +94,7 @@ system:
   amp_enabled: true
   use_checkpointing: true
   fsdp_enabled: false
-  device: "cpu"
+  device: null
 
 reproducibility:
   global_seed: null

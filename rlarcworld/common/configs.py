@@ -1,5 +1,6 @@
 """Common configurations."""
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -8,6 +9,8 @@ import torch
 from transformers.modeling_outputs import BaseModelOutput
 
 from rlarcworld.common.enums import RewardKeys
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -210,7 +213,8 @@ class D4PGConfig:
     entropy_coef: float = 0.0
     entropy_coef_decay: float = 1.0
     target_update_frequency: int = 10
-    model_update_frequency: int = 32
+    model_update_frequency: int = 1
+    cache_enabled: bool = False
     max_grad_norm: float = 0.0
 
 
@@ -432,6 +436,15 @@ class ArcD4PGConfig:
         """Get a validated version of the configuration."""
         self.network.grid_size = self.env.grid_size
         self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
+
+        if self.d4pg.model_update_frequency == 0:
+            self.d4pg.model_update_frequency = 1
+
+        if self.d4pg.model_update_frequency > 1:
+            logger.warning(
+                "Model update frequency is greater than 1. Enabling example cache."
+            )
+            self.d4pg.cache_enabled = True
 
         if self.d4pg.n_step_config.n_steps > 1:
             step_keys = RewardKeys.get_n_step_keys()

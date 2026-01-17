@@ -73,7 +73,7 @@ class PixelWiseArcStepper:
         # IMPORTANT: ArcSampleTransformer must come FIRST to convert lists to tensors
         # and apply the padding and zero-based correction.
         # Then augmentation can operate on the tensor data.
-        transform = [
+        transform: list[Callable[[dict], dict]] = [
             ArcSampleTransformer(
                 output_size=(grid_size, grid_size),
                 padding_constant_value=-1,

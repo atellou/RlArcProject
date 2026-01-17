@@ -56,6 +56,7 @@ class D4PGCore:
         entropy_coef_decay: float = 1.0,
         target_update_frequency: int = 10,
         model_update_frequency: int = 1,
+        cache_enabled: bool = False,
         device_config: CudaConfig | None = None,
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
@@ -94,6 +95,7 @@ class D4PGCore:
                 network updates. Defaults to 10.
             model_update_frequency (int, optional): Frequency of model weight
                 updates (backward passes). Defaults to 1 (update every step).
+            cache_enabled (bool, optional): Enable caching for imagined rollouts.
             compute_td_error (bool, optional): Whether to compute TD error.
                 Defaults to True.
         """
@@ -136,11 +138,12 @@ class D4PGCore:
         self.model_update_frequency = model_update_frequency
         self._update_counter = 0
         self._accumulated_steps = 0
+        self.cache_enabled = cache_enabled
 
         self._loss_actor_window_sum = 0.0
         self._loss_critic_window_sum = 0.0
-        self.loss_actor_window_avg = None
-        self.loss_critic_window_avg = None
+        self.loss_actor_window_avg: float | None = None
+        self.loss_critic_window_avg: float | None = None
 
         # Networks
         self.actor = actor.to(self.device)
@@ -452,9 +455,9 @@ class D4PGCore:
         Returns:
             TensorDict: Actor loss.
         """
-        assert not self.carsm or target_q is not None, (
-            "target_q must be provided when using CARSM loss."
-        )
+        assert (
+            not self.carsm or target_q is not None
+        ), "target_q must be provided when using CARSM loss."
 
         # Action probabilities
         if action_probs is None:
@@ -586,16 +589,6 @@ class D4PGCore:
                 self.amp_scaler.scale(loss_actor_scaled).backward()
                 self._accumulated_steps += 1
 
-                # Window averages for logging
-                self._loss_actor_window_sum += float(loss_actor.detach())
-                self._loss_critic_window_sum += float(loss_critic.detach())
-                self.loss_actor_window_avg = (
-                    self._loss_actor_window_sum / self._accumulated_steps
-                )
-                self.loss_critic_window_avg = (
-                    self._loss_critic_window_sum / self._accumulated_steps
-                )
-
                 # Step optimizer only after accumulating N gradients
                 if should_step:
                     # Clip gradients if needed
@@ -613,18 +606,29 @@ class D4PGCore:
                     self.amp_scaler.step(self.actor_optimizer)
                     self.amp_scaler.update()
 
-                    logger.info(
-                        f"Model stepped (counter={self._update_counter}, "
-                        f"accumulated={self._accumulated_steps}), clearing cache"
-                    )
-                    self.actor.clear_example_cache()
-                    self.critic.clear_example_cache()
-                    self.actor.enable_example_cache()
-                    self.critic.enable_example_cache()
+                    if self.cache_enabled:
+                        logger.info(
+                            f"Model stepped (counter={self._update_counter}, "
+                            f"accumulated={self._accumulated_steps}), clearing cache"
+                        )
+                        # Window averages for logging
+                        self._loss_actor_window_sum += float(loss_actor.detach())
+                        self._loss_critic_window_sum += float(loss_critic.detach())
+                        self.loss_actor_window_avg = (
+                            self._loss_actor_window_sum / self._accumulated_steps
+                        )
+                        self.loss_critic_window_avg = (
+                            self._loss_critic_window_sum / self._accumulated_steps
+                        )
+                        self.actor.clear_example_cache()
+                        self.critic.clear_example_cache()
+                        self.actor.enable_example_cache()
+                        self.critic.enable_example_cache()
                 else:
                     # Keep cache enabled during accumulation to allow cache hits
-                    self.actor.enable_example_cache()
-                    self.critic.enable_example_cache()
+                    if self.cache_enabled:
+                        self.actor.enable_example_cache()
+                        self.critic.enable_example_cache()
             else:
                 loss_actor_td = self.compute_actor_loss(
                     batch["state"],

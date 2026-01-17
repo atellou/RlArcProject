@@ -340,6 +340,7 @@ class ArcD4PG:
             entropy_coef_decay=config.d4pg.entropy_coef_decay,
             target_update_frequency=config.d4pg.target_update_frequency,
             model_update_frequency=config.d4pg.model_update_frequency,
+            cache_enabled=config.d4pg.cache_enabled,
             max_grad_norm=config.d4pg.max_grad_norm,
             compute_td_error=config.d4pg.compute_td_error,
             **kwargs,
@@ -705,7 +706,8 @@ class ArcD4PG:
                     msg += (
                         f", Imaginations: {self.world_model_stepper.imagination_count}"
                     )
-                reward_td = ctx.batch["reward"]
+                batch: TensorDict = ctx.batch
+                reward_td: TensorDict = batch["reward"]
                 items_iter = reward_td.items() if hasattr(reward_td, "items") else []
                 reward_pairs: list[str] = []
                 for key, val in items_iter:
@@ -896,7 +898,7 @@ class ArcD4PG:
 
     def save_checkpoint(
         self,
-        checkpoint_path: str,
+        checkpoint_path: str | Path,
         *,
         save_replay_buffer: bool = False,
         include_core: bool = True,

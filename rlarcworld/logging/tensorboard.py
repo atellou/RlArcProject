@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional
 
 import torch
 import torch.optim as optim
+from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
 
 from rlarcworld.trainers.core import OnStepContext, ReplayBufferProto
@@ -169,7 +170,7 @@ class TensorBoardWriterManager:
             )
 
         # Reward heads: log per-batch average for each reward key
-        batch = ctx.batch
+        batch: TensorDict = ctx.batch
 
         reward_td = batch["reward"]
         # Handle dict-like rewards
@@ -214,7 +215,7 @@ class TensorBoardWriterManager:
             "Logging medium metrics for iteration %d [phase: %s]", iteration, phase
         )
 
-        batch = ctx.batch
+        batch: TensorDict = ctx.batch
         state = batch["state"]
         core = ctx.core
 

@@ -47,7 +47,7 @@ def enable_cuda(
     cuda_available = torch.cuda.is_available()
     mps_available = (
         bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
-    )  # type: ignore[attr-defined]
+    )
     if cuda_available and device_index is not None:
         # Ensure we query and use the intended device (e.g. LOCAL_RANK under torchrun)
         try:

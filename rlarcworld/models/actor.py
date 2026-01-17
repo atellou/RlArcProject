@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import StateKeys
@@ -71,7 +70,13 @@ class ViTARCActor(nn.Module):
         """
         super().__init__()
         self.rl_vit_arc_config = rl_vit_arc_config
-        self.rl_vit_arc = RlArcWorldViTARC(rl_vit_arc_config, verbose=True)
+        self.rl_vit_arc = RlArcWorldViTARC(
+            rl_vit_arc_config,
+            verbose=True,
+            checkpoint=device_config.get("use_checkpointing", False)
+            if device_config
+            else False,
+        )
 
         # Action heads
         self.action_head_keys = set(ACTION_KEYS_SET)
@@ -153,12 +158,19 @@ class ViTARCActor(nn.Module):
         self.input_val(state)
 
         # Encode state using shared ViTARC encoder
-        if self.device_config.get("use_checkpointing"):
-            vitarc_output = checkpoint.checkpoint(
-                self.rl_vit_arc, state, use_reentrant=False
+        example_hidden = None
+        if (
+            self.rl_vit_arc.use_examples
+            and state.get(StateKeys.EXAMPLES.value) is not None
+        ):
+            example_hidden = self.rl_vit_arc._encode_examples(
+                state[StateKeys.EXAMPLES.value]
             )
-        else:
-            vitarc_output = self.rl_vit_arc(state)
+
+        vitarc_output = self.rl_vit_arc(
+            state,
+            example_hidden=example_hidden,
+        )
 
         # Extract action logits from encoder hidden states
         action_logits = self.action_heads(

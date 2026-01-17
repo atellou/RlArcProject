@@ -345,9 +345,9 @@ class TestMinimalMetricsLogging:
         # Check that all scalars use 'val/' prefix
         for call in mock_writer.add_scalar.call_args_list:
             metric_name = call[0][0]
-            assert metric_name.startswith("val/"), (
-                f"Expected 'val/' prefix, got {metric_name}"
-            )
+            assert metric_name.startswith(
+                "val/"
+            ), f"Expected 'val/' prefix, got {metric_name}"
 
     def test_handles_none_losses_gracefully(
         self, temp_experiment_path, mock_writer, mock_core

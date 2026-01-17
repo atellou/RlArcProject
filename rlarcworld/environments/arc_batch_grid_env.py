@@ -92,26 +92,26 @@ class ArcBatchGridEnv(gym.Env):
             gamma (float, optional): Discount factor. Defaults to 1.0.
             device (str, optional): Device to use. Defaults to None.
         """
-        assert isinstance(grid_size, int) and grid_size > 0, (
-            "grid_size must be a positive int"
-        )
-        assert isinstance(color_values, int) and color_values > 0, (
-            "color_values must be a positive int"
-        )
-        assert isinstance(n_steps, int) and n_steps > 0, (
-            "n_steps must be a positive int"
-        )
-        assert isinstance(gamma, float) and gamma > 0 and gamma <= 1, (
-            "gamma must be a positive float lower or equal than 1.0"
-        )
+        assert (
+            isinstance(grid_size, int) and grid_size > 0
+        ), "grid_size must be a positive int"
+        assert (
+            isinstance(color_values, int) and color_values > 0
+        ), "color_values must be a positive int"
+        assert (
+            isinstance(n_steps, int) and n_steps > 0
+        ), "n_steps must be a positive int"
+        assert (
+            isinstance(gamma, float) and gamma > 0 and gamma <= 1
+        ), "gamma must be a positive float lower or equal than 1.0"
 
         self.device = device or enable_cuda().get("device")
 
         # N-step attributes
-        assert isinstance(max_penalty, float) and max_penalty >= 0, (
-            "max_penalty must be a float greater or equal than 0, got {}".format(
-                max_penalty
-            )
+        assert (
+            isinstance(max_penalty, float) and max_penalty >= 0
+        ), "max_penalty must be a float greater or equal than 0, got {}".format(
+            max_penalty
         )
         self.__max_penalty = max_penalty
         self.n_steps = n_steps
