@@ -56,7 +56,7 @@ class LearnedCompression(nn.Module):
         self.d_model = d_model
         self.num_compressed_tokens = num_compressed_tokens
 
-        # Learnable compression queries (using Embedding for FSDP compatibility)
+        # Learnable compression queries
         self.query_embeddings = nn.Embedding(num_compressed_tokens, d_model)
         nn.init.xavier_uniform_(self.query_embeddings.weight)
 
@@ -102,7 +102,7 @@ class LearnedCompression(nn.Module):
         if x.shape[2] != self.d_model:
             raise ValueError(f"Expected d_model={self.d_model}, got {x.shape[2]}")
 
-        # Get compression queries from embedding layer (FSDP-compatible)
+        # Get compression queries from embedding layer
         query_indices = torch.arange(
             self.num_compressed_tokens, dtype=torch.long, device=device
         )

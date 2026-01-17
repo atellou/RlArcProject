@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Iterable, cast
 
 import torch
-import torch.distributed as dist
 import torch.optim as optim
 from tensordict import TensorDict
 
@@ -62,7 +61,6 @@ class D4PGCore:
         device_config: CudaConfig | None = None,
         max_grad_norm: float = 0.0,
         amp_enabled: bool = True,
-        fsdp_enabled: bool = False,
     ) -> None:
         """Initialize the D4PGCore.
 
@@ -92,9 +90,6 @@ class D4PGCore:
                 0.0.
             amp_enabled (bool, optional): Whether to use automatic mixed
                 precision. Defaults to True.
-            fsdp_enabled (bool, optional): Enable FSDP wrapping when running
-                under torch.distributed to shard model/optimizer state across
-                GPUs. Defaults to False.
             target_update_frequency (int, optional): Frequency of target
                 network updates. Defaults to 10.
             model_update_frequency (int, optional): Frequency of model weight
@@ -114,20 +109,6 @@ class D4PGCore:
         )
         self.device = self.device_config["device"]
         self.amp_scaler = AmpScaler(amp_enabled=amp_enabled, device=self.device)
-
-        self.fsdp_enabled = bool(fsdp_enabled)
-        self._using_fsdp = (
-            self.fsdp_enabled
-            and dist.is_available()
-            and dist.is_initialized()
-            and str(self.device).startswith("cuda")
-        )
-        if self._using_fsdp:
-            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
-            self._FSDP = FSDP
-        else:
-            self._FSDP = None
 
         # Hyperparameters
         self.gamma = gamma
@@ -156,130 +137,6 @@ class D4PGCore:
         # Target networks
         self.actor_target = copy.deepcopy(self.actor)
         self.critic_target = copy.deepcopy(self.critic)
-
-        # Optional FSDP wrapping (shards params / grads / optimizer state)
-        if self._using_fsdp and self._FSDP is not None:
-            import functools
-
-            from transformers.models.t5.modeling_t5 import T5LayerNorm
-
-            device_id = torch.device(self.device)
-
-            # Collect embedding and small modules to exclude from FSDP wrapping
-            # Must collect both main and target networks since targets are deepcopies
-            from rlarcworld.models.nn_modules import LearnedCompression
-            from rlarcworld.models.vit_arc import (
-                CustomT5Attention,
-                CustomT5Block,
-                ViTARCEmbedding,
-            )
-
-            ignored_modules = []
-            # Collect from actor and actor_target
-            for module in self.actor.modules():
-                if isinstance(
-                    module,
-                    (
-                        LearnedCompression,
-                        CustomT5Attention,
-                        CustomT5Block,
-                        torch.nn.Embedding,
-                        torch.nn.EmbeddingBag,
-                        ViTARCEmbedding,
-                        torch.nn.LayerNorm,
-                        T5LayerNorm,
-                    ),
-                ):
-                    ignored_modules.append(module)
-            for module in self.actor_target.modules():
-                if isinstance(
-                    module,
-                    (
-                        LearnedCompression,
-                        CustomT5Attention,
-                        CustomT5Block,
-                        torch.nn.Embedding,
-                        torch.nn.EmbeddingBag,
-                        ViTARCEmbedding,
-                        torch.nn.LayerNorm,
-                        T5LayerNorm,
-                    ),
-                ):
-                    ignored_modules.append(module)
-            # Collect from critic and critic_target
-            for module in self.critic.modules():
-                if isinstance(
-                    module,
-                    (
-                        LearnedCompression,
-                        CustomT5Attention,
-                        CustomT5Block,
-                        torch.nn.Embedding,
-                        torch.nn.EmbeddingBag,
-                        ViTARCEmbedding,
-                        torch.nn.LayerNorm,
-                        T5LayerNorm,
-                    ),
-                ):
-                    ignored_modules.append(module)
-            for module in self.critic_target.modules():
-                if isinstance(
-                    module,
-                    (
-                        LearnedCompression,
-                        CustomT5Attention,
-                        CustomT5Block,
-                        torch.nn.Embedding,
-                        torch.nn.EmbeddingBag,
-                        ViTARCEmbedding,
-                        torch.nn.LayerNorm,
-                        T5LayerNorm,
-                    ),
-                ):
-                    ignored_modules.append(module)
-
-            # Custom policy: exclude embeddings but use size-based wrapping for others
-            def custom_fsdp_policy(
-                module, recurse, nonwrapped_numel, min_num_params=100_000_000
-            ):
-                # Never wrap embedding layers to prevent shape corruption
-                if isinstance(module, (torch.nn.Embedding, torch.nn.EmbeddingBag)):
-                    return False
-                # Use size-based wrapping for other modules
-                return nonwrapped_numel >= min_num_params
-
-            fsdp_wrap_policy = functools.partial(
-                custom_fsdp_policy, min_num_params=100_000_000
-            )
-
-            self.actor = self._FSDP(
-                self.actor,
-                device_id=device_id,
-                use_orig_params=True,
-                auto_wrap_policy=fsdp_wrap_policy,
-                ignored_modules=ignored_modules,
-            )
-            self.critic = self._FSDP(
-                self.critic,
-                device_id=device_id,
-                use_orig_params=True,
-                auto_wrap_policy=fsdp_wrap_policy,
-                ignored_modules=ignored_modules,
-            )
-            self.actor_target = self._FSDP(
-                self.actor_target.to(self.device).eval(),
-                device_id=device_id,
-                use_orig_params=True,
-                auto_wrap_policy=fsdp_wrap_policy,
-                ignored_modules=ignored_modules,
-            )
-            self.critic_target = self._FSDP(
-                self.critic_target.to(self.device).eval(),
-                device_id=device_id,
-                use_orig_params=True,
-                auto_wrap_policy=fsdp_wrap_policy,
-                ignored_modules=ignored_modules,
-            )
 
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.critic_target.load_state_dict(self.critic.state_dict())
@@ -312,35 +169,6 @@ class D4PGCore:
             return optim.AdamW(self.actor.parameters(), lr=lr)
         actor_head = [p for p in self.actor.parameters() if p not in self.shared_params]
         return optim.AdamW(actor_head, lr=lr)
-
-    def _fsdp_full_state_dict(self, module: torch.nn.Module) -> dict:
-        if not self._using_fsdp or self._FSDP is None:
-            return module.state_dict()
-
-        from torch.distributed.fsdp import (
-            FullStateDictConfig,
-            StateDictType,
-        )
-
-        # rank0_only keeps non-rank0 memory low; all ranks must still participate.
-        cfg = FullStateDictConfig(rank0_only=True, offload_to_cpu=True)
-        with self._FSDP.state_dict_type(module, StateDictType.FULL_STATE_DICT, cfg):
-            return module.state_dict()
-
-    def _fsdp_full_optim_state_dict(
-        self, module: torch.nn.Module, optimizer: optim.Optimizer
-    ) -> dict:
-        if not self._using_fsdp or self._FSDP is None:
-            return optimizer.state_dict()
-
-        from torch.distributed.fsdp import FullOptimStateDictConfig
-
-        cfg = FullOptimStateDictConfig(rank0_only=True, offload_to_cpu=True)
-        return self._FSDP.optim_state_dict(
-            module,
-            optimizer,
-            optim_state_dict_config=cfg,
-        )
 
     # ---------- Core computations ----------
     def compute_target_distribution(
@@ -687,14 +515,10 @@ class D4PGCore:
     def checkpoint(self):
         """Generates a dictionary with checkpointing."""
         payload = {
-            "actor": self._fsdp_full_state_dict(self.actor),
-            "critic": self._fsdp_full_state_dict(self.critic),
-            "actor_optimizer": self._fsdp_full_optim_state_dict(
-                self.actor, self.actor_optimizer
-            ),
-            "critic_optimizer": self._fsdp_full_optim_state_dict(
-                self.critic, self.critic_optimizer
-            ),
+            "actor": self.actor.state_dict(),
+            "critic": self.critic.state_dict(),
+            "actor_optimizer": self.actor_optimizer.state_dict(),
+            "critic_optimizer": self.critic_optimizer.state_dict(),
             "actor_scheduler": self.actor_scheduler.state_dict()
             if self.actor_scheduler is not None
             else None,
@@ -753,36 +577,12 @@ class D4PGCore:
         # Load networks
         if "actor" in checkpoint:
             try:
-                if self._using_fsdp and self._FSDP is not None:
-                    from torch.distributed.fsdp import (
-                        FullStateDictConfig,
-                        StateDictType,
-                    )
-
-                    cfg = FullStateDictConfig(rank0_only=True, offload_to_cpu=True)
-                    with self._FSDP.state_dict_type(
-                        self.actor, StateDictType.FULL_STATE_DICT, cfg
-                    ):
-                        self.actor.load_state_dict(checkpoint["actor"], strict=strict)
-                else:
-                    self.actor.load_state_dict(checkpoint["actor"], strict=strict)
+                self.actor.load_state_dict(checkpoint["actor"], strict=strict)
             except Exception as e:
                 logger.warning("Failed to load actor state_dict: %s", e)
         if "critic" in checkpoint:
             try:
-                if self._using_fsdp and self._FSDP is not None:
-                    from torch.distributed.fsdp import (
-                        FullStateDictConfig,
-                        StateDictType,
-                    )
-
-                    cfg = FullStateDictConfig(rank0_only=True, offload_to_cpu=True)
-                    with self._FSDP.state_dict_type(
-                        self.critic, StateDictType.FULL_STATE_DICT, cfg
-                    ):
-                        self.critic.load_state_dict(checkpoint["critic"], strict=strict)
-                else:
-                    self.critic.load_state_dict(checkpoint["critic"], strict=strict)
+                self.critic.load_state_dict(checkpoint["critic"], strict=strict)
             except Exception as e:
                 logger.warning("Failed to load critic state_dict: %s", e)
 
@@ -795,25 +595,13 @@ class D4PGCore:
             try:
                 actor_opt_sd = checkpoint.get("actor_optimizer")
                 if actor_opt_sd is not None:
-                    if self._using_fsdp and self._FSDP is not None:
-                        sharded = self._FSDP.optim_state_dict_to_load(
-                            self.actor, self.actor_optimizer, actor_opt_sd
-                        )
-                        self.actor_optimizer.load_state_dict(sharded)
-                    else:
-                        self.actor_optimizer.load_state_dict(actor_opt_sd)
+                    self.actor_optimizer.load_state_dict(actor_opt_sd)
             except Exception as e:
                 logger.warning("Failed to load actor optimizer state: %s", e)
             try:
                 critic_opt_sd = checkpoint.get("critic_optimizer")
                 if critic_opt_sd is not None:
-                    if self._using_fsdp and self._FSDP is not None:
-                        sharded = self._FSDP.optim_state_dict_to_load(
-                            self.critic, self.critic_optimizer, critic_opt_sd
-                        )
-                        self.critic_optimizer.load_state_dict(sharded)
-                    else:
-                        self.critic_optimizer.load_state_dict(critic_opt_sd)
+                    self.critic_optimizer.load_state_dict(critic_opt_sd)
             except Exception as e:
                 logger.warning("Failed to load critic optimizer state: %s", e)
 

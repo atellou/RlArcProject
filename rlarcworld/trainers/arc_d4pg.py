@@ -83,8 +83,6 @@ class ArcD4PG:
         config = config.get_validated_config()
         self.exp_config = config
 
-        self.fsdp_enabled = bool(getattr(config.system, "fsdp_enabled", False))
-
         self.global_seed: int | None = None
         if config.reproducibility.global_seed is not None:
             self._setup_reproducibility(config=config.reproducibility)
@@ -351,7 +349,6 @@ class ArcD4PG:
             n_steps=config.d4pg.n_step_config.n_steps,
             device_config=self.cuda_config,
             amp_enabled=config.system.amp_enabled,
-            fsdp_enabled=config.system.fsdp_enabled,
             carsm=config.d4pg.carsm,
             entropy_coef=config.d4pg.entropy_coef,
             entropy_coef_decay=config.d4pg.entropy_coef_decay,
@@ -898,9 +895,6 @@ class ArcD4PG:
         if warmup:
             logger.warning("Skipping final checkpoint during warmup period")
             return
-        if not self._is_rank0() and not self.fsdp_enabled:
-            logger.info("Non-rank0 process: skipping final checkpoint")
-            return
 
         now_str = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         if reason == "spot":
@@ -941,11 +935,6 @@ class ArcD4PG:
             include_config: Whether to include config checkpoint
             include_provenance: Whether to include provenance checkpoint
         """
-        # With FSDP full-state-dict gathering, all ranks must participate in
-        # state_dict/optim_state_dict collection, but only rank0 should write.
-        if not self._is_rank0() and not self.fsdp_enabled:
-            logger.info("Non-rank0 process: skipping save_checkpoint")
-            return
         # Resolve target path (file or directory semantics)
         checkpoint_path = resolve_save_path(checkpoint_path, self.__class__.__name__)
         if not (

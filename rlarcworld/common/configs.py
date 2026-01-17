@@ -372,7 +372,6 @@ class SystemConfig:
 
     amp_enabled: bool = True
     use_checkpointing: bool = False
-    fsdp_enabled: bool = False
     device: Optional[str] = None
 
 

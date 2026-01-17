@@ -66,10 +66,6 @@ python aws_sagemaker/launch.py \
 
 `launch.py` uploads only the `aws_sagemaker/` package as the source archive, keeping the transfer minimal.
 
-## Distributed training details
-
-`launch.py` configures `Torchrun(process_count_per_node=None)`, letting SageMaker automatically match the number of GPUs on the instance.  FSDP is enabled through the `cloud_base.yaml` configuration so that memory is sharded across GPUs.
-
 ## Output
 
 - Checkpoints and final `model.tar.gz` are stored in `s3://<default-bucket>/<training-job-name>/output/`.
