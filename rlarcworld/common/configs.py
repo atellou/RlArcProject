@@ -105,6 +105,7 @@ class RlArcWorldViTARCConfig:
     example_compression_tokens: int = 64
     grid_compression_tokens: int | None = 128
     compression_method: str = "learned"  # "pooling" or "learned"
+    max_learnable_examples: int = 1
     color_values: int | None = None
 
     @classmethod

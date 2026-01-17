@@ -8,6 +8,7 @@ attention, and cross-attention classifier heads.
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
@@ -724,7 +725,13 @@ class RlArcWorldViTARC(nn.Module):
             # Compression for example sequence length
             # Reduces memory usage in cross-attention
             self.example_compression_tokens = config.example_compression_tokens
+            self.max_learnable_examples = config.max_learnable_examples
             if self.compression_method == "learned":
+                if self.max_learnable_examples < 1:
+                    raise ValueError(
+                        "max_learnable_examples must be at least 1 "
+                        "for learned compression"
+                    )
                 self.example_compressor = LearnedCompression(
                     d_model=config.d_model,
                     num_compressed_tokens=self.example_compression_tokens,
@@ -794,7 +801,6 @@ class RlArcWorldViTARC(nn.Module):
         """Enable example embedding cache for reuse across steps."""
         self._cache_valid = True
 
-    @torch.no_grad()
     def _encode_examples(self, examples: torch.Tensor) -> torch.Tensor:
         """Encode example pairs and return concatenated hidden states.
 
@@ -815,50 +821,62 @@ class RlArcWorldViTARC(nn.Module):
         logger.debug("Example cache MISS (key=%s)", cache_key)
         hidden_list: list[torch.Tensor] = []
         for ex_idx in range(num_examples):
-            ex_pair = examples[:, ex_idx]
-            ex_ids, ex_mask, ex_obj_idx = self.grid_encoder.encode_example_pair(ex_pair)
-
-            # compression
-            if self.grid_compression_tokens is not None:
-                ex_embeds = self.embed_tokens(ex_ids)
-                if self.compression_method == "learned":
-                    ex_embeds = self.example_compressor(ex_embeds, mask=ex_mask)
-                else:
-                    ex_embeds = self.example_projection(ex_embeds)
-                    ex_embeds = self.example_pooling(
-                        ex_embeds.transpose(1, 2)
-                    ).transpose(1, 2)
-                ex_mask = torch.ones(
-                    batch_size,
-                    self.example_compression_tokens,
-                    dtype=ex_mask.dtype,
-                    device=ex_mask.device,
+            grad_ctx = (
+                nullcontext()
+                if ex_idx < self.max_learnable_examples
+                else torch.no_grad()
+            )
+            with grad_ctx:
+                ex_pair = examples[:, ex_idx]
+                ex_ids, ex_mask, ex_obj_idx = self.grid_encoder.encode_example_pair(
+                    ex_pair
                 )
-                if ex_obj_idx is not None and self.use_ope:
-                    ex_obj_idx = (
-                        torch.nn.functional.adaptive_max_pool1d(
-                            ex_obj_idx.unsqueeze(1).float(),
-                            output_size=self.example_compression_tokens,
+
+                # compression
+                if self.grid_compression_tokens is not None:
+                    ex_embeds = self.embed_tokens(ex_ids)
+                    if self.compression_method == "learned":
+                        ex_embeds = self.example_compressor(ex_embeds, mask=ex_mask)
+                    else:
+                        ex_embeds = self.example_projection(ex_embeds)
+                        ex_embeds = self.example_pooling(
+                            ex_embeds.transpose(1, 2)
+                        ).transpose(1, 2)
+                    ex_mask = torch.ones(
+                        batch_size,
+                        self.example_compression_tokens,
+                        dtype=ex_mask.dtype,
+                        device=ex_mask.device,
+                    )
+                    if ex_obj_idx is not None and self.use_ope:
+                        ex_obj_idx = (
+                            torch.nn.functional.adaptive_max_pool1d(
+                                ex_obj_idx.unsqueeze(1).float(),
+                                output_size=self.example_compression_tokens,
+                            )
+                            .squeeze(1)
+                            .long()
                         )
-                        .squeeze(1)
-                        .long()
+                    else:
+                        ex_obj_idx = None
+                    ex_output = self.encoder(
+                        inputs_embeds=ex_embeds,
+                        attention_mask=ex_mask,
+                        object_idx=ex_obj_idx,
+                        return_dict=True,
                     )
                 else:
-                    ex_obj_idx = None
-                ex_output = self.encoder(
-                    inputs_embeds=ex_embeds,
-                    attention_mask=ex_mask,
-                    object_idx=ex_obj_idx,
-                    return_dict=True,
-                )
-            else:
-                ex_output = self.encoder(
-                    input_ids=ex_ids,
-                    attention_mask=ex_mask,
-                    object_idx=ex_obj_idx,
-                    return_dict=True,
-                )
-            hidden_list.append(ex_output.last_hidden_state)
+                    ex_output = self.encoder(
+                        input_ids=ex_ids,
+                        attention_mask=ex_mask,
+                        object_idx=ex_obj_idx,
+                        return_dict=True,
+                    )
+                h = ex_output.last_hidden_state
+            # Detach if beyond learnable quota
+            if ex_idx >= self.max_learnable_examples:
+                h = h.detach()
+            hidden_list.append(h)
 
         hidden = torch.cat(hidden_list, dim=1)
         self._example_cache[cache_key] = hidden.detach()
