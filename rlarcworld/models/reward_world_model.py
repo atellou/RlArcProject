@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-import torch.utils.checkpoint as checkpoint
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import RewardKeys, StateKeys
@@ -118,18 +117,10 @@ class ViTARCRewardModel(nn.Module):
             )
 
         # Encode state through ViTARC
-        if self.device_config.get("use_checkpointing"):
-            encoder_output = checkpoint.checkpoint(
-                self.rl_vit_arc,
-                state,
-                example_hidden,
-                use_reentrant=False,
-            )
-        else:
-            encoder_output = self.rl_vit_arc(
-                state,
-                example_hidden=example_hidden,
-            )
+        encoder_output = self.rl_vit_arc(
+            state,
+            example_hidden=example_hidden,
+        )
 
         # Get reward predictions from head
         rewards = self.reward_head(encoder_output)

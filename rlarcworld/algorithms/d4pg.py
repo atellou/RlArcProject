@@ -59,6 +59,8 @@ class D4PGCore:
         carsm: bool = False,
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
+        entropy_floor_coef: float = 0.0,
+        min_entropy: float = 0.0,
         target_update_frequency: int = 10,
         model_update_frequency: int = 1,
         cache_enabled: bool = False,
@@ -88,6 +90,10 @@ class D4PGCore:
                 0.0.
             entropy_coef_decay (float, optional): Entropy coefficient decay.
                 Defaults to 1.0.
+            entropy_floor_coef (float, optional): Coefficient for the minimum
+                entropy floor penalty. Defaults to 0.0.
+            min_entropy (float, optional): Minimum entropy floor to prevent
+                complete entropy collapse. Defaults to 0.0.
             device_config (Optional[CudaConfig], optional): Device configuration
                 dictionary. Defaults to None.
             max_grad_norm (float, optional): Maximum gradient norm. Defaults to
@@ -104,6 +110,8 @@ class D4PGCore:
         """
         assert entropy_coef >= 0, "Entropy coefficient must be non-negative"
         assert entropy_coef_decay >= 0, "Entropy coefficient decay must be non-negative"
+        assert entropy_floor_coef >= 0, "Entropy floor coefficient must be non-negative"
+        assert min_entropy >= 0, "Minimum entropy must be non-negative"
 
         # Config/device/AMP
         self.device_config = (
@@ -122,6 +130,8 @@ class D4PGCore:
         self.carsm = carsm
         self.entropy_coef = entropy_coef
         self.entropy_coef_decay = entropy_coef_decay
+        self.entropy_floor_coef = entropy_floor_coef
+        self.min_entropy = min_entropy
         self.max_grad_norm = max_grad_norm
         self.target_update_frequency = target_update_frequency
         self.model_update_frequency = model_update_frequency
@@ -315,16 +325,34 @@ class D4PGCore:
 
         # Action probabilities
         if action_probs is None:
-            with self.amp_scaler:
+            if self.amp_scaler.scaler is not None:
+                with torch.amp.autocast(device_type="cuda", enabled=False):
+                    action_probs = self.actor(state)
+            else:
                 action_probs = self.actor(state)
+
+        for _k, _v in action_probs.items():
+            if not torch.isfinite(_v).all():
+                raise RuntimeError(
+                    f"Non-finite action probabilities detected for head '{_k}'."
+                )
 
         # Critic distribution for those actions
         if critic_probs is None:
-            with self.amp_scaler:
+            if self.amp_scaler.scaler is not None:
+                with torch.amp.autocast(device_type="cuda", enabled=False):
+                    critic_probs = self.critic(state, action_probs).q_dist
+            else:
                 critic_probs = self.critic(state, action_probs).q_dist
 
+        for _k, _v in critic_probs.items():
+            if not torch.isfinite(_v).all():
+                raise RuntimeError(
+                    f"Non-finite critic distribution detected for head '{_k}'."
+                )
+
         # Optional entropy and CARSM log_probs
-        if self.entropy_coef != 0 or self.carsm:
+        if self.entropy_coef != 0 or self.entropy_floor_coef != 0 or self.carsm:
             entropy: torch.Tensor = torch.tensor(0.0, device=self.device)
             log_probs: list[torch.Tensor] = []
             action = self._categorize_actions(action_probs, as_dict=True)
@@ -332,7 +360,7 @@ class D4PGCore:
                 if self.carsm:
                     dist = torch.distributions.Categorical(probs=action_probs[key])
                     log_probs.append(dist.log_prob(action[key]))
-                if self.entropy_coef != 0:
+                if self.entropy_coef != 0 or self.entropy_floor_coef != 0:
                     entropy += -torch.sum(
                         action_probs[key] * torch.log(action_probs[key] + 1e-10), dim=-1
                     ).mean()
@@ -347,20 +375,35 @@ class D4PGCore:
         # Expected Q
         loss = TensorDict({})
         for key in critic_probs.keys():
+            z_atoms = self.critic.z_atoms[key].to(critic_probs[key].device).float()
             q_exp = torch.sum(
-                critic_probs[key]
-                * self.critic.z_atoms[key].to(critic_probs[key].device),
+                critic_probs[key].float() * z_atoms,
                 dim=-1,
                 keepdim=True,
             )
+            if not torch.isfinite(q_exp).all():
+                raise RuntimeError(f"Non-finite expected Q detected for head '{key}'.")
             if self.carsm:
                 # Narrow type for mypy: target_q must be provided in CARSM branch
                 assert target_q is not None
                 tq = cast(TensorDict, target_q)
                 q_exp = (tq[key] - q_exp) * log_probs_tensor
             loss[key] = -torch.mean(q_exp)
+            if not torch.isfinite(loss[key]).all():
+                raise RuntimeError(f"Non-finite actor loss detected for head '{key}'.")
             if self.entropy_coef != 0:
+                if not torch.isfinite(entropy).all():
+                    raise RuntimeError("Non-finite entropy detected in actor loss.")
                 loss[key] = loss[key] - self.entropy_coef * entropy
+            if self.entropy_floor_coef != 0:
+                if not torch.isfinite(entropy).all():
+                    raise RuntimeError("Non-finite entropy detected in actor loss.")
+                entropy_floor_penalty = torch.relu(self.min_entropy - entropy)
+                if not torch.isfinite(entropy_floor_penalty).all():
+                    raise RuntimeError(
+                        "Non-finite entropy floor penalty detected in actor loss."
+                    )
+                loss[key] = loss[key] + self.entropy_floor_coef * entropy_floor_penalty
         return loss
 
     def step_schedulers_and_decay(self) -> None:
@@ -689,6 +732,10 @@ class D4PGCore:
                 self.entropy_coef_decay = hp.get(
                     "entropy_coef_decay", self.entropy_coef_decay
                 )
+                self.entropy_floor_coef = hp.get(
+                    "entropy_floor_coef", self.entropy_floor_coef
+                )
+                self.min_entropy = hp.get("min_entropy", self.min_entropy)
                 self.target_update_frequency = hp.get(
                     "target_update_frequency", self.target_update_frequency
                 )
@@ -731,6 +778,8 @@ class D4PGCore:
             "gamma": self.gamma,
             "entropy_coef": self.entropy_coef,
             "entropy_coef_decay": self.entropy_coef_decay,
+            "entropy_floor_coef": self.entropy_floor_coef,
+            "min_entropy": self.min_entropy,
             "target_update_frequency": self.target_update_frequency,
             "tau": self.tau,
             "max_grad_norm": self.max_grad_norm,

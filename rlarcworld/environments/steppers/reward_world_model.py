@@ -281,14 +281,24 @@ class ArcWorldModelStepper:
         Returns:
             Total loss and dict of component losses
         """
-        # Binary classification loss (cross-entropy)
+        # Binary classification loss
         # true_reward["binary"] is in [0, 1], pred["binary"] is [P(0), P(1)]
         binary_target = true_reward[RewardKeys.BINARY.value].long()
         if binary_target.dim() > 1:
             binary_target = binary_target.squeeze(-1)
         # Clamp to valid class indices
         binary_target = binary_target.clamp(0, 1)
-        binary_loss = F.cross_entropy(pred[RewardKeys.BINARY.value], binary_target)
+        if not torch.isfinite(binary_target.float()).all():
+            raise RuntimeError("Non-finite binary reward target in world model.")
+        binary_pred = pred[RewardKeys.BINARY.value].float()
+        if not torch.isfinite(binary_pred).all():
+            raise RuntimeError("Non-finite binary reward prediction in world model.")
+        log_binary_pred = torch.log(binary_pred.clamp_min(1e-10))
+        if not torch.isfinite(log_binary_pred).all():
+            raise RuntimeError("Non-finite binary log-probabilities in world model.")
+        binary_loss = F.nll_loss(log_binary_pred, binary_target)
+        if not torch.isfinite(binary_loss).all():
+            raise RuntimeError("Non-finite binary loss in world model.")
 
         # Pixel-wise regression loss (MSE)
         # Normalize true pixel_wise to [0, 1] percentage
@@ -297,11 +307,21 @@ class ArcWorldModelStepper:
             pixel_target = pixel_target.squeeze(-1)
         # Clamp to valid range [0, 1]
         pixel_target = pixel_target.clamp(0, 1)
-        pixel_pred = pred[RewardKeys.PIXEL_WISE.value]
+        if not torch.isfinite(pixel_target).all():
+            raise RuntimeError("Non-finite pixel_wise reward target in world model.")
+        pixel_pred = pred[RewardKeys.PIXEL_WISE.value].float()
+        if not torch.isfinite(pixel_pred).all():
+            raise RuntimeError(
+                "Non-finite pixel_wise reward prediction in world model."
+            )
         pixel_loss = F.mse_loss(pixel_pred, pixel_target)
+        if not torch.isfinite(pixel_loss).all():
+            raise RuntimeError("Non-finite pixel_wise loss in world model.")
 
         # Total loss
         total_loss = binary_loss + pixel_loss
+        if not torch.isfinite(total_loss).all():
+            raise RuntimeError("Non-finite total loss in world model.")
 
         return total_loss, {
             RewardKeys.BINARY.value: binary_loss.item(),
@@ -376,6 +396,11 @@ class ArcWorldModelStepper:
         self._imagination_count += 1
 
         if step_count > 0:
+            logger.info(
+                f"Imagination rollout completed. Iteration {self._imagination_count}, "
+                f"actor loss: {total_actor_loss / step_count}, "
+                f"critic loss: {total_critic_loss / step_count}"
+            )
             return total_actor_loss / step_count, total_critic_loss / step_count
         return None, None
 
@@ -406,6 +431,10 @@ class ArcWorldModelStepper:
 
         # 2. Run imagination rollouts
         if ctx.iteration % self.imagination_frequency == 0:
+            logger.info(
+                f"Running imagination rollouts at iteration {ctx.iteration}, "
+                f"total imaginations: {self._imagination_count}"
+            )
             for _ in range(self.imagination_ratio):
                 starting_state = ctx.batch["state"]
 
@@ -415,11 +444,6 @@ class ArcWorldModelStepper:
                     sample=starting_state,
                     training=True,
                 )
-
-            logger.debug(
-                f"Imagination rollouts at iteration {ctx.iteration}, "
-                f"total imaginations: {self._imagination_count}"
-            )
 
     # ==================== Metrics ====================
 
@@ -439,10 +463,16 @@ class ArcWorldModelStepper:
         Returns:
             Dict mapping loss keys to their average values
         """
-        avg = {
-            key: self._model_losses[key].mean().item()
-            for key in self._model_losses.keys()
-        }
+        avg: dict[str, float] = {}
+        for key in self._model_losses.keys():
+            q = self._model_losses[key]
+            if q.numel() == 0:
+                continue
+            q_f = q.float()
+            q_f = q_f[torch.isfinite(q_f)]
+            if q_f.numel() == 0:
+                continue
+            avg[key] = q_f.mean().item()
         if reset:
             self._reset_loss_queues()
         return avg

@@ -178,13 +178,13 @@ class ViTARCActor(nn.Module):
 
         # Extract action logits from encoder hidden states
         action_logits = self.action_heads(
-            vitarc_output.hidden_states, vitarc_output.attention_mask
+            vitarc_output.hidden_states.float(), vitarc_output.attention_mask
         )
 
         # Apply softmax to get probabilities
         action_probs = TensorDict(
             {
-                key: torch.softmax(logits, dim=-1)
+                key: torch.softmax(logits.float(), dim=-1)
                 for key, logits in action_logits.items()
             }
         )

@@ -22,6 +22,8 @@ healthcheck:
 
   world_model:
     enabled: true
+    imagination_frequency: 3
+    model_update_frequency: 3
 
   d4pg:
     policy_lr: 3.0e-4

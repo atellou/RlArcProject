@@ -351,6 +351,8 @@ class ArcD4PG:
             carsm=config.d4pg.carsm,
             entropy_coef=config.d4pg.entropy_coef,
             entropy_coef_decay=config.d4pg.entropy_coef_decay,
+            entropy_floor_coef=config.d4pg.entropy_floor_coef,
+            min_entropy=config.d4pg.min_entropy,
             target_update_frequency=config.d4pg.target_update_frequency,
             model_update_frequency=config.d4pg.model_update_frequency,
             cache_enabled=config.d4pg.cache_enabled,
@@ -374,29 +376,6 @@ class ArcD4PG:
             # Environment
             "grid_size": cfg.env.grid_size,
             "color_values": cfg.env.color_values,
-            "max_penalty": cfg.env.max_penalty,
-            "batch_size": cfg.env.batch_size,
-            # Training
-            "max_steps_per_epoch": cfg.training.max_steps_per_epoch,
-            "validation_steps_per_epoch": cfg.training.validation_steps_per_epoch,
-            # D4PG
-            "policy_lr": d4pg.policy_lr,
-            "critic_lr": d4pg.critic_lr,
-            "gamma": d4pg.gamma,
-            "tau": d4pg.tau,
-            "n_steps": d4pg.n_step_config.n_steps,
-            "entropy_coef": d4pg.entropy_coef,
-            "entropy_coef_decay": d4pg.entropy_coef_decay,
-            "carsm": d4pg.carsm,
-            "target_update_frequency": d4pg.target_update_frequency,
-            "max_grad_norm": d4pg.max_grad_norm,
-            # Distributional
-            "num_atoms": cfg.distributional.num_atoms,
-            "v_min_pixel_wise": cfg.distributional.v_min.get("pixel_wise"),
-            "v_max_pixel_wise": cfg.distributional.v_max.get("pixel_wise"),
-            # Network
-            "vitarc_d_model": net.d_model,
-            "vitarc_d_ff": net.d_ff,
             "vitarc_num_layers": net.num_layers,
             "vitarc_num_heads": net.num_heads,
             "vitarc_use_ope": net.use_ope,
@@ -410,6 +389,20 @@ class ArcD4PG:
             "world_model_lr": wm.learning_rate if wm.enabled else None,
             "imagination_horizon": wm.imagination_horizon if wm.enabled else None,
             "imagination_ratio": wm.imagination_ratio if wm.enabled else None,
+            # D4PG
+            "policy_lr": d4pg.policy_lr,
+            "critic_lr": d4pg.critic_lr,
+            "gamma": d4pg.gamma,
+            "tau": d4pg.tau,
+            "n_steps": d4pg.n_step_config.n_steps,
+            "carsm": d4pg.carsm,
+            "entropy_coef": d4pg.entropy_coef,
+            "entropy_coef_decay": d4pg.entropy_coef_decay,
+            "entropy_floor_coef": d4pg.entropy_floor_coef,
+            "min_entropy": d4pg.min_entropy,
+            "target_update_frequency": d4pg.target_update_frequency,
+            "model_update_frequency": d4pg.model_update_frequency,
+            "max_grad_norm": d4pg.max_grad_norm,
             # System
             "device": str(self.device),
             "amp_enabled": cfg.system.amp_enabled,
@@ -511,6 +504,8 @@ class ArcD4PG:
             raise ValueError("Skipping priority update: missing td_error or info")
 
         td_error = ctx.td_error
+        priority_eps = 1e-6
+        priority_max = 1e6
 
         # Check if info has index metadata (required for update_tensordict_priority)
         if "index" not in info.keys():
@@ -523,15 +518,21 @@ class ArcD4PG:
         if td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value) is not None:
             priority = td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value)
             assert priority is not None
-            replay_buffer.update_priority(
-                info["index"], priority.detach().to(dtype=torch.float32)
-            )
+            priority = priority.detach().to(dtype=torch.float32)
+            priority = torch.nan_to_num(
+                priority, nan=0.0, posinf=priority_max, neginf=0.0
+            ).abs()
+            priority = priority.clamp(min=priority_eps, max=priority_max)
+            replay_buffer.update_priority(info["index"], priority)
         else:
             priority = td_error.get(RewardKeys.PIXEL_WISE.value)
             assert priority is not None
-            replay_buffer.update_priority(
-                info["index"], priority.detach().to(dtype=torch.float32)
-            )
+            priority = priority.detach().to(dtype=torch.float32)
+            priority = torch.nan_to_num(
+                priority, nan=0.0, posinf=priority_max, neginf=0.0
+            ).abs()
+            priority = priority.clamp(min=priority_eps, max=priority_max)
+            replay_buffer.update_priority(info["index"], priority)
 
     def _on_validation_callbacks(
         self,

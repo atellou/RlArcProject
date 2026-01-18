@@ -198,7 +198,10 @@ class D4PGConfig:
         carsm (bool): Whether to use CARSM regularization.
         entropy_coef (float): Entropy regularization coefficient.
         entropy_coef_decay (float): Entropy coefficient decay rate.
+        entropy_floor_coef (float): Coefficient for minimum-entropy floor penalty.
+        min_entropy (float): Minimum entropy value.
         target_update_frequency (int): Frequency of target network updates.
+        model_update_frequency (int): Frequency of model updates.
         max_grad_norm (float): Maximum gradient norm for clipping.
     """
 
@@ -215,6 +218,8 @@ class D4PGConfig:
     carsm: bool = False
     entropy_coef: float = 0.0
     entropy_coef_decay: float = 1.0
+    entropy_floor_coef: float = 0.0
+    min_entropy: float = 0.01
     target_update_frequency: int = 10
     model_update_frequency: int = 1
     cache_enabled: bool = False
