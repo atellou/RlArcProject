@@ -834,7 +834,17 @@ class RlArcWorldViTARC(nn.Module):
             device = ex_batch.device
             return torch.empty((bsz, 0, self.t5_config.d_model), device=device)
 
-        ex_flat = ex_batch.reshape(bsz * ex_count, *ex_batch.shape[2:])
+        # Skip fully padded examples (all zeros) to save encoder compute.
+        # Keep shape contract by scattering valid encodings back into a full tensor.
+        with torch.no_grad():
+            valid_ex = ex_batch.ne(0).any(dim=(2, 3, 4))
+        if not valid_ex.any():
+            device = ex_batch.device
+            return torch.empty((bsz, 0, self.t5_config.d_model), device=device)
+
+        flat_valid = valid_ex.reshape(-1)
+        ex_flat_all = ex_batch.reshape(bsz * ex_count, *ex_batch.shape[2:])
+        ex_flat = ex_flat_all[flat_valid]
         ex_ids, ex_mask, ex_obj_idx = self.grid_encoder.encode_example_pair(ex_flat)
 
         # compression
@@ -848,7 +858,7 @@ class RlArcWorldViTARC(nn.Module):
                     1, 2
                 )
             ex_mask = torch.ones(
-                bsz * ex_count,
+                ex_ids.size(0),
                 self.example_compression_tokens,
                 dtype=ex_mask.dtype,
                 device=ex_mask.device,
@@ -878,9 +888,16 @@ class RlArcWorldViTARC(nn.Module):
                 return_dict=True,
             )
 
-        h = ex_output.last_hidden_state  # [B*E, seq_len, d_model]
-        h = h.reshape(bsz, ex_count * h.size(1), h.size(2))
-        return h
+        h_valid = ex_output.last_hidden_state  # [N, seq_len, d_model]
+        seq_len = int(h_valid.size(1))
+        d_model = int(h_valid.size(2))
+        h_all = torch.zeros(
+            (bsz * ex_count, seq_len, d_model),
+            device=h_valid.device,
+            dtype=h_valid.dtype,
+        )
+        h_all[flat_valid] = h_valid
+        return h_all.reshape(bsz, ex_count * seq_len, d_model)
 
     def _encode_examples(self, examples: torch.Tensor) -> torch.Tensor:
         """Encode example pairs and return concatenated hidden states.
@@ -888,12 +905,24 @@ class RlArcWorldViTARC(nn.Module):
         Handles compression and caching. Expects shape [B, num_examples, 2, H, W].
         """
         batch_size, num_examples = examples.shape[:2]
-        cache_key_data = (
-            examples.shape,
-            examples[0, 0, 0, 0, :].sum().item() if examples.numel() > 0 else 0,
-            examples[-1, -1, 0, :, 0].sum().item() if examples.numel() > 0 else 0,
-        )
-        cache_key = hash(cache_key_data)
+        # Cache key: cheap fingerprint based on the *first* example (index 0).
+        # We assume each sample has at least one example; padded examples are all-zero.
+        if examples.numel() > 0:
+            ex0_first = examples[0, 0].reshape(-1)
+            ex0_last = examples[-1, 0].reshape(-1)
+            cache_key = hash(
+                (
+                    tuple(examples.shape),
+                    float(ex0_first.sum().item()),
+                    float((ex0_first.float().square().sum()).item()),
+                    tuple(int(x) for x in ex0_first[:16].tolist()),
+                    float(ex0_last.sum().item()),
+                    float((ex0_last.float().square().sum()).item()),
+                    tuple(int(x) for x in ex0_last[:16].tolist()),
+                )
+            )
+        else:
+            cache_key = hash((tuple(examples.shape), 0))
 
         cache_enabled = self._cache_valid
 

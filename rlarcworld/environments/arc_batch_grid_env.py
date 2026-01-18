@@ -424,7 +424,6 @@ class ArcBatchGridEnv(gym.Env):
             - ``initial``: The initial state of the grid.
             - ``index``: The current index of the batch.
             - ``terminated``: The termination status of the episode.
-            - ``examples``: The batch of examples.
         """
         if unsqueeze is not None:
             assert isinstance(unsqueeze, int)

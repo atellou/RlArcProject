@@ -141,6 +141,7 @@ class PixelWiseArcStepper:
         )
 
     def _collate_fn(self, samples: list[dict]) -> dict:
+        """Collate function for the dataloader."""
         tasks_inp = []
         tasks_out = []
         examples_list = []
@@ -161,7 +162,13 @@ class PixelWiseArcStepper:
                     pad_shape = (self.max_examples - ex.shape[0], *ex.shape[1:])
                     pad = torch.zeros(pad_shape, dtype=ex.dtype, device=ex.device)
                     ex = torch.cat([ex, pad], dim=0)
-            padded_examples.append(ex)
+                padded_examples.append(ex)
+            else:
+                raise ValueError(
+                    "Example of type %s and shape %s, skipping.",
+                    type(ex),
+                    ex.shape if isinstance(ex, torch.Tensor) else len(ex),
+                )
 
         batch_examples = torch.stack(padded_examples, dim=0)
         return {

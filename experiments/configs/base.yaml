@@ -99,7 +99,7 @@ logging:
 
 system:
   amp_enabled: true
-  use_checkpointing: true
+  use_checkpointing: false
   device: null
 
 reproducibility:
