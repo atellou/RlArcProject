@@ -3,6 +3,30 @@
 # Run with: python -m rlarcworld.experiments.run_experiment --config experiments/configs/experiments.yaml --experiment <name>
 
 # =============================================================================
+# HEALTHCHECK EXPERIMENTS
+# Enables most features to test if everything works
+# =============================================================================
+
+healthcheck:
+  description: "Healthcheck experiment"
+  world_model:
+    enabled: true
+
+  d4pg:
+    share_network: true
+    model_update_frequency: 2
+    cache_enabled: true
+
+  network:
+      use_index_grid: true
+      use_temporal: true
+      use_examples: true
+      example_compression_tokens: 32
+      grid_compression_tokens: 128
+      compression_method: "learned"
+      max_learnable_examples: 2
+
+# =============================================================================
 # EXPLORATION EXPERIMENTS
 # Testing different exploration strategies
 # =============================================================================

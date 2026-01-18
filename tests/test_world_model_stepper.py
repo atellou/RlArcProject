@@ -400,6 +400,22 @@ class TestUpdateModel:
 
         assert params_changed, "Model parameters should change after update"
 
+    def test_update_model_clears_cache(self, stepper, sample_state, sample_reward):
+        """Test that update_model clears and re-enables cache after weight update."""
+        # Enable cache and populate it
+        stepper.model.enable_example_cache()
+        stepper.model(sample_state)
+
+        # Verify cache has entries
+        assert len(stepper.model.rl_vit_arc._example_cache) > 0
+
+        # Update model (should clear cache)
+        stepper.update_model(sample_state, sample_reward)
+
+        # Cache should be cleared and re-enabled
+        assert len(stepper.model.rl_vit_arc._example_cache) == 0
+        assert stepper.model.rl_vit_arc._cache_valid is True
+
 
 # ==================== Reset Environment Tests ====================
 

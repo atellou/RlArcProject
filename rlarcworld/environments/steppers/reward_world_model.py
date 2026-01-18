@@ -328,6 +328,11 @@ class ArcWorldModelStepper:
         )
         loss.backward()
         self.model_optimizer.step()
+
+        # Clear and re-enable cache after weight update (like D4PG does)
+        self.model.clear_example_cache()
+        self.model.enable_example_cache()
+
         self.push_model_losses(loss_dict)
         return loss_dict
 

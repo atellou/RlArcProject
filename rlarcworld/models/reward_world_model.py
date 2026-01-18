@@ -69,6 +69,14 @@ class ViTARCRewardModel(nn.Module):
 
         self.to(self.device)
 
+    def clear_example_cache(self) -> None:
+        """Clear example embedding cache after model weight updates."""
+        self.rl_vit_arc.clear_example_cache()
+
+    def enable_example_cache(self) -> None:
+        """Enable example embedding cache for reuse across steps."""
+        self.rl_vit_arc.enable_example_cache()
+
     @torch.jit.export
     def output_val(self, rewards: TensorDict) -> None:
         """Validate that the output contains the required reward keys."""
@@ -99,13 +107,29 @@ class ViTARCRewardModel(nn.Module):
         # Remove terminated key if present (only used in training)
         state.pop(StateKeys.TERMINATED.value, None)
 
+        # Encode examples explicitly for caching (like actor/critic)
+        example_hidden = None
+        if (
+            self.rl_vit_arc.use_examples
+            and state.get(StateKeys.EXAMPLES.value) is not None
+        ):
+            example_hidden = self.rl_vit_arc._encode_examples(
+                state[StateKeys.EXAMPLES.value]
+            )
+
         # Encode state through ViTARC
         if self.device_config.get("use_checkpointing"):
             encoder_output = checkpoint.checkpoint(
-                self.rl_vit_arc, state, use_reentrant=False
+                self.rl_vit_arc,
+                state,
+                example_hidden,
+                use_reentrant=False,
             )
         else:
-            encoder_output = self.rl_vit_arc(state)
+            encoder_output = self.rl_vit_arc(
+                state,
+                example_hidden=example_hidden,
+            )
 
         # Get reward predictions from head
         rewards = self.reward_head(encoder_output)

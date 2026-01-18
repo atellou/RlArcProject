@@ -88,6 +88,15 @@ def sample_context(mock_core):
                     "x_location": torch.randn(4, 16),
                     "y_location": torch.randn(4, 16),
                     "color_values": torch.randn(4, 11),
+                    "submit": torch.tensor(
+                        [
+                            [0.1, 0.9],
+                            [0.9, 0.1],
+                            [0.2, 0.8],
+                            [0.8, 0.2],
+                        ],
+                        dtype=torch.float32,
+                    ),
                 },
                 batch_size=[4],
             ),

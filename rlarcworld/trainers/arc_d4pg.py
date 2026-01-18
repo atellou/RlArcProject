@@ -301,7 +301,6 @@ class ArcD4PG:
         logger.info("Validation stepper created successfully")
 
         # Create world model stepper (optional Dyna-style imagination)
-        self.use_world_model = config.world_model.enabled
         self.world_model_stepper: Optional[ArcWorldModelStepper] = None
         if config.world_model.enabled:
             logger.info("Creating world model stepper...")

@@ -84,3 +84,11 @@ class RewardWorldModelProto(Protocol):
     def load_state_dict(self, state_dict: dict) -> None:
         """Load state dict."""
         ...
+
+    def enable_example_cache(self) -> None:
+        """Enable example cache."""
+        ...
+
+    def clear_example_cache(self) -> None:
+        """Clear example cache."""
+        ...
