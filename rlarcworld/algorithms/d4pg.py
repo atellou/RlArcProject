@@ -583,7 +583,7 @@ class D4PGCore:
             ctx: Step ctx containing all relevant information
         """
         # Update target networks periodically
-        if ctx.batch is not None:
+        if ctx.batch is None or ctx.warmup:
             return
 
         self.step_schedulers_and_decay()
