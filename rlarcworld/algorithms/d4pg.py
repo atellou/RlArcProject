@@ -9,6 +9,7 @@ from typing import Iterable, cast
 import torch
 import torch.optim as optim
 from tensordict import TensorDict
+from torch.utils.tensorboard import SummaryWriter
 
 from rlarcworld.algorithms.distributions import categorical_projection
 from rlarcworld.common.enums import RewardKeys
@@ -163,6 +164,7 @@ class D4PGCore:
 
         # Loss
         self.critic_criterion = torch.nn.KLDivLoss(reduction="batchmean")
+        self.tb_writer_frequency = 1
 
     def _build_actor_optimizer(self, lr: float) -> optim.AdamW:
         if self.shared_params is None:
@@ -215,6 +217,11 @@ class D4PGCore:
             }
         ).to(self.device)
         return target_dist
+
+    def set_tb_writer(self, tb_writer: SummaryWriter, frequency: int) -> None:
+        """Set the TensorBoard writer for logging."""
+        self.tb_writer = tb_writer
+        self.tb_writer_frequency = frequency
 
     def compute_critic_loss(
         self,
@@ -430,15 +437,52 @@ class D4PGCore:
 
                 # Step optimizer only after accumulating N gradients
                 if should_step:
+                    # Compute gradient norms for logging/clipping
+                    grad_norm_critic = None
+                    grad_norm_actor = None
+
                     # Clip gradients if needed
                     if self.max_grad_norm and self.max_grad_norm > 0:
                         self.amp_scaler.unscale(self.critic_optimizer)
                         self.amp_scaler.unscale(self.actor_optimizer)
-                        torch.nn.utils.clip_grad_norm_(
+                        grad_norm_critic = torch.nn.utils.clip_grad_norm_(
                             self.critic.parameters(), self.max_grad_norm, norm_type=2.0
                         )
-                        torch.nn.utils.clip_grad_norm_(
+                        grad_norm_actor = torch.nn.utils.clip_grad_norm_(
                             self.actor.parameters(), self.max_grad_norm, norm_type=2.0
+                        )
+                    elif (
+                        hasattr(self, "tb_writer")
+                        and self.tb_writer is not None
+                        and self._update_counter % self.tb_writer_frequency == 0
+                    ):
+                        # Compute norms without clipping for logging
+                        grad_norm_critic = torch.nn.utils.clip_grad_norm_(
+                            self.critic.parameters(),
+                            max_norm=float("inf"),
+                            norm_type=2.0,
+                        )
+                        grad_norm_actor = torch.nn.utils.clip_grad_norm_(
+                            self.actor.parameters(),
+                            max_norm=float("inf"),
+                            norm_type=2.0,
+                        )
+
+                    # Log gradient norms to TensorBoard
+                    if (
+                        hasattr(self, "tb_writer")
+                        and self.tb_writer is not None
+                        and self._update_counter % self.tb_writer_frequency == 0
+                        and grad_norm_actor is not None
+                        and grad_norm_critic is not None
+                    ):
+                        self.tb_writer.add_scalar(
+                            "actor/grad_l2_norm", grad_norm_actor, self._update_counter
+                        )
+                        self.tb_writer.add_scalar(
+                            "critic/grad_l2_norm",
+                            grad_norm_critic,
+                            self._update_counter,
                         )
 
                     self.amp_scaler.step(self.critic_optimizer)

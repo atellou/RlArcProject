@@ -355,10 +355,19 @@ class CheckpointConfig:
 
 @dataclass
 class LoggingConfig:
-    """Logging configuration."""
+    """Logging configuration.
+
+    Attributes:
+        tensorboard_enabled (bool): Whether to enable TensorBoard logging.
+        log_frequency (int): Frequency for logging.
+        tb_minimal_frequency (int): Minimal frequency for TensorBoard logging.
+        tb_medium_frequency (int): Medium frequency for TensorBoard logging.
+    """
 
     tensorboard_enabled: bool = False
     log_frequency: int = 100
+    tb_minimal_frequency: int = 1
+    tb_medium_frequency: int = 100
 
 
 @dataclass

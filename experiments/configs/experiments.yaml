@@ -9,10 +9,25 @@
 
 healthcheck:
   description: "Healthcheck experiment"
+  distributional:
+    v_min:
+      pixel_wise_n_reward: -10
+      binary_n_reward: -5
+    v_max:
+      pixel_wise_n_reward: 1
+      binary_n_reward: 1
+    num_atoms:
+      pixel_wise_n_reward: 51
+      binary_n_reward: 21
+
   world_model:
     enabled: true
 
   d4pg:
+    policy_lr: 3.0e-4
+    critic_lr: 3.0e-3
+    n_step_config:
+      n_steps: 5
     share_network: true
     model_update_frequency: 2
     cache_enabled: true
@@ -25,6 +40,12 @@ healthcheck:
       grid_compression_tokens: 128
       compression_method: "learned"
       max_learnable_examples: 2
+
+  logging:
+    tensorboard_enabled: true
+    log_frequency: 1
+    tb_minimal_frequency: 1
+    tb_medium_frequency: 1
 
 # =============================================================================
 # EXPLORATION EXPERIMENTS

@@ -330,6 +330,7 @@ def make_tensorboard_callbacks(
     replay_buffer: Any | None = None,
     warmup_buffer_ratio: float = 0.2,
     medium_frequency: int = 100,
+    minimal_frequency: int = 1,
 ) -> tuple[
     TensorBoardWriterManager,
     Callable[[OnStepContext], None],
@@ -345,6 +346,7 @@ def make_tensorboard_callbacks(
         replay_buffer: Replay buffer to attach for logging stats.
         warmup_buffer_ratio: Ratio used to display buffer warmup threshold.
         medium_frequency: Frequency at which to log medium-tier metrics.
+        minimal_frequency: Frequency at which to log minimal-tier metrics.
 
     Returns:
         A tuple of (manager, on_train_step_callback, on_validation_step_callback).
@@ -354,5 +356,6 @@ def make_tensorboard_callbacks(
         replay_buffer=replay_buffer,
         warmup_buffer_ratio=warmup_buffer_ratio,
         medium_frequency=medium_frequency,
+        minimal_frequency=minimal_frequency,
     )
     return mgr, mgr.on_train_step, mgr.on_validation_step

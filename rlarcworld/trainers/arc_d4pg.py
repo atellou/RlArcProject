@@ -475,6 +475,11 @@ class ArcD4PG:
                 self.checkpoint_dir,
                 replay_buffer=self.replay_buffer,
                 warmup_buffer_ratio=warmup_buffer_ratio,
+                minimal_frequency=self.exp_config.logging.tb_minimal_frequency,
+                medium_frequency=self.exp_config.logging.tb_medium_frequency,
+            )
+            self.d4pg_core.set_tb_writer(
+                self.tb_manager.writer, self.tb_manager.minimal_frequency
             )
             # Extend training callbacks
             self.trainer.on_train_step = self.trainer.on_train_step or OrderedDict()

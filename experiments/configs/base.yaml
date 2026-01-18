@@ -52,18 +52,12 @@ distributional:
   num_atoms:
     pixel_wise: 21
     binary: 21
-    pixel_wise_n_reward: 51
-    binary_n_reward: 21
   v_min:
     pixel_wise: -1
     binary: -1
-    pixel_wise_n_reward: -10
-    binary_n_reward: -5
   v_max:
     pixel_wise: 1
     binary: 1
-    pixel_wise_n_reward: 1
-    binary_n_reward: 1
 
 replay_buffer:
   size: 10000
@@ -98,6 +92,8 @@ checkpoint:
 logging:
   tensorboard_enabled: true
   log_frequency: 10
+  tb_minimal_frequency: 1
+  tb_medium_frequency: 100
 
 system:
   amp_enabled: true
