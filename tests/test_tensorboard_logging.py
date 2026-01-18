@@ -10,6 +10,7 @@ from rlarcworld.logging.tensorboard import (
     TensorBoardWriterManager,
     make_tensorboard_callbacks,
 )
+from rlarcworld.models.nn_modules import CriticResponseManager
 from rlarcworld.trainers.core import OnStepContext
 
 
@@ -55,6 +56,18 @@ def mock_core():
         "pixel_wise": torch.linspace(-10, 10, 51),
         "binary": torch.linspace(-1, 1, 3),
     }
+
+    # Mock critic forward response for Q estimation
+    # core.critic(state, action_probs) should return a CriticResponseManager
+    core.critic.return_value = CriticResponseManager(
+        q_logits=TensorDict(
+            {
+                "pixel_wise": torch.randn(4, 51),
+                "binary": torch.randn(4, 3),
+            },
+            batch_size=[4],
+        )
+    )
 
     return core
 
@@ -387,15 +400,17 @@ class TestMediumMetricsLogging:
             },
             batch_size=[4],
         )
-        critic_probs = TensorDict(
-            {
-                "pixel_wise": torch.softmax(torch.randn(4, 51), dim=-1),
-                "binary": torch.softmax(torch.randn(4, 3), dim=-1),
-            },
-            batch_size=[4],
+        critic_response = CriticResponseManager(
+            q_logits=TensorDict(
+                {
+                    "pixel_wise": torch.randn(4, 51),
+                    "binary": torch.randn(4, 3),
+                },
+                batch_size=[4],
+            )
         )
         mock_core.actor.return_value = action_probs
-        mock_core.critic.return_value = critic_probs
+        mock_core.critic.return_value = critic_response
 
         manager = TensorBoardWriterManager(temp_experiment_path, medium_frequency=100)
         manager.on_train_step(sample_context)

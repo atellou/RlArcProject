@@ -23,6 +23,7 @@ from tensordict import TensorDict
 from rlarcworld.common.enums import ActionKeys, StateKeys
 from rlarcworld.models.nn_modules import (
     CriticHeadFromEncoder,
+    CriticResponseManager,
     RlArcWorldViTARC,
     RlArcWorldViTARCConfig,
 )
@@ -182,7 +183,7 @@ class VitARCCritic(torch.nn.Module):
             )
         )
 
-    def forward(self, state: TensorDict, action: TensorDict) -> TensorDict:
+    def forward(self, state: TensorDict, action: TensorDict) -> CriticResponseManager:
         r"""Forward pass of the critic network.
 
         Args:
@@ -221,8 +222,8 @@ class VitARCCritic(torch.nn.Module):
 
         # Use critic head to produce per-reward distributions
         action = action.to(current_device)
-        q_dist = self.critic_head(vitarc_output, action)
+        q_response = self.critic_head(vitarc_output, action)
 
-        self.output_val(q_dist)
+        self.output_val(q_response.q_logits)
 
-        return q_dist.auto_batch_size_()
+        return q_response

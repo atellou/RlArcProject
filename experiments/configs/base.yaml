@@ -24,9 +24,9 @@ network:
   use_temporal: true
   use_examples: true
   example_compression_tokens: 32
-  grid_compression_tokens: 128
+  grid_compression_tokens: 64
   compression_method: "learned"
-  max_learnable_examples: 2
+  max_learnable_examples: 1
 
 
 d4pg:

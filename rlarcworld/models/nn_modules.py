@@ -8,6 +8,7 @@ attention, and cross-attention classifier heads.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -341,6 +342,43 @@ class ActionHeadFromEncoder(nn.Module):
 # =============================================================================
 
 
+@dataclass
+class CriticResponseManager:
+    """Manages responses from the critic head."""
+
+    q_logits: TensorDict
+    _q_dist: TensorDict | None = None
+    _q_log_dist: TensorDict | None = None
+
+    @property
+    def q_dist(self) -> TensorDict:
+        """Compute the Q-distribution."""
+        if self._q_dist is None:
+            self._q_dist = TensorDict(
+                {
+                    key: torch.softmax(logits.float(), dim=-1)
+                    for key, logits in self.q_logits.items()
+                }
+            )
+        return self._q_dist
+
+    @property
+    def q_log_dist(self) -> TensorDict:
+        """Compute the Logarithmic Q-distribution."""
+        if self._q_log_dist is None:
+            self._q_log_dist = TensorDict(
+                {
+                    key: torch.log_softmax(logits.float(), dim=-1)
+                    for key, logits in self.q_logits.items()
+                }
+            )
+        return self._q_log_dist
+
+    def keys(self) -> list[str]:
+        """Return the keys of the Q-distribution."""
+        return list(self.q_logits.keys())
+
+
 class CriticHeadFromEncoder(nn.Module):
     """Converts ViTARC encoder outputs + actions to distributional Q-values.
 
@@ -403,7 +441,7 @@ class CriticHeadFromEncoder(nn.Module):
         self,
         encoder_output: ViTARCEncoderOutput,
         action: TensorDict,
-    ) -> TensorDict:
+    ) -> CriticResponseManager:
         """Compute per-reward distributions from encoder output and action.
 
         Args:
@@ -466,12 +504,7 @@ class CriticHeadFromEncoder(nn.Module):
             logits = self.classifiers[reward_key](attended)  # [B, num_atoms]
             q_logits[reward_key] = logits
 
-        # Convert logits to probability distributions over atoms
-        q_dist = TensorDict(
-            {key: torch.softmax(logits, dim=-1) for key, logits in q_logits.items()}
-        )
-
-        return q_dist
+        return CriticResponseManager(q_logits=TensorDict(q_logits).auto_batch_size_())
 
 
 # =============================================================================

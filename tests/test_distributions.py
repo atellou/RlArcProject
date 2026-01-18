@@ -33,7 +33,7 @@ def test_shapes_and_normalization():
         v_min,
         v_max,
         num_atoms,
-        apply_softmax=True,
+        normalize_projection=True,
         n_steps=1,
     )
 
@@ -76,7 +76,7 @@ def test_shapes_and_normalization_parametrized(num_atoms, v_min, v_max):
         v_min,
         v_max,
         num_atoms,
-        apply_softmax=True,
+        normalize_projection=True,
         n_steps=2,
     )
 
@@ -114,7 +114,7 @@ def test_terminated_independent_of_nsteps(n_steps, term_flag):
         v_min,
         v_max,
         num_atoms,
-        apply_softmax=True,
+        normalize_projection=True,
         n_steps=n_steps,
     )
 
@@ -165,7 +165,7 @@ def test_gamma_zero_behavior():
         v_min=v_min,
         v_max=v_max,
         num_atoms=num_atoms,
-        apply_softmax=True,
+        normalize_projection=True,
         n_steps=3,
     )
 

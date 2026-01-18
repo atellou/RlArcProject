@@ -2,17 +2,20 @@
 
 import copy
 import logging
-from inspect import Parameter
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, cast
+from typing import cast
 
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from tensordict import TensorDict
+from torch.nn import Parameter
 from torch.utils.tensorboard import SummaryWriter
 
 from rlarcworld.algorithms.distributions import categorical_projection
 from rlarcworld.common.enums import RewardKeys
+from rlarcworld.models.nn_modules import CriticResponseManager
 from rlarcworld.trainers.core import OnStepContext
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
@@ -192,17 +195,19 @@ class D4PGCore:
         with torch.no_grad():
             with self.amp_scaler:
                 action_probs = self.actor_target(next_state)
-                next_q_dist = self.critic_target(next_state, action_probs)
+                next_q_response: CriticResponseManager = self.critic_target(
+                    next_state, action_probs
+                )
 
-        assert next_q_dist.keys() == reward.keys(), (
-            f"Mismatched keys next_q_dist={list(next_q_dist.keys())}, "
+        assert set(next_q_response.keys()) == set(reward.keys()), (
+            f"Mismatched keys next_q_dist={list(next_q_response.keys())}, "
             f"reward={list(reward.keys())}"
         )
 
         target_dist = TensorDict(
             {
                 key: categorical_projection(
-                    next_q_dist[key],
+                    next_q_response.q_dist[key],
                     reward[key],
                     terminated,
                     self.gamma,
@@ -210,10 +215,10 @@ class D4PGCore:
                     self.critic_target.v_min[key],
                     self.critic_target.v_max[key],
                     self.critic_target.num_atoms[key],
-                    apply_softmax=True,
+                    normalize_projection=True,
                     n_steps=self.n_steps if key in RewardKeys.get_n_step_keys() else 1,
                 )
-                for key in next_q_dist.keys()
+                for key in next_q_response.keys()
             }
         ).to(self.device)
         return target_dist
@@ -229,7 +234,7 @@ class D4PGCore:
         action: TensorDict,
         target_dist: TensorDict,
         compute_td_error: bool = False,
-    ) -> tuple[TensorDict, TensorDict, TensorDict]:
+    ) -> tuple[TensorDict, TensorDict, CriticResponseManager]:
         """Compute the loss for the critic network.
 
         Args:
@@ -245,18 +250,20 @@ class D4PGCore:
         """
         # Q distribution from critic
         with self.amp_scaler:
-            q_dist = self.critic(state, action)
+            q_response: CriticResponseManager = self.critic(state, action)
 
         loss = TensorDict({}).to(self.device)
         td_error = TensorDict({}).to(self.device)
-        for key in q_dist.keys():
+        log_q = q_response.q_log_dist
+        for key in log_q.keys():
             if compute_td_error:
-                td_error[key] = torch.abs(
-                    torch.sum(q_dist[key] * self.critic.z_atoms[key], dim=-1)
-                    - torch.sum(target_dist[key] * self.critic.z_atoms[key], dim=-1)
+                td_error[key] = (
+                    F.kl_div(log_q[key], target_dist[key], reduction="none")
+                    .sum(dim=-1)
+                    .detach()
                 )
-            loss[key] = self.critic_criterion(q_dist[key], target_dist[key])
-        return loss, td_error, q_dist
+            loss[key] = self.critic_criterion(log_q[key], target_dist[key])
+        return loss, td_error, q_response
 
     def _categorize_actions(
         self, actions: TensorDict, as_dict: bool = False
@@ -296,7 +303,8 @@ class D4PGCore:
             action_probs (TensorDict, optional): Pre-computed action
                 probabilities. If None, will be computed using actor network.
             critic_probs (TensorDict, optional): Pre-computed critic
-                probabilities. If None, will be computed using critic network.
+                q-distribution (probabilities over atoms). If None, will be
+                computed using critic network.
 
         Returns:
             TensorDict: Actor loss.
@@ -313,7 +321,7 @@ class D4PGCore:
         # Critic distribution for those actions
         if critic_probs is None:
             with self.amp_scaler:
-                critic_probs = self.critic(state, action_probs)
+                critic_probs = self.critic(state, action_probs).q_dist
 
         # Optional entropy and CARSM log_probs
         if self.entropy_coef != 0 or self.carsm:
@@ -400,7 +408,7 @@ class D4PGCore:
                 batch["reward"], batch["next_state"], batch["terminated"]
             )
             # Critic
-            loss_critic_td, td_err, q_dist = self.compute_critic_loss(
+            loss_critic_td, td_err, q_response = self.compute_critic_loss(
                 batch["state"],
                 batch["actions"],
                 target_probs,
@@ -517,7 +525,7 @@ class D4PGCore:
                     batch["state"],
                     target_q=target_probs,
                     action_probs=batch["actions"],
-                    critic_probs=q_dist,
+                    critic_probs=q_response.q_dist,
                 )
                 loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
 

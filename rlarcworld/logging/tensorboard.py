@@ -295,7 +295,7 @@ class TensorBoardWriterManager:
         # Critic expected Q per head (mean)
         if hasattr(core, "critic") and hasattr(core.critic, "z_atoms"):
             with torch.no_grad():
-                critic_probs = core.critic(state, action_probs)
+                critic_probs: TensorDict = core.critic(state, action_probs).q_dist
             for key, probs in critic_probs.items():
                 z = core.critic.z_atoms.get(key)
                 if z is None:

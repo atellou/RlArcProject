@@ -124,7 +124,7 @@ def train_arc_critic_network(batch_size: int, device: str = "cpu"):
 
     torch.testing.assert_close(input_sample, org_sample)
 
-    network.output_val(output)
+    network.output_val(output.q_dist)
 
     criterion = torch.nn.KLDivLoss(reduction="batchmean")
     optimizer = torch.optim.RMSprop(network.parameters())
@@ -145,7 +145,7 @@ def train_arc_critic_network(batch_size: int, device: str = "cpu"):
         }
     ).to(network.device)
 
-    for key, dist in output.items():
+    for key, dist in output.q_dist.items():
         (
             torch.testing.assert_close(
                 torch.sum(dist, dim=1), torch.ones(batch_size).to(network.device)
@@ -156,8 +156,11 @@ def train_arc_critic_network(batch_size: int, device: str = "cpu"):
         assert torch.all(dist <= 1), f"Probability values greater than 1 for key: {key}"
 
     loss = criterion(
-        output[RewardKeys.PIXEL_WISE.value], target[RewardKeys.PIXEL_WISE.value]
-    ) + criterion(output[RewardKeys.BINARY.value], target[RewardKeys.BINARY.value])
+        output.q_log_dist[RewardKeys.PIXEL_WISE.value],
+        target[RewardKeys.PIXEL_WISE.value],
+    ) + criterion(
+        output.q_log_dist[RewardKeys.BINARY.value], target[RewardKeys.BINARY.value]
+    )
 
     assert not torch.isnan(loss), f"{criterion._get_name()} is NaN for Critic network"
 

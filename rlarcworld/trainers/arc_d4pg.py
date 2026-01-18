@@ -521,12 +521,16 @@ class ArcD4PG:
             )
 
         if td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value) is not None:
+            priority = td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value)
+            assert priority is not None
             replay_buffer.update_priority(
-                info["index"], td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value)
+                info["index"], priority.detach().to(dtype=torch.float32)
             )
         else:
+            priority = td_error.get(RewardKeys.PIXEL_WISE.value)
+            assert priority is not None
             replay_buffer.update_priority(
-                info["index"], td_error.get(RewardKeys.PIXEL_WISE.value)
+                info["index"], priority.detach().to(dtype=torch.float32)
             )
 
     def _on_validation_callbacks(
