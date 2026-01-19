@@ -2,17 +2,20 @@
 
 import copy
 import logging
-from inspect import Parameter
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, cast
+from typing import cast
 
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from tensordict import TensorDict
+from torch.nn import Parameter
 from torch.utils.tensorboard import SummaryWriter
 
 from rlarcworld.algorithms.distributions import categorical_projection
-from rlarcworld.common.enums import RewardKeys
+from rlarcworld.common.enums import ActionKeys, RewardKeys
+from rlarcworld.models.nn_modules import CriticResponseManager
 from rlarcworld.trainers.core import OnStepContext
 from rlarcworld.utils.checkpointing import (
     add_schema_and_class,
@@ -56,6 +59,9 @@ class D4PGCore:
         carsm: bool = False,
         entropy_coef: float = 0.0,
         entropy_coef_decay: float = 1.0,
+        entropy_floor_coef: float = 0.0,
+        min_entropy: float = 0.0,
+        submit_entropy_scale: float = 1.0,
         target_update_frequency: int = 10,
         model_update_frequency: int = 1,
         cache_enabled: bool = False,
@@ -85,6 +91,13 @@ class D4PGCore:
                 0.0.
             entropy_coef_decay (float, optional): Entropy coefficient decay.
                 Defaults to 1.0.
+            entropy_floor_coef (float, optional): Coefficient for the minimum
+                entropy floor penalty. Defaults to 0.0.
+            min_entropy (float, optional): Minimum entropy floor to prevent
+                complete entropy collapse. Defaults to 0.0.
+            submit_entropy_scale (float, optional): Scale factor applied only to
+                the submit head contribution when computing the entropy
+                regularization term. Defaults to 1.0.
             device_config (Optional[CudaConfig], optional): Device configuration
                 dictionary. Defaults to None.
             max_grad_norm (float, optional): Maximum gradient norm. Defaults to
@@ -101,6 +114,9 @@ class D4PGCore:
         """
         assert entropy_coef >= 0, "Entropy coefficient must be non-negative"
         assert entropy_coef_decay >= 0, "Entropy coefficient decay must be non-negative"
+        assert entropy_floor_coef >= 0, "Entropy floor coefficient must be non-negative"
+        assert min_entropy >= 0, "Minimum entropy must be non-negative"
+        assert submit_entropy_scale >= 0, "Submit entropy scale must be non-negative"
 
         # Config/device/AMP
         self.device_config = (
@@ -119,6 +135,9 @@ class D4PGCore:
         self.carsm = carsm
         self.entropy_coef = entropy_coef
         self.entropy_coef_decay = entropy_coef_decay
+        self.entropy_floor_coef = entropy_floor_coef
+        self.min_entropy = min_entropy
+        self.submit_entropy_scale = submit_entropy_scale
         self.max_grad_norm = max_grad_norm
         self.target_update_frequency = target_update_frequency
         self.model_update_frequency = model_update_frequency
@@ -192,17 +211,19 @@ class D4PGCore:
         with torch.no_grad():
             with self.amp_scaler:
                 action_probs = self.actor_target(next_state)
-                next_q_dist = self.critic_target(next_state, action_probs)
+                next_q_response: CriticResponseManager = self.critic_target(
+                    next_state, action_probs
+                )
 
-        assert next_q_dist.keys() == reward.keys(), (
-            f"Mismatched keys next_q_dist={list(next_q_dist.keys())}, "
+        assert set(next_q_response.keys()) == set(reward.keys()), (
+            f"Mismatched keys next_q_dist={list(next_q_response.keys())}, "
             f"reward={list(reward.keys())}"
         )
 
         target_dist = TensorDict(
             {
                 key: categorical_projection(
-                    next_q_dist[key],
+                    next_q_response.q_dist[key],
                     reward[key],
                     terminated,
                     self.gamma,
@@ -210,10 +231,10 @@ class D4PGCore:
                     self.critic_target.v_min[key],
                     self.critic_target.v_max[key],
                     self.critic_target.num_atoms[key],
-                    apply_softmax=True,
+                    normalize_projection=True,
                     n_steps=self.n_steps if key in RewardKeys.get_n_step_keys() else 1,
                 )
-                for key in next_q_dist.keys()
+                for key in next_q_response.keys()
             }
         ).to(self.device)
         return target_dist
@@ -229,7 +250,7 @@ class D4PGCore:
         action: TensorDict,
         target_dist: TensorDict,
         compute_td_error: bool = False,
-    ) -> tuple[TensorDict, TensorDict, TensorDict]:
+    ) -> tuple[TensorDict, TensorDict, CriticResponseManager]:
         """Compute the loss for the critic network.
 
         Args:
@@ -245,18 +266,20 @@ class D4PGCore:
         """
         # Q distribution from critic
         with self.amp_scaler:
-            q_dist = self.critic(state, action)
+            q_response: CriticResponseManager = self.critic(state, action)
 
         loss = TensorDict({}).to(self.device)
         td_error = TensorDict({}).to(self.device)
-        for key in q_dist.keys():
+        log_q = q_response.q_log_dist
+        for key in log_q.keys():
             if compute_td_error:
-                td_error[key] = torch.abs(
-                    torch.sum(q_dist[key] * self.critic.z_atoms[key], dim=-1)
-                    - torch.sum(target_dist[key] * self.critic.z_atoms[key], dim=-1)
+                td_error[key] = (
+                    F.kl_div(log_q[key], target_dist[key], reduction="none")
+                    .sum(dim=-1)
+                    .detach()
                 )
-            loss[key] = self.critic_criterion(q_dist[key], target_dist[key])
-        return loss, td_error, q_dist
+            loss[key] = self.critic_criterion(log_q[key], target_dist[key])
+        return loss, td_error, q_response
 
     def _categorize_actions(
         self, actions: TensorDict, as_dict: bool = False
@@ -296,7 +319,8 @@ class D4PGCore:
             action_probs (TensorDict, optional): Pre-computed action
                 probabilities. If None, will be computed using actor network.
             critic_probs (TensorDict, optional): Pre-computed critic
-                probabilities. If None, will be computed using critic network.
+                q-distribution (probabilities over atoms). If None, will be
+                computed using critic network.
 
         Returns:
             TensorDict: Actor loss.
@@ -307,28 +331,54 @@ class D4PGCore:
 
         # Action probabilities
         if action_probs is None:
-            with self.amp_scaler:
+            if self.amp_scaler.scaler is not None:
+                with torch.amp.autocast(device_type="cuda", enabled=False):
+                    action_probs = self.actor(state)
+            else:
                 action_probs = self.actor(state)
+
+        for _k, _v in action_probs.items():
+            if not torch.isfinite(_v).all():
+                raise RuntimeError(
+                    f"Non-finite action probabilities detected for head '{_k}'."
+                )
 
         # Critic distribution for those actions
         if critic_probs is None:
-            with self.amp_scaler:
-                critic_probs = self.critic(state, action_probs)
+            if self.amp_scaler.scaler is not None:
+                with torch.amp.autocast(device_type="cuda", enabled=False):
+                    critic_probs = self.critic(state, action_probs).q_dist
+            else:
+                critic_probs = self.critic(state, action_probs).q_dist
+
+        for _k, _v in critic_probs.items():
+            if not torch.isfinite(_v).all():
+                raise RuntimeError(
+                    f"Non-finite critic distribution detected for head '{_k}'."
+                )
 
         # Optional entropy and CARSM log_probs
-        if self.entropy_coef != 0 or self.carsm:
+        if self.entropy_coef != 0 or self.entropy_floor_coef != 0 or self.carsm:
             entropy: torch.Tensor = torch.tensor(0.0, device=self.device)
             log_probs: list[torch.Tensor] = []
             action = self._categorize_actions(action_probs, as_dict=True)
+            entropy_weight_sum: torch.Tensor = torch.tensor(0.0, device=self.device)
             for key in action_probs.keys():
                 if self.carsm:
                     dist = torch.distributions.Categorical(probs=action_probs[key])
                     log_probs.append(dist.log_prob(action[key]))
-                if self.entropy_coef != 0:
-                    entropy += -torch.sum(
+                if self.entropy_coef != 0 or self.entropy_floor_coef != 0:
+                    head_entropy = -torch.sum(
                         action_probs[key] * torch.log(action_probs[key] + 1e-10), dim=-1
                     ).mean()
-            entropy = entropy / max(1, len(action_probs))
+                    head_weight = 1.0
+                    if key == ActionKeys.SUBMIT.value:
+                        head_weight = float(self.submit_entropy_scale)
+                    entropy = entropy + head_entropy * head_weight
+                    entropy_weight_sum = entropy_weight_sum + head_weight
+
+            if self.entropy_coef != 0 or self.entropy_floor_coef != 0:
+                entropy = entropy / torch.clamp(entropy_weight_sum, min=1.0)
             if self.carsm:
                 log_probs_tensor = torch.sum(
                     torch.stack(log_probs, dim=-1), dim=-1
@@ -339,20 +389,35 @@ class D4PGCore:
         # Expected Q
         loss = TensorDict({})
         for key in critic_probs.keys():
+            z_atoms = self.critic.z_atoms[key].to(critic_probs[key].device).float()
             q_exp = torch.sum(
-                critic_probs[key]
-                * self.critic.z_atoms[key].to(critic_probs[key].device),
+                critic_probs[key].float() * z_atoms,
                 dim=-1,
                 keepdim=True,
             )
+            if not torch.isfinite(q_exp).all():
+                raise RuntimeError(f"Non-finite expected Q detected for head '{key}'.")
             if self.carsm:
                 # Narrow type for mypy: target_q must be provided in CARSM branch
                 assert target_q is not None
                 tq = cast(TensorDict, target_q)
                 q_exp = (tq[key] - q_exp) * log_probs_tensor
             loss[key] = -torch.mean(q_exp)
+            if not torch.isfinite(loss[key]).all():
+                raise RuntimeError(f"Non-finite actor loss detected for head '{key}'.")
             if self.entropy_coef != 0:
+                if not torch.isfinite(entropy).all():
+                    raise RuntimeError("Non-finite entropy detected in actor loss.")
                 loss[key] = loss[key] - self.entropy_coef * entropy
+            if self.entropy_floor_coef != 0:
+                if not torch.isfinite(entropy).all():
+                    raise RuntimeError("Non-finite entropy detected in actor loss.")
+                entropy_floor_penalty = torch.relu(self.min_entropy - entropy)
+                if not torch.isfinite(entropy_floor_penalty).all():
+                    raise RuntimeError(
+                        "Non-finite entropy floor penalty detected in actor loss."
+                    )
+                loss[key] = loss[key] + self.entropy_floor_coef * entropy_floor_penalty
         return loss
 
     def step_schedulers_and_decay(self) -> None:
@@ -400,7 +465,7 @@ class D4PGCore:
                 batch["reward"], batch["next_state"], batch["terminated"]
             )
             # Critic
-            loss_critic_td, td_err, q_dist = self.compute_critic_loss(
+            loss_critic_td, td_err, q_response = self.compute_critic_loss(
                 batch["state"],
                 batch["actions"],
                 target_probs,
@@ -477,10 +542,10 @@ class D4PGCore:
                         and grad_norm_critic is not None
                     ):
                         self.tb_writer.add_scalar(
-                            "actor/grad_l2_norm", grad_norm_actor, self._update_counter
+                            "grad_l2_norm/actor", grad_norm_actor, self._update_counter
                         )
                         self.tb_writer.add_scalar(
-                            "critic/grad_l2_norm",
+                            "grad_l2_norm/critic",
                             grad_norm_critic,
                             self._update_counter,
                         )
@@ -517,7 +582,7 @@ class D4PGCore:
                     batch["state"],
                     target_q=target_probs,
                     action_probs=batch["actions"],
-                    critic_probs=q_dist,
+                    critic_probs=q_response.q_dist,
                 )
                 loss_actor = sum(loss_actor_td.values()) / max(1, len(loss_actor_td))
 
@@ -532,7 +597,7 @@ class D4PGCore:
             ctx: Step ctx containing all relevant information
         """
         # Update target networks periodically
-        if ctx.batch is not None:
+        if ctx.batch is None or ctx.warmup:
             return
 
         self.step_schedulers_and_decay()
@@ -681,6 +746,10 @@ class D4PGCore:
                 self.entropy_coef_decay = hp.get(
                     "entropy_coef_decay", self.entropy_coef_decay
                 )
+                self.entropy_floor_coef = hp.get(
+                    "entropy_floor_coef", self.entropy_floor_coef
+                )
+                self.min_entropy = hp.get("min_entropy", self.min_entropy)
                 self.target_update_frequency = hp.get(
                     "target_update_frequency", self.target_update_frequency
                 )
@@ -723,6 +792,8 @@ class D4PGCore:
             "gamma": self.gamma,
             "entropy_coef": self.entropy_coef,
             "entropy_coef_decay": self.entropy_coef_decay,
+            "entropy_floor_coef": self.entropy_floor_coef,
+            "min_entropy": self.min_entropy,
             "target_update_frequency": self.target_update_frequency,
             "tau": self.tau,
             "max_grad_norm": self.max_grad_norm,

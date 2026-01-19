@@ -54,7 +54,10 @@ class ArcWorldModelStepper:
         step_horizon: int = 5,
         gamma: float = 0.99,
         n_step_config: NStepMinVMaxConfig | None = None,
-        # Smooth transition params
+        max_penalty: float = 1.0,
+        step_cost: float = 0.0,
+        perfect_no_submit_penalty_coef: float = 1.0,
+        zero_improvement_penalty: float = 0.0,
         grid_diff_epsilon: float = 0.01,
         smooth_transition: bool = True,
         transition_steepness: float = 100.0,
@@ -76,6 +79,10 @@ class ArcWorldModelStepper:
             step_horizon: Planning horizon for imagined rollouts.
             gamma: Discount factor.
             n_step_config: N-step configuration.
+            max_penalty: Maximum penalty for submitted bad grids.
+            step_cost: Cost for each step taken.
+            perfect_no_submit_penalty_coef: Coefficient for perfect no-submit penalty.
+            zero_improvement_penalty: Coefficient for zero improvement penalty.
             grid_diff_epsilon: Threshold for "perfect" grid detection.
             smooth_transition: Use smooth sigmoid transition.
             transition_steepness: Steepness of smooth transition.
@@ -91,6 +98,9 @@ class ArcWorldModelStepper:
         self.n_step_config = (
             n_step_config if n_step_config is not None else NStepMinVMaxConfig()
         )
+
+        self.max_penalty = max_penalty
+        self.step_cost = step_cost
 
         # Metrics tracking using tensors for compute optimization
         self._max_tracked_losses = 1000
@@ -113,6 +123,8 @@ class ArcWorldModelStepper:
             grid_size=grid_size,
             color_values=color_values,
             device=self.device,
+            max_penalty=self.max_penalty,
+            step_cost=self.step_cost,
         )
 
         self.environment = RewardWorldModelWrapper(
@@ -124,6 +136,10 @@ class ArcWorldModelStepper:
             grid_diff_epsilon=grid_diff_epsilon,
             smooth_transition=smooth_transition,
             transition_steepness=transition_steepness,
+            max_penalty=self.max_penalty,
+            step_cost=self.step_cost,
+            perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
+            zero_improvement_penalty=zero_improvement_penalty,
         )
 
         self.stepper = EnvStepper(
@@ -270,38 +286,52 @@ class ArcWorldModelStepper:
     def compute_model_loss(
         self,
         pred: TensorDict,
-        true_reward: TensorDict,
+        grid_perfect: torch.Tensor,
+        improvement: torch.Tensor,
     ) -> tuple[torch.Tensor, dict]:
         """Compute world model loss.
 
         Args:
             pred: Predicted rewards from environment {binary, pixel_wise}
-            true_reward: True rewards from environment {binary, pixel_wise}
+            grid_perfect: Is the grid perfect or not (0, 1).
+            improvement: Was the grid improved or not (-1, 0, 1).
 
         Returns:
             Total loss and dict of component losses
         """
-        # Binary classification loss (cross-entropy)
-        # true_reward["binary"] is in [0, 1], pred["binary"] is [P(0), P(1)]
-        binary_target = true_reward[RewardKeys.BINARY.value].long()
+        # Binary classification loss
+        binary_target = grid_perfect.long()
         if binary_target.dim() > 1:
             binary_target = binary_target.squeeze(-1)
-        # Clamp to valid class indices
         binary_target = binary_target.clamp(0, 1)
-        binary_loss = F.cross_entropy(pred[RewardKeys.BINARY.value], binary_target)
+        if not torch.isfinite(binary_target.float()).all():
+            raise RuntimeError("Non-finite binary reward target in world model.")
+        binary_pred = pred[RewardKeys.BINARY.value].float()
+        if not torch.isfinite(binary_pred).all():
+            raise RuntimeError("Non-finite binary reward prediction in world model.")
+        log_binary_pred = torch.log(binary_pred.clamp_min(1e-10))
+        if not torch.isfinite(log_binary_pred).all():
+            raise RuntimeError("Non-finite binary log-probabilities in world model.")
+        binary_loss = F.nll_loss(log_binary_pred, binary_target)
+        if not torch.isfinite(binary_loss).all():
+            raise RuntimeError("Non-finite binary loss in world model.")
 
-        # Pixel-wise regression loss (MSE)
-        # Normalize true pixel_wise to [0, 1] percentage
-        pixel_target = true_reward[RewardKeys.PIXEL_WISE.value].float()
+        # Improvement signal classification loss
+        pixel_target = improvement.long() + 1
         if pixel_target.dim() > 1:
             pixel_target = pixel_target.squeeze(-1)
-        # Clamp to valid range [0, 1]
-        pixel_target = pixel_target.clamp(0, 1)
-        pixel_pred = pred[RewardKeys.PIXEL_WISE.value]
-        pixel_loss = F.mse_loss(pixel_pred, pixel_target)
+        pixel_target = pixel_target.clamp(0, 2)
+        if not torch.isfinite(pixel_target).all():
+            raise RuntimeError("Non-finite pixel_wise reward target in world model.")
+
+        pixel_loss = F.cross_entropy(pred[RewardKeys.PIXEL_WISE.value], pixel_target)
+        if not torch.isfinite(pixel_loss).all():
+            raise RuntimeError("Non-finite pixel_wise loss in world model.")
 
         # Total loss
         total_loss = binary_loss + pixel_loss
+        if not torch.isfinite(total_loss).all():
+            raise RuntimeError("Non-finite total loss in world model.")
 
         return total_loss, {
             RewardKeys.BINARY.value: binary_loss.item(),
@@ -311,20 +341,24 @@ class ArcWorldModelStepper:
     def update_model(
         self,
         state: TensorDict,
-        true_reward: TensorDict,
+        grid_perfect: torch.Tensor,
+        improvement: torch.Tensor,
     ) -> dict:
         """Compute loss and update world model.
 
         Args:
             state: Environment state TensorDict
-            true_reward: True rewards from real environment {binary, pixel_wise}
+            grid_perfect: Is the grid perfect or not.
+            improvement: Was the grid improved or not.
 
         Returns:
             Dict of loss values
         """
         self.model_optimizer.zero_grad()
         loss, loss_dict = self.compute_model_loss(
-            self.model.forward(state), true_reward
+            self.model.forward(state),
+            grid_perfect,
+            improvement,
         )
         loss.backward()
         self.model_optimizer.step()
@@ -376,6 +410,11 @@ class ArcWorldModelStepper:
         self._imagination_count += 1
 
         if step_count > 0:
+            logger.info(
+                f"Imagination rollout completed. Iteration {self._imagination_count}, "
+                f"actor loss: {total_actor_loss / step_count}, "
+                f"critic loss: {total_critic_loss / step_count}"
+            )
             return total_actor_loss / step_count, total_critic_loss / step_count
         return None, None
 
@@ -396,9 +435,33 @@ class ArcWorldModelStepper:
 
         # 1. Update world model with true rewards
         if ctx.iteration % self.model_update_frequency == 0:
+            # TODO!!!!: The target reward is wrong.
+            # It should be a simple not modified metric
+            # We should pass:
+            # - binary: 1 if the grid is correct and submitted, 0 otherwise
+            # - pixel_wise: percentage of completion
+            # These are the rewards to look for in the model
+            # and it then can be used to compute the ones that include
+            # penalties, discounts, etc.
+            info = ctx.batch.get("info")
+            if info is None:
+                raise RuntimeError(
+                    "World model update requires 'info' in ctx.batch. "
+                    "Ensure StepperCore.step() includes env info in the transition."
+                )
+            if "grid_perfect" not in info.keys() or "improvement" not in info.keys():
+                raise RuntimeError(
+                    "World model update requires 'grid_perfect' and 'improvement' "
+                    "in ctx.batch['info']."
+                )
+
+            grid_perfect = info["grid_perfect"]
+            improvement = info["improvement"]
+
             loss_dict = self.update_model(
                 state=ctx.batch["state"],
-                true_reward=ctx.batch["reward"],
+                grid_perfect=grid_perfect,
+                improvement=improvement,
             )
             logger.debug(
                 f"World model updated. Iteration {ctx.iteration}, loss: {loss_dict}"
@@ -406,6 +469,10 @@ class ArcWorldModelStepper:
 
         # 2. Run imagination rollouts
         if ctx.iteration % self.imagination_frequency == 0:
+            logger.info(
+                f"Running imagination rollouts at iteration {ctx.iteration}, "
+                f"total imaginations: {self._imagination_count}"
+            )
             for _ in range(self.imagination_ratio):
                 starting_state = ctx.batch["state"]
 
@@ -415,11 +482,6 @@ class ArcWorldModelStepper:
                     sample=starting_state,
                     training=True,
                 )
-
-            logger.debug(
-                f"Imagination rollouts at iteration {ctx.iteration}, "
-                f"total imaginations: {self._imagination_count}"
-            )
 
     # ==================== Metrics ====================
 
@@ -439,10 +501,16 @@ class ArcWorldModelStepper:
         Returns:
             Dict mapping loss keys to their average values
         """
-        avg = {
-            key: self._model_losses[key].mean().item()
-            for key in self._model_losses.keys()
-        }
+        avg: dict[str, float] = {}
+        for key in self._model_losses.keys():
+            q = self._model_losses[key]
+            if q.numel() == 0:
+                continue
+            q_f = q.float()
+            q_f = q_f[torch.isfinite(q_f)]
+            if q_f.numel() == 0:
+                continue
+            avg[key] = q_f.mean().item()
         if reset:
             self._reset_loss_queues()
         return avg

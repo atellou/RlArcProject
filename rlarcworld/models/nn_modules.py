@@ -8,6 +8,7 @@ attention, and cross-attention classifier heads.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -341,6 +342,43 @@ class ActionHeadFromEncoder(nn.Module):
 # =============================================================================
 
 
+@dataclass
+class CriticResponseManager:
+    """Manages responses from the critic head."""
+
+    q_logits: TensorDict
+    _q_dist: TensorDict | None = None
+    _q_log_dist: TensorDict | None = None
+
+    @property
+    def q_dist(self) -> TensorDict:
+        """Compute the Q-distribution."""
+        if self._q_dist is None:
+            self._q_dist = TensorDict(
+                {
+                    key: torch.softmax(logits.float(), dim=-1)
+                    for key, logits in self.q_logits.items()
+                }
+            )
+        return self._q_dist
+
+    @property
+    def q_log_dist(self) -> TensorDict:
+        """Compute the Logarithmic Q-distribution."""
+        if self._q_log_dist is None:
+            self._q_log_dist = TensorDict(
+                {
+                    key: torch.log_softmax(logits.float(), dim=-1)
+                    for key, logits in self.q_logits.items()
+                }
+            )
+        return self._q_log_dist
+
+    def keys(self) -> list[str]:
+        """Return the keys of the Q-distribution."""
+        return list(self.q_logits.keys())
+
+
 class CriticHeadFromEncoder(nn.Module):
     """Converts ViTARC encoder outputs + actions to distributional Q-values.
 
@@ -403,75 +441,50 @@ class CriticHeadFromEncoder(nn.Module):
         self,
         encoder_output: ViTARCEncoderOutput,
         action: TensorDict,
-    ) -> TensorDict:
+    ) -> CriticResponseManager:
         """Compute per-reward distributions from encoder output and action.
 
         Args:
             encoder_output: ``ViTARCEncoderOutput`` with hidden states and mask.
             action: TensorDict with action distributions for
                 ``x_location``, ``y_location``, ``color_values``, ``submit``.
-
-        Returns:
-            TensorDict mapping reward keys to probability distributions
-            over ``num_atoms[key]`` atoms.
         """
-        hidden_states = encoder_output.hidden_states  # [B, seq_len, H]
+        hidden_states = encoder_output.hidden_states.float()  # [B, seq_len, H]
         attention_mask = encoder_output.attention_mask  # [B, seq_len] or None
 
         batch_size = hidden_states.size(0)
 
-        # Concatenate action distributions in a fixed order and project to token
-        action_concat = torch.cat(
-            [
-                action[ActionKeys.X_LOCATION.value],
-                action[ActionKeys.Y_LOCATION.value],
-                action[ActionKeys.COLOR_VALUES.value],
-                action[ActionKeys.SUBMIT.value],
-            ],
-            dim=1,
-        )
-        action_embed = self.action_projection(action_concat).unsqueeze(1)
+        # Flatten action distributions into a single feature vector and project
+        # into the encoder hidden size.
+        action_features = torch.cat(
+            [action[key] for key in ACTION_KEYS_SET], dim=-1
+        ).float()
+        action_token = self.action_projection(action_features).unsqueeze(1)  # [B, 1, H]
 
-        # Append action token to encoder sequence
-        hidden_states = torch.cat([hidden_states, action_embed], dim=1)
-
-        # Extend attention mask for action token if provided
-        if attention_mask is not None:
-            action_mask = torch.ones(
-                batch_size,
-                1,
-                device=attention_mask.device,
-                dtype=attention_mask.dtype,
-            )
-            attention_mask = torch.cat([attention_mask, action_mask], dim=1)
+        # Append action token to sequence
+        hidden_with_action = torch.cat([hidden_states, action_token], dim=1)
 
         # Convert attention mask to key_padding_mask format
         key_padding_mask = None
         if attention_mask is not None:
             key_padding_mask = ~attention_mask.bool()
+            pad = torch.zeros((batch_size, 1), device=key_padding_mask.device).bool()
+            key_padding_mask = torch.cat([key_padding_mask, pad], dim=1)
 
-        # Cross-attention: one learnable query per reward type
         q_logits: dict[str, torch.Tensor] = {}
         for reward_key, query in self.value_queries.items():
             q = query.expand(batch_size, -1, -1)  # [B, 1, H]
-
             attended, _ = self.cross_attention(
                 q,
-                hidden_states,
-                hidden_states,
+                hidden_with_action,
+                hidden_with_action,
                 key_padding_mask=key_padding_mask,
             )
-
             attended = self.layer_norm(attended.squeeze(1))  # [B, H]
             logits = self.classifiers[reward_key](attended)  # [B, num_atoms]
             q_logits[reward_key] = logits
 
-        # Convert logits to probability distributions over atoms
-        q_dist = TensorDict(
-            {key: torch.softmax(logits, dim=-1) for key, logits in q_logits.items()}
-        )
-
-        return q_dist
+        return CriticResponseManager(q_logits=TensorDict(q_logits).auto_batch_size_())
 
 
 # =============================================================================
@@ -525,11 +538,11 @@ class RewardHeadFromEncoder(nn.Module):
 
         # Classification heads for reward predictions
         # Binary: 2 classes (incorrect, correct)
-        # Pixel-wise: 1 output (regression)
+        # Pixel-wise: 3 classes (worse, same, better)
         self.classifiers = nn.ModuleDict(
             {
                 RewardKeys.BINARY.value: nn.Linear(hidden_size, 2),
-                RewardKeys.PIXEL_WISE.value: nn.Linear(hidden_size, 1),
+                RewardKeys.PIXEL_WISE.value: nn.Linear(hidden_size, 3),
             }
         )
 
@@ -547,7 +560,7 @@ class RewardHeadFromEncoder(nn.Module):
                 - ``binary``: Softmax probabilities [B, 2] for (incorrect, correct)
                 - ``pixel_wise``: Sigmoid output [B] for percentage of wrong pixels
         """
-        hidden_states = encoder_output.hidden_states  # [B, seq_len, H]
+        hidden_states = encoder_output.hidden_states.float()  # [B, seq_len, H]
         attention_mask = encoder_output.attention_mask  # [B, seq_len] or None
 
         batch_size = hidden_states.size(0)
@@ -575,12 +588,13 @@ class RewardHeadFromEncoder(nn.Module):
 
         # Process outputs into reward predictions
         # Binary: softmax classification (better calibrated probabilities)
-        binary_prob = torch.softmax(reward_outputs[RewardKeys.BINARY.value], dim=-1)
-
-        # Pixel-wise: sigmoid to predict percentage of wrong pixels in [0, 1]
-        pixel_wise_percentage = torch.sigmoid(
-            reward_outputs[RewardKeys.PIXEL_WISE.value].squeeze(-1)
+        binary_prob = torch.softmax(
+            reward_outputs[RewardKeys.BINARY.value].float(), dim=-1
         )
+
+        # Pixel-wise: 3-class improvement classifier logits
+        # Class mapping: 0=worse (-1), 1=same (0), 2=better (+1)
+        pixel_wise_percentage = reward_outputs[RewardKeys.PIXEL_WISE.value].float()
 
         return TensorDict(
             {
@@ -756,7 +770,7 @@ class RlArcWorldViTARC(nn.Module):
                 dropout=config.dropout,
             )
         # Example embedding cache for performance
-        self._example_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._example_cache: dict[int, torch.Tensor] = {}
         self._cache_valid = False
 
         # ViTARC encoder (using CustomT5Stack with all enhancements)
@@ -819,7 +833,17 @@ class RlArcWorldViTARC(nn.Module):
             device = ex_batch.device
             return torch.empty((bsz, 0, self.t5_config.d_model), device=device)
 
-        ex_flat = ex_batch.reshape(bsz * ex_count, *ex_batch.shape[2:])
+        # Skip fully padded examples (all zeros) to save encoder compute.
+        # Keep shape contract by scattering valid encodings back into a full tensor.
+        with torch.no_grad():
+            valid_ex = ex_batch.ne(0).any(dim=(2, 3, 4))
+        if not valid_ex.any():
+            device = ex_batch.device
+            return torch.empty((bsz, 0, self.t5_config.d_model), device=device)
+
+        flat_valid = valid_ex.reshape(-1)
+        ex_flat_all = ex_batch.reshape(bsz * ex_count, *ex_batch.shape[2:])
+        ex_flat = ex_flat_all[flat_valid]
         ex_ids, ex_mask, ex_obj_idx = self.grid_encoder.encode_example_pair(ex_flat)
 
         # compression
@@ -833,7 +857,7 @@ class RlArcWorldViTARC(nn.Module):
                     1, 2
                 )
             ex_mask = torch.ones(
-                bsz * ex_count,
+                ex_ids.size(0),
                 self.example_compression_tokens,
                 dtype=ex_mask.dtype,
                 device=ex_mask.device,
@@ -863,9 +887,16 @@ class RlArcWorldViTARC(nn.Module):
                 return_dict=True,
             )
 
-        h = ex_output.last_hidden_state  # [B*E, seq_len, d_model]
-        h = h.reshape(bsz, ex_count * h.size(1), h.size(2))
-        return h
+        h_valid = ex_output.last_hidden_state  # [N, seq_len, d_model]
+        seq_len = int(h_valid.size(1))
+        d_model = int(h_valid.size(2))
+        h_all = torch.zeros(
+            (bsz * ex_count, seq_len, d_model),
+            device=h_valid.device,
+            dtype=h_valid.dtype,
+        )
+        h_all[flat_valid] = h_valid
+        return h_all.reshape(bsz, ex_count * seq_len, d_model)
 
     def _encode_examples(self, examples: torch.Tensor) -> torch.Tensor:
         """Encode example pairs and return concatenated hidden states.
@@ -873,27 +904,47 @@ class RlArcWorldViTARC(nn.Module):
         Handles compression and caching. Expects shape [B, num_examples, 2, H, W].
         """
         batch_size, num_examples = examples.shape[:2]
-        cache_key_data = (
-            examples.shape,
-            examples[0, 0, 0, 0, :].sum().item() if examples.numel() > 0 else 0,
-            examples[-1, -1, 0, :, 0].sum().item() if examples.numel() > 0 else 0,
-        )
-        cache_key = hash(cache_key_data)
+        # Cache key: cheap fingerprint based on the *first* example (index 0).
+        # We assume each sample has at least one example; padded examples are all-zero.
+        if examples.numel() > 0:
+            ex0_first = examples[0, 0].reshape(-1)
+            ex0_last = examples[-1, 0].reshape(-1)
+            cache_key = hash(
+                (
+                    tuple(examples.shape),
+                    float(ex0_first.sum().item()),
+                    float((ex0_first.float().square().sum()).item()),
+                    tuple(int(x) for x in ex0_first[:16].tolist()),
+                    float(ex0_last.sum().item()),
+                    float((ex0_last.float().square().sum()).item()),
+                    tuple(int(x) for x in ex0_last[:16].tolist()),
+                )
+            )
+        else:
+            cache_key = hash((tuple(examples.shape), 0))
 
-        if self._cache_valid and cache_key in self._example_cache:
-            logger.debug("Example cache HIT (key=%s)", cache_key)
-            return self._example_cache[cache_key]
+        cache_enabled = self._cache_valid
 
         logger.debug("Example cache MISS (key=%s)", cache_key)
         learnable_examples = min(int(self.max_learnable_examples), int(num_examples))
 
         hidden_learnable = self._encode_example_batch(examples[:, :learnable_examples])
-        with torch.no_grad():
-            hidden_frozen = self._encode_example_batch(examples[:, learnable_examples:])
 
-        hidden = torch.cat([hidden_learnable, hidden_frozen], dim=1)
-        self._example_cache[cache_key] = hidden.detach()
-        return hidden
+        if learnable_examples >= int(num_examples):
+            return hidden_learnable
+
+        if cache_enabled and cache_key in self._example_cache:
+            logger.debug("Example cache HIT (key=%s)", cache_key)
+            hidden_frozen = self._example_cache[cache_key]
+        else:
+            with torch.no_grad():
+                hidden_frozen = self._encode_example_batch(
+                    examples[:, learnable_examples:]
+                )
+            if cache_enabled:
+                self._example_cache[cache_key] = hidden_frozen.detach()
+
+        return torch.cat([hidden_learnable, hidden_frozen], dim=1)
 
     def forward(
         self,

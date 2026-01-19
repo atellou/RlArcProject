@@ -147,16 +147,20 @@ def sample_state(grid_size, color_values, device):
 
 
 @pytest.fixture
-def sample_reward(device):
-    """Create a sample reward TensorDict for tests."""
+def sample_grid_perfect(device):
+    """Create a sample grid_perfect tensor for tests."""
     batch_size = 1
-    return TensorDict(
-        {
-            RewardKeys.BINARY.value: torch.randint(0, 2, (batch_size,)),
-            RewardKeys.PIXEL_WISE.value: torch.rand(batch_size),
-        },
-        batch_size=[batch_size],
-    ).to(device)
+    return torch.randint(0, 2, (batch_size,), device=device).to(dtype=torch.long)
+
+
+@pytest.fixture
+def sample_improvement(device):
+    """Create a sample improvement tensor for tests.
+
+    Improvement is expected to be in {-1, 0, 1}.
+    """
+    batch_size = 1
+    return torch.randint(-1, 2, (batch_size,), device=device).to(dtype=torch.long)
 
 
 @pytest.fixture
@@ -239,14 +243,9 @@ class TestLossTracking:
         assert stepper._model_losses[RewardKeys.BINARY.value].shape[0] == 1000
 
     def test_get_average_model_losses_empty(self, stepper):
-        """Test get_average_model_losses with empty queue returns NaN."""
-        import math
-
+        """Test get_average_model_losses with empty queue returns empty dict."""
         avg = stepper.get_average_model_losses(reset=False)
-        # Empty queue mean is NaN
-        assert RewardKeys.BINARY.value in avg
-        assert RewardKeys.PIXEL_WISE.value in avg
-        assert math.isnan(avg[RewardKeys.BINARY.value])
+        assert avg == {}
 
     def test_get_average_model_losses_single(self, stepper):
         """Test get_average_model_losses with single loss."""
@@ -327,11 +326,13 @@ class TestComputeModelLoss:
     """Tests for compute_model_loss method."""
 
     def test_compute_model_loss_returns_dict(
-        self, stepper, sample_state, sample_reward
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
     ):
         """Test that compute_model_loss returns loss dict."""
         pred = stepper.model(sample_state)
-        total_loss, loss_dict = stepper.compute_model_loss(pred, sample_reward)
+        total_loss, loss_dict = stepper.compute_model_loss(
+            pred, sample_grid_perfect, sample_improvement
+        )
 
         assert isinstance(total_loss, torch.Tensor)
         assert isinstance(loss_dict, dict)
@@ -339,21 +340,25 @@ class TestComputeModelLoss:
         assert RewardKeys.PIXEL_WISE.value in loss_dict
 
     def test_compute_model_loss_values_finite(
-        self, stepper, sample_state, sample_reward
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
     ):
         """Test that computed losses are finite."""
         pred = stepper.model(sample_state)
-        total_loss, loss_dict = stepper.compute_model_loss(pred, sample_reward)
+        total_loss, loss_dict = stepper.compute_model_loss(
+            pred, sample_grid_perfect, sample_improvement
+        )
 
         assert torch.isfinite(total_loss)
         assert all(isinstance(v, float) and not (v != v) for v in loss_dict.values())
 
     def test_compute_model_loss_total_is_sum(
-        self, stepper, sample_state, sample_reward
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
     ):
         """Test that total loss is sum of components."""
         pred = stepper.model(sample_state)
-        total_loss, loss_dict = stepper.compute_model_loss(pred, sample_reward)
+        total_loss, loss_dict = stepper.compute_model_loss(
+            pred, sample_grid_perfect, sample_improvement
+        )
 
         expected_total = sum(loss_dict.values())
         assert abs(total_loss.item() - expected_total) < 1e-5
@@ -365,31 +370,37 @@ class TestComputeModelLoss:
 class TestUpdateModel:
     """Tests for update_model method."""
 
-    def test_update_model_returns_dict(self, stepper, sample_state, sample_reward):
+    def test_update_model_returns_dict(
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
+    ):
         """Test that update_model returns a dict of losses."""
-        loss_dict = stepper.update_model(sample_state, sample_reward)
+        loss_dict = stepper.update_model(
+            sample_state, sample_grid_perfect, sample_improvement
+        )
 
         assert isinstance(loss_dict, dict)
         assert RewardKeys.BINARY.value in loss_dict
         assert RewardKeys.PIXEL_WISE.value in loss_dict
 
-    def test_update_model_records_loss(self, stepper, sample_state, sample_reward):
+    def test_update_model_records_loss(
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
+    ):
         """Test that update_model records the loss."""
         initial_size = stepper._model_losses[RewardKeys.BINARY.value].shape[0]
-        stepper.update_model(sample_state, sample_reward)
+        stepper.update_model(sample_state, sample_grid_perfect, sample_improvement)
 
         assert (
             stepper._model_losses[RewardKeys.BINARY.value].shape[0] == initial_size + 1
         )
 
     def test_update_model_updates_parameters(
-        self, stepper, sample_state, sample_reward
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
     ):
         """Test that update_model actually updates model parameters."""
         # Get initial parameter values
         initial_params = [p.clone() for p in stepper.model.parameters()]
 
-        stepper.update_model(sample_state, sample_reward)
+        stepper.update_model(sample_state, sample_grid_perfect, sample_improvement)
 
         # Check that at least some parameters changed
         params_changed = False
@@ -400,7 +411,9 @@ class TestUpdateModel:
 
         assert params_changed, "Model parameters should change after update"
 
-    def test_update_model_clears_cache(self, stepper, sample_state, sample_reward):
+    def test_update_model_clears_cache(
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
+    ):
         """Test that update_model clears and re-enables cache after weight update."""
         # Enable cache and populate it
         stepper.model.enable_example_cache()
@@ -410,7 +423,7 @@ class TestUpdateModel:
         assert len(stepper.model.rl_vit_arc._example_cache) > 0
 
         # Update model (should clear cache)
-        stepper.update_model(sample_state, sample_reward)
+        stepper.update_model(sample_state, sample_grid_perfect, sample_improvement)
 
         # Cache should be cleared and re-enabled
         assert len(stepper.model.rl_vit_arc._example_cache) == 0
@@ -544,11 +557,13 @@ class TestCheckpointing:
 class TestIntegration:
     """Integration tests for ArcWorldModelStepper."""
 
-    def test_full_training_cycle(self, stepper, sample_state, sample_reward):
+    def test_full_training_cycle(
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
+    ):
         """Test a full training cycle: update model and check metrics."""
         # Update model multiple times
         for _ in range(5):
-            stepper.update_model(sample_state, sample_reward)
+            stepper.update_model(sample_state, sample_grid_perfect, sample_improvement)
 
         # Check metrics - queue should have 5 elements (starts empty, 5 updates)
         assert stepper._model_losses[RewardKeys.BINARY.value].shape[0] == 5
@@ -560,11 +575,13 @@ class TestIntegration:
         # After reset, queue should be empty
         assert stepper._model_losses[RewardKeys.BINARY.value].shape[0] == 0
 
-    def test_checkpoint_and_restore_cycle(self, stepper, sample_state, sample_reward):
+    def test_checkpoint_and_restore_cycle(
+        self, stepper, sample_state, sample_grid_perfect, sample_improvement
+    ):
         """Test checkpoint and restore preserves training state."""
         # Train for a bit
         for _ in range(3):
-            stepper.update_model(sample_state, sample_reward)
+            stepper.update_model(sample_state, sample_grid_perfect, sample_improvement)
         stepper._imagination_count = 7
 
         # Checkpoint
@@ -573,7 +590,7 @@ class TestIntegration:
 
         # Continue training
         for _ in range(2):
-            stepper.update_model(sample_state, sample_reward)
+            stepper.update_model(sample_state, sample_grid_perfect, sample_improvement)
         stepper._imagination_count = 15
 
         # Restore

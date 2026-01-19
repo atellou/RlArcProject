@@ -305,17 +305,17 @@ def test_compute_losses(core_setup):
     target = core.compute_target_distribution(reward, next_state, done)
 
     # Critic loss
-    loss_td, td_err, q_dist = core.compute_critic_loss(
+    loss_td, td_err, q_response = core.compute_critic_loss(
         state, action_probs, target, compute_td_error=True
     )
     assert set(loss_td.keys()) == {"pixel_wise", "binary"}  # both heads present
     # Losses are finite
     for k, v in loss_td.items():
         assert torch.isfinite(v).all(), f"Critic loss for {k} not finite: {v}"
-    for k, dist in q_dist.items():
+    for k, dist in q_response.q_log_dist.items():
         assert torch.isfinite(
             dist
-        ).all(), f"Q distribution for {k} has non-finite values"
+        ).all(), f"Q log distribution for {k} has non-finite values"
     # td_err is a TensorDict; check each underlying tensor
     for k, v in td_err.items():
         assert torch.isfinite(v).all(), f"TD error for {k} has non-finite values"

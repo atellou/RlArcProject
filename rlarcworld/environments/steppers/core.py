@@ -218,6 +218,15 @@ class EnvStepper:
                 dtype=torch.float32,
             )
 
+            # Keep env info so auxiliary learners (e.g. world model) can access
+            # derived metrics without putting privileged data into the RL state.
+            if isinstance(info, TensorDict):
+                info_td = info.auto_batch_size_()
+            elif isinstance(info, dict):
+                info_td = TensorDict(info, batch_size=[batch_size]).auto_batch_size_()
+            else:
+                info_td = TensorDict({}, batch_size=[batch_size]).auto_batch_size_()
+
             # Format output
             return TensorDict(
                 {
@@ -227,6 +236,7 @@ class EnvStepper:
                     "next_state": next_state.auto_batch_size_(),
                     "terminated": terminated_tensor,
                     "truncated": truncated_tensor,
+                    "info": info_td,
                 },
                 batch_size=[batch_size],
             ).to(self.device)

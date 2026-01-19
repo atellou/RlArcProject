@@ -38,10 +38,14 @@ class RewardWorldModelWrapper(gym.Wrapper):
         model: torch.nn.Module,
         step_horizon: int = 1,
         n_steps: int = 1,
-        gamma: float = 1.0,
+        gamma: float = 0.99,
         grid_diff_epsilon: float = 0.01,
         smooth_transition: bool = True,
         transition_steepness: float = 100.0,
+        max_penalty: float = 1.0,
+        step_cost: float = 0.0,
+        perfect_no_submit_penalty_coef: float = 1.0,
+        zero_improvement_penalty: float = 0.0,
     ):
         """Initialize the RewardWorldModelWrapper.
 
@@ -52,13 +56,20 @@ class RewardWorldModelWrapper(gym.Wrapper):
                 Defaults to 1.
             n_steps (int, optional): Number of steps for n-step returns.
                 Defaults to 1.
-            gamma (float, optional): Discount factor. Defaults to 1.0.
+            gamma (float, optional): Discount factor. Defaults to 0.99.
             grid_diff_epsilon (float, optional): Threshold for considering grid_diff
                 as zero. Defaults to 0.01 (1% of pixels).
             smooth_transition (bool, optional): If True, use smooth sigmoid transition
                 instead of hard threshold. Defaults to True.
             transition_steepness (float, optional): Controls sharpness of smooth
                 transition. Higher values make transition sharper. Defaults to 100.0.
+            max_penalty (float, optional): Maximum penalty for submitted bad grids.
+                Defaults to 1.0.
+            step_cost (float, optional): Cost for each step taken. Defaults to 0.0.
+            perfect_no_submit_penalty_coef (float, optional): Coefficient for perfect
+                no-submit penalty. Defaults to 1.0.
+            zero_improvement_penalty (float, optional): Coefficient for zero improvement
+                penalty. Defaults to 0.0.
         """
         super().__init__(env)
         assert (
@@ -78,18 +89,33 @@ class RewardWorldModelWrapper(gym.Wrapper):
         assert (
             isinstance(transition_steepness, float) and transition_steepness > 0
         ), "transition_steepness must be a positive float"
+        assert (
+            isinstance(perfect_no_submit_penalty_coef, float)
+            and perfect_no_submit_penalty_coef >= 0
+        ), "perfect_no_submit_penalty_coef must be a float >= 0"
+        assert (
+            isinstance(zero_improvement_penalty, float)
+            and zero_improvement_penalty >= 0
+        ), "zero_improvement_penalty must be a float >= 0"
 
         self.step_horizon = step_horizon
         self.n_steps = n_steps
         self.model = model
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
-        self.max_penalty = self.get_wrapper_attr("max_penalty")
         self.grid_size = self.get_wrapper_attr("grid_size")
         self.color_values = self.get_wrapper_attr("color_values")
         self.grid_diff_epsilon = grid_diff_epsilon
         self.smooth_transition = smooth_transition
         self.transition_steepness = transition_steepness
+        self.max_penalty = (
+            max_penalty
+            if max_penalty is not None
+            else self.get_wrapper_attr("max_penalty")
+        )
+        self.step_cost = step_cost if step_cost is not None else 0.0
+        self.perfect_no_submit_penalty_coef = perfect_no_submit_penalty_coef
+        self.zero_improvement_penalty = zero_improvement_penalty
 
     def get_discount_factor(self) -> torch.Tensor:
         """Return the per-step discount factors tensor of shape (B, n_steps)."""
@@ -134,10 +160,8 @@ class RewardWorldModelWrapper(gym.Wrapper):
             }
         )
 
-        self.last_reward = torch.zeros(self.batch_size, dtype=torch.float32)
         self.discount_factor: torch.Tensor = self.get_discount_factor().to(self.device)
         self._reward_storage = self._reward_storage.to(self.device)
-        self.last_reward = self.last_reward.to(self.device)
 
         # Store raw model outputs and submission for lazy evaluation
         self.__model_reward = TensorDict({}, batch_size=[self.batch_size]).to(
@@ -150,6 +174,11 @@ class RewardWorldModelWrapper(gym.Wrapper):
         # Cache for computed rewards (lazy evaluation)
         self.__binary_reward_cache = None
         self.__pixel_wise_reward_cache = None
+
+        # Track previous predicted pixel-diff (in pixels, not percentage) so we can
+        # produce a delta-based shaping reward matching PixelAwareRewardWrapper.
+        self.__prev_grid_diff_est: torch.Tensor | None = None
+        self.__cur_grid_diff_est: torch.Tensor | None = None
 
         return reset
 
@@ -235,7 +264,12 @@ class RewardWorldModelWrapper(gym.Wrapper):
         # Extract P(correct) from [P(incorrect), P(correct)]
         improvement = self.__model_reward[RewardKeys.BINARY.value][..., 1]
 
-        return self.__submission * (improvement - self.max_penalty * (1 - improvement))
+        reward = self.__submission * (
+            improvement - self.max_penalty * (1 - improvement)
+        )
+        if self.step_cost != 0.0:
+            reward = reward - float(self.step_cost)
+        return reward
 
     def pixel_wise_reward(self) -> torch.Tensor:
         """Compute the pixel-wise reward for the current grid of the environment.
@@ -245,46 +279,58 @@ class RewardWorldModelWrapper(gym.Wrapper):
         - pixel_wise: percentage of wrong pixels in [0, 1]
 
         We interpret pixel_wise as normalized grid_diff (grid_diff / grid_size²).
+
+        This reward is shaped to match PixelAwareRewardWrapper:
+        - Dense shaping is the *change* in number of wrong pixels (prev - current),
+          clamped to [-1, 1] (one pixel per step).
+        - Submit grading term is +1 if perfect else -max_penalty (only when submit).
         """
         submission = self.__submission
-        # Model outputs percentage of wrong pixels [0, 1]
-        grid_diff_percentage = self.__model_reward[RewardKeys.PIXEL_WISE.value]
-        # Extract P(correct) from [P(incorrect), P(correct)]
-        improvement = self.__model_reward[RewardKeys.BINARY.value][..., 1]
-
-        # Penalization scaled by percentage of wrong pixels
-        penalization = submission * -self.max_penalty
-        if not isinstance(penalization, torch.Tensor):
-            penalization = torch.tensor(
-                penalization,
-                device=grid_diff_percentage.device,
-                dtype=grid_diff_percentage.dtype,
-            ).to(self.device)
-
-        # Compute rewards for imperfect and perfect grids
-        penalization = grid_diff_percentage * penalization
-        imperfect_reward = (improvement - 1) + penalization
-        perfect_reward = submission
-
-        if self.smooth_transition:
-            # Smooth sigmoid transition between imperfect and perfect rewards
-            # Higher steepness → sharper transition (closer to hard threshold)
-            smooth_is_perfect = torch.sigmoid(
-                -self.transition_steepness
-                * (grid_diff_percentage - self.grid_diff_epsilon)
+        improvement_logits = self.__model_reward[RewardKeys.PIXEL_WISE.value].float()
+        improvement_probs = torch.softmax(improvement_logits, dim=-1)
+        improvement_values = torch.tensor(
+            [-1.0, 0.0, 1.0],
+            device=improvement_probs.device,
+            dtype=improvement_probs.dtype,
+        )
+        shaping = torch.sum(improvement_probs * improvement_values, dim=-1).clamp(
+            -1.0, 1.0
+        )
+        if self.zero_improvement_penalty != 0.0:
+            shaping = torch.where(
+                shaping == 0,
+                shaping - float(self.zero_improvement_penalty),
+                shaping,
             )
-            reward = (
-                smooth_is_perfect * perfect_reward
-                + (1 - smooth_is_perfect) * imperfect_reward
+
+        is_perfect_prob = self.__model_reward[RewardKeys.BINARY.value][..., 1].float()
+        if self.smooth_transition:
+            smooth_is_perfect = is_perfect_prob
+            submit_term = submission.float() * (
+                smooth_is_perfect * 1.0
+                + (1.0 - smooth_is_perfect) * (-float(self.max_penalty))
+            )
+            not_submit_term = (
+                (1.0 - submission.float())
+                * smooth_is_perfect
+                * (-float(self.max_penalty))
+                * float(self.perfect_no_submit_penalty_coef)
             )
         else:
-            # Original hard threshold
-            is_perfect = (grid_diff_percentage <= self.grid_diff_epsilon).long()
-            has_errors = (grid_diff_percentage > self.grid_diff_epsilon).long()
-            reward = (
-                (improvement - 1) * has_errors + penalization + is_perfect * submission
+            is_perfect = (is_perfect_prob > 0.5).float()
+            submit_term = submission.float() * (
+                is_perfect * 1.0 + (1.0 - is_perfect) * (-float(self.max_penalty))
+            )
+            not_submit_term = (
+                (1.0 - submission.float())
+                * is_perfect
+                * (-float(self.max_penalty))
+                * float(self.perfect_no_submit_penalty_coef)
             )
 
+        reward = shaping + submit_term + not_submit_term
+        if self.step_cost != 0.0:
+            reward = reward - float(self.step_cost)
         return reward
 
     @property
@@ -359,6 +405,10 @@ class RewardWorldModelWrapper(gym.Wrapper):
         self._reward_storage[RewardKeys.PIXEL_WISE.value] = self._reward_storage[
             RewardKeys.PIXEL_WISE.value
         ].push(self.pixel_wise_model_reward.unsqueeze(-1))
+
+        # Update previous pixel-diff estimate after computing/pushing rewards.
+        if self.__cur_grid_diff_est is not None:
+            self.__prev_grid_diff_est = self.__cur_grid_diff_est.detach()
 
         truncated = truncated or self._remaining_horizon == 0
 

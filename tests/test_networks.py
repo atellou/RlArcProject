@@ -124,7 +124,7 @@ def train_arc_critic_network(batch_size: int, device: str = "cpu"):
 
     torch.testing.assert_close(input_sample, org_sample)
 
-    network.output_val(output)
+    network.output_val(output.q_dist)
 
     criterion = torch.nn.KLDivLoss(reduction="batchmean")
     optimizer = torch.optim.RMSprop(network.parameters())
@@ -145,7 +145,7 @@ def train_arc_critic_network(batch_size: int, device: str = "cpu"):
         }
     ).to(network.device)
 
-    for key, dist in output.items():
+    for key, dist in output.q_dist.items():
         (
             torch.testing.assert_close(
                 torch.sum(dist, dim=1), torch.ones(batch_size).to(network.device)
@@ -156,8 +156,11 @@ def train_arc_critic_network(batch_size: int, device: str = "cpu"):
         assert torch.all(dist <= 1), f"Probability values greater than 1 for key: {key}"
 
     loss = criterion(
-        output[RewardKeys.PIXEL_WISE.value], target[RewardKeys.PIXEL_WISE.value]
-    ) + criterion(output[RewardKeys.BINARY.value], target[RewardKeys.BINARY.value])
+        output.q_log_dist[RewardKeys.PIXEL_WISE.value],
+        target[RewardKeys.PIXEL_WISE.value],
+    ) + criterion(
+        output.q_log_dist[RewardKeys.BINARY.value], target[RewardKeys.BINARY.value]
+    )
 
     assert not torch.isnan(loss), f"{criterion._get_name()} is NaN for Critic network"
 
@@ -325,7 +328,6 @@ def train_reward_world_model(batch_size: int, device: str = "cpu"):
 
     # Forward pass
     optimizer = torch.optim.RMSprop(network.parameters())
-    criterion = torch.nn.MSELoss()
 
     output = network(input_sample)
 
@@ -339,7 +341,7 @@ def train_reward_world_model(batch_size: int, device: str = "cpu"):
         batch_size,
         2,
     )  # [P(incorrect), P(correct)]
-    assert output[RewardKeys.PIXEL_WISE.value].shape == (batch_size,)
+    assert output[RewardKeys.PIXEL_WISE.value].shape == (batch_size, 3)
 
     # Binary should be probability distribution (from softmax)
     assert torch.all(output[RewardKeys.BINARY.value] >= 0)
@@ -351,10 +353,7 @@ def train_reward_world_model(batch_size: int, device: str = "cpu"):
         atol=1e-6,
     )
 
-    # Pixel-wise should be percentage in [0, 1] (from sigmoid)
-    # Represents percentage of wrong pixels (grid_diff / grid_size²)
-    assert torch.all(output[RewardKeys.PIXEL_WISE.value] >= 0)
-    assert torch.all(output[RewardKeys.PIXEL_WISE.value] <= 1)
+    assert torch.isfinite(output[RewardKeys.PIXEL_WISE.value]).all()
 
     # Create synthetic targets
     target = TensorDict(
@@ -362,17 +361,15 @@ def train_reward_world_model(batch_size: int, device: str = "cpu"):
             RewardKeys.BINARY.value: torch.randint(
                 0, 2, size=(batch_size,)
             ),  # Class indices
-            RewardKeys.PIXEL_WISE.value: torch.rand(batch_size),  # Percentage in [0, 1]
+            RewardKeys.PIXEL_WISE.value: torch.randint(0, 3, size=(batch_size,)),
         }
     ).to(network.device)
 
     # Compute loss
     # Binary: cross-entropy (classification)
-    binary_loss = F.cross_entropy(
-        output[RewardKeys.BINARY.value], target[RewardKeys.BINARY.value]
-    )
-    # Pixel-wise: MSE (regression)
-    pixel_wise_loss = criterion(
+    log_binary_pred = torch.log(output[RewardKeys.BINARY.value].clamp_min(1e-10))
+    binary_loss = F.nll_loss(log_binary_pred, target[RewardKeys.BINARY.value])
+    pixel_wise_loss = F.cross_entropy(
         output[RewardKeys.PIXEL_WISE.value], target[RewardKeys.PIXEL_WISE.value]
     )
     loss = binary_loss + pixel_wise_loss

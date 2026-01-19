@@ -39,6 +39,9 @@ class PixelWiseArcStepper:
         dataset_shuffle_seed: int | None = None,
         augmentation_generator: torch.Generator | None = None,
         max_penalty: float = 1.0,
+        step_cost: float = 0.0,
+        perfect_no_submit_penalty_coef: float = 1.0,
+        zero_improvement_penalty: float = 0.0,
         n_step_config: NStepMinVMaxConfig | None = None,
     ) -> None:
         """Creates a stepper for the environment and dataset.
@@ -58,6 +61,10 @@ class PixelWiseArcStepper:
             augmentation_generator (torch.Generator | None):
                 Generator for deterministic randomness.
             max_penalty (float): Maximum penalty for the environment reward.
+            step_cost (float): Per-step time cost applied in train mode.
+            perfect_no_submit_penalty_coef (float):
+                Coefficient for perfect no-submit penalty.
+            zero_improvement_penalty (float): Coefficient for zero improvement penalty.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
         """
@@ -120,11 +127,14 @@ class PixelWiseArcStepper:
             color_values=color_values,
             device=env_device,
             max_penalty=max_penalty,
+            step_cost=step_cost,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
         self.environment = PixelAwareRewardWrapper(
             base_env,
             max_penalty=max_penalty,
+            perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
+            zero_improvement_penalty=zero_improvement_penalty,
             n_steps=self.n_step_config.n_steps,
             gamma=base_env.gamma,
         )
@@ -141,6 +151,7 @@ class PixelWiseArcStepper:
         )
 
     def _collate_fn(self, samples: list[dict]) -> dict:
+        """Collate function for the dataloader."""
         tasks_inp = []
         tasks_out = []
         examples_list = []
@@ -161,7 +172,13 @@ class PixelWiseArcStepper:
                     pad_shape = (self.max_examples - ex.shape[0], *ex.shape[1:])
                     pad = torch.zeros(pad_shape, dtype=ex.dtype, device=ex.device)
                     ex = torch.cat([ex, pad], dim=0)
-            padded_examples.append(ex)
+                padded_examples.append(ex)
+            else:
+                raise ValueError(
+                    "Example of type %s and shape %s, skipping.",
+                    type(ex),
+                    ex.shape if isinstance(ex, torch.Tensor) else len(ex),
+                )
 
         batch_examples = torch.stack(padded_examples, dim=0)
         return {

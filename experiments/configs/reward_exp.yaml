@@ -1,0 +1,27 @@
+# =============================================================================
+# REWARD EXPERIMENTS
+# =============================================================================
+
+no_submit_penalty:
+  description: "No submit penalty experiment, no improvement penalty"
+  env:
+    perfect_no_submit_penalty_coef: 0.0
+    zero_improvement_penalty: 0.0
+
+added_submit_penalty:
+  description: "Added submit penalty experiment, no improvement penalty"
+  env:
+    perfect_no_submit_penalty_coef: 0.75
+    zero_improvement_penalty: 0.0
+
+added_improvement_penalty:
+  description: "Added improvement penalty experiment, no submit penalty"
+  env:
+    perfect_no_submit_penalty_coef: 0.0
+    zero_improvement_penalty: 0.25
+
+all_penalties:
+  description: "All penalties experiment"
+  env:
+    perfect_no_submit_penalty_coef: 0.75
+    zero_improvement_penalty: 0.25

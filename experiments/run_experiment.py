@@ -358,8 +358,10 @@ def main() -> None:
 
     base_checkpoint_dir = config.checkpoint.checkpoint_dir or "checkpoints"
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir_name = f"{args.experiment}_{timestamp}"
-    config.checkpoint.checkpoint_dir = os.path.join(base_checkpoint_dir, run_dir_name)
+    config.checkpoint.checkpoint_dir = os.path.join(
+        base_checkpoint_dir, args.experiment, timestamp
+    )
+    os.makedirs(config.checkpoint.checkpoint_dir, exist_ok=True)
     logger.info(
         "Checkpoint directory set to: %s",
         os.path.abspath(config.checkpoint.checkpoint_dir),

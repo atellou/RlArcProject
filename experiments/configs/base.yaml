@@ -7,6 +7,9 @@ env:
   grid_size: 30
   color_values: 10
   max_penalty: 1.0
+  step_cost: 0.0
+  perfect_no_submit_penalty_coef: 0.75
+  zero_improvement_penalty: 0.25
   batch_size: 32
 
 network:
@@ -24,9 +27,9 @@ network:
   use_temporal: true
   use_examples: true
   example_compression_tokens: 32
-  grid_compression_tokens: 128
+  grid_compression_tokens: 64
   compression_method: "learned"
-  max_learnable_examples: 2
+  max_learnable_examples: 1
 
 
 d4pg:
@@ -34,18 +37,21 @@ d4pg:
   policy_lr: 3.0e-4
   critic_lr: 3.0e-3
   gamma: 0.99
-  tau: 0.005
+  tau: 0.01
   lr_scheduler_kwargs: null
   n_step_config:
     n_steps: 1
   compute_td_error: true
   carsm: false
-  entropy_coef: 0.0
+  entropy_coef: 0.05
   entropy_coef_decay: 1.0
+  entropy_floor_coef: 0.05
+  min_entropy: 0.5
+  submit_entropy_scale: 1.0
   target_update_frequency: 10
   model_update_frequency: 1
   cache_enabled: true
-  max_grad_norm: 0.0
+  max_grad_norm: 10.0
 
 # sum_{i=0}^{n-1} gamma^i * (-1) = -sum_{i=0}^{n-1} 0.99^i
 distributional:
@@ -97,7 +103,7 @@ logging:
 
 system:
   amp_enabled: true
-  use_checkpointing: true
+  use_checkpointing: false
   device: null
 
 reproducibility:

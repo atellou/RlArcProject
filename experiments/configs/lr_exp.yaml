@@ -18,6 +18,8 @@
 #
 # Total: 4 LRs × 5 n_steps = 20 experiments
 
+# TODO: Add hyperparameter sweep from reward and entropy experiments selection
+
 # =============================================================================
 # LR = 1.0e-3 (Aggressive)
 # =============================================================================
@@ -40,14 +42,14 @@ lr_1e3_nstep_5:
       n_steps: 5
   distributional:
     v_min:
-      pixel_wise_n_reward: -10
-      binary_n_reward: -5
+      pixel_wise_n_reward: -20
+      binary_n_reward: -10
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 5
+      binary_n_reward: 5
     num_atoms:
       pixel_wise_n_reward: 51
-      binary_n_reward: 21
+      binary_n_reward: 31
 
 
 lr_1e3_nstep_15:
@@ -59,14 +61,14 @@ lr_1e3_nstep_15:
       n_steps: 15
   distributional:
     v_min:
-      pixel_wise_n_reward: -20
-      binary_n_reward: -15
+      pixel_wise_n_reward: -40
+      binary_n_reward: -25
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 10
+      binary_n_reward: 10
     num_atoms:
-      pixel_wise_n_reward: 51
-      binary_n_reward: 41
+      pixel_wise_n_reward: 101
+      binary_n_reward: 71
 
 
 lr_1e3_nstep_30:
@@ -78,14 +80,14 @@ lr_1e3_nstep_30:
       n_steps: 30
   distributional:
     v_min:
-      pixel_wise_n_reward: -35
-      binary_n_reward: -30
+      pixel_wise_n_reward: -80
+      binary_n_reward: -50
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 20
+      binary_n_reward: 20
     num_atoms:
-      pixel_wise_n_reward: 71
-      binary_n_reward: 61
+      pixel_wise_n_reward: 101
+      binary_n_reward: 71
 
 
 lr_1e3_nstep_50:
@@ -97,14 +99,14 @@ lr_1e3_nstep_50:
       n_steps: 50
   distributional:
     v_min:
-      pixel_wise_n_reward: -50
-      binary_n_reward: -40
+      pixel_wise_n_reward: -120
+      binary_n_reward: -80
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 30
+      binary_n_reward: 30
     num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 81
+      pixel_wise_n_reward: 151
+      binary_n_reward: 111
 
 
 # =============================================================================
@@ -129,14 +131,14 @@ lr_3e4_nstep_5:
       n_steps: 5
   distributional:
     v_min:
-      pixel_wise_n_reward: -10
-      binary_n_reward: -5
+      pixel_wise_n_reward: -20
+      binary_n_reward: -10
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 5
+      binary_n_reward: 5
     num_atoms:
       pixel_wise_n_reward: 51
-      binary_n_reward: 21
+      binary_n_reward: 31
 
 
 lr_3e4_nstep_15:
@@ -148,14 +150,14 @@ lr_3e4_nstep_15:
       n_steps: 15
   distributional:
     v_min:
-      pixel_wise_n_reward: -20
-      binary_n_reward: -15
+      pixel_wise_n_reward: -40
+      binary_n_reward: -25
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 10
+      binary_n_reward: 10
     num_atoms:
-      pixel_wise_n_reward: 51
-      binary_n_reward: 41
+      pixel_wise_n_reward: 101
+      binary_n_reward: 71
 
 
 lr_3e4_nstep_30:
@@ -167,14 +169,14 @@ lr_3e4_nstep_30:
       n_steps: 30
   distributional:
     v_min:
-      pixel_wise_n_reward: -35
-      binary_n_reward: -30
+      pixel_wise_n_reward: -80
+      binary_n_reward: -50
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 20
+      binary_n_reward: 20
     num_atoms:
-      pixel_wise_n_reward: 71
-      binary_n_reward: 61
+      pixel_wise_n_reward: 101
+      binary_n_reward: 71
 
 
 lr_3e4_nstep_50:
@@ -186,14 +188,14 @@ lr_3e4_nstep_50:
       n_steps: 50
   distributional:
     v_min:
-      pixel_wise_n_reward: -50
-      binary_n_reward: -40
+      pixel_wise_n_reward: -120
+      binary_n_reward: -80
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 30
+      binary_n_reward: 30
     num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 81
+      pixel_wise_n_reward: 151
+      binary_n_reward: 111
 
 
 # =============================================================================
@@ -218,14 +220,14 @@ lr_1e4_nstep_5:
       n_steps: 5
   distributional:
     v_min:
-      pixel_wise_n_reward: -10
-      binary_n_reward: -5
+      pixel_wise_n_reward: -20
+      binary_n_reward: -10
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 5
+      binary_n_reward: 5
     num_atoms:
       pixel_wise_n_reward: 51
-      binary_n_reward: 21
+      binary_n_reward: 31
 
 
 lr_1e4_nstep_15:
@@ -237,14 +239,14 @@ lr_1e4_nstep_15:
       n_steps: 15
   distributional:
     v_min:
-      pixel_wise_n_reward: -20
-      binary_n_reward: -15
+      pixel_wise_n_reward: -40
+      binary_n_reward: -25
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 10
+      binary_n_reward: 10
     num_atoms:
-      pixel_wise_n_reward: 51
-      binary_n_reward: 41
+      pixel_wise_n_reward: 101
+      binary_n_reward: 71
 
 
 lr_1e4_nstep_30:
@@ -256,14 +258,14 @@ lr_1e4_nstep_30:
       n_steps: 30
   distributional:
     v_min:
-      pixel_wise_n_reward: -35
-      binary_n_reward: -30
+      pixel_wise_n_reward: -80
+      binary_n_reward: -50
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 20
+      binary_n_reward: 20
     num_atoms:
-      pixel_wise_n_reward: 71
-      binary_n_reward: 61
+      pixel_wise_n_reward: 101
+      binary_n_reward: 71
 
 
 lr_1e4_nstep_50:
@@ -275,14 +277,14 @@ lr_1e4_nstep_50:
       n_steps: 50
   distributional:
     v_min:
-      pixel_wise_n_reward: -50
-      binary_n_reward: -40
+      pixel_wise_n_reward: -120
+      binary_n_reward: -80
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 30
+      binary_n_reward: 30
     num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 81
+      pixel_wise_n_reward: 151
+      binary_n_reward: 111
 
 
 # =============================================================================
@@ -307,14 +309,14 @@ lr_3e5_nstep_5:
       n_steps: 5
   distributional:
     v_min:
-      pixel_wise_n_reward: -10
-      binary_n_reward: -5
+      pixel_wise_n_reward: -20
+      binary_n_reward: -10
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 5
+      binary_n_reward: 5
     num_atoms:
       pixel_wise_n_reward: 51
-      binary_n_reward: 21
+      binary_n_reward: 31
 
 
 lr_3e5_nstep_15:
@@ -326,14 +328,14 @@ lr_3e5_nstep_15:
       n_steps: 15
   distributional:
     v_min:
-      pixel_wise_n_reward: -20
-      binary_n_reward: -15
+      pixel_wise_n_reward: -40
+      binary_n_reward: -25
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 10
+      binary_n_reward: 10
     num_atoms:
-      pixel_wise_n_reward: 51
-      binary_n_reward: 41
+      pixel_wise_n_reward: 101
+      binary_n_reward: 71
 
 
 lr_3e5_nstep_30:
@@ -345,14 +347,14 @@ lr_3e5_nstep_30:
       n_steps: 30
   distributional:
     v_min:
-      pixel_wise_n_reward: -35
-      binary_n_reward: -30
+      pixel_wise_n_reward: -80
+      binary_n_reward: -50
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 20
+      binary_n_reward: 20
     num_atoms:
-      pixel_wise_n_reward: 71
-      binary_n_reward: 61
+      pixel_wise_n_reward: 101
+      binary_n_reward: 71
 
 
 lr_3e5_nstep_50:
@@ -364,11 +366,11 @@ lr_3e5_nstep_50:
       n_steps: 50
   distributional:
     v_min:
-      pixel_wise_n_reward: -50
-      binary_n_reward: -40
+      pixel_wise_n_reward: -120
+      binary_n_reward: -80
     v_max:
-      pixel_wise_n_reward: 1
-      binary_n_reward: 1
+      pixel_wise_n_reward: 30
+      binary_n_reward: 30
     num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 81
+      pixel_wise_n_reward: 151
+      binary_n_reward: 111
