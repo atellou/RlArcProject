@@ -16,6 +16,7 @@ import torch.optim as optim
 from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
 
+from rlarcworld.common.enums import RewardKeys
 from rlarcworld.trainers.core import OnStepContext, ReplayBufferProto
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class TensorBoardWriterManager:
                 "torch.utils.tensorboard.SummaryWriter is not available."
             )
         self.writer = SummaryWriter(log_dir=str(self.logdir))
+        self._register_custom_scalar_layouts()
         self.replay_buffer = replay_buffer
         self.warmup_buffer_ratio = float(warmup_buffer_ratio)
         self.medium_frequency = int(max(1, medium_frequency))
@@ -102,6 +104,275 @@ class TensorBoardWriterManager:
         except Exception:
             logger.warning("Failed to log hyperparameters")
             pass
+
+    def _submission_layouts(self) -> None:
+        """Register submission layouts."""
+        try:
+            add_custom_scalars = getattr(self.writer, "add_custom_scalars", None)
+            if add_custom_scalars is None:
+                return
+
+            layout = {
+                "submission": {
+                    "train_rates": [
+                        "Multiline",
+                        [
+                            "train/submission/rate",
+                            "train/submission/success_rate",
+                            "train/submission/failure_rate",
+                        ],
+                    ],
+                    "val_rates": [
+                        "Multiline",
+                        [
+                            "val/submission/rate",
+                            "val/submission/success_rate",
+                            "val/submission/failure_rate",
+                        ],
+                    ],
+                }
+            }
+
+            add_custom_scalars(layout)
+        except Exception:
+            return
+
+    def _env_info_layouts(self) -> None:
+        try:
+            add_custom_scalars = getattr(self.writer, "add_custom_scalars", None)
+            if add_custom_scalars is None:
+                return
+
+            layout = {
+                "env": {
+                    "train_rates": [
+                        "Multiline",
+                        [
+                            "train/env/grid_perfect_rate",
+                            "train/env/improvement_rate",
+                        ],
+                    ],
+                    "val_rates": [
+                        "Multiline",
+                        [
+                            "val/env/grid_perfect_rate",
+                            "val/env/improvement_rate",
+                        ],
+                    ],
+                }
+            }
+
+            add_custom_scalars(layout)
+        except Exception:
+            return
+
+    def _replay_layouts(self) -> None:
+        """Register replay buffer layouts."""
+        try:
+            add_custom_scalars = getattr(self.writer, "add_custom_scalars", None)
+            if add_custom_scalars is None:
+                return
+
+            layout = {
+                "replay": {
+                    "train_sampler": [
+                        "Multiline",
+                        [
+                            "train/replay/alpha",
+                            "train/replay/beta",
+                        ],
+                    ],
+                    "val_sampler": [
+                        "Multiline",
+                        [
+                            "val/replay/alpha",
+                            "val/replay/beta",
+                        ],
+                    ],
+                }
+            }
+            add_custom_scalars(layout)
+        except Exception:
+            return
+
+    def _loss_layouts(self) -> None:
+        """Register loss layouts."""
+        try:
+            add_custom_scalars = getattr(self.writer, "add_custom_scalars", None)
+            if add_custom_scalars is None:
+                return
+
+            layout = {
+                "losses": {
+                    "actor_train": [
+                        "Multiline",
+                        [
+                            "train/loss/actor",
+                            "train/loss/actor_window_avg",
+                        ],
+                    ],
+                    "actor_val": [
+                        "Multiline",
+                        [
+                            "val/loss/actor",
+                            "val/loss/actor_window_avg",
+                        ],
+                    ],
+                    "critic_train": [
+                        "Multiline",
+                        [
+                            "train/loss/critic",
+                            "train/loss/critic_window_avg",
+                        ],
+                    ],
+                    "critic_val": [
+                        "Multiline",
+                        [
+                            "val/loss/critic",
+                            "val/loss/critic_window_avg",
+                        ],
+                    ],
+                }
+            }
+
+            add_custom_scalars(layout)
+        except Exception:
+            return
+
+    def _reward_layouts(self) -> None:
+        try:
+            add_custom_scalars = getattr(self.writer, "add_custom_scalars", None)
+            if add_custom_scalars is None:
+                return
+
+            pixel_keys = [k.value for k in RewardKeys.get_pixel_wise_keys()]
+            binary_keys = [k.value for k in RewardKeys.get_binary_keys()]
+
+            layout = {
+                "rewards": {
+                    "pixel_wise_train": [
+                        "Multiline",
+                        [f"train/reward/{k}" for k in pixel_keys],
+                    ],
+                    "pixel_wise_val": [
+                        "Multiline",
+                        [f"val/reward/{k}" for k in pixel_keys],
+                    ],
+                    "binary_train": [
+                        "Multiline",
+                        [f"train/reward/{k}" for k in binary_keys],
+                    ],
+                    "binary_val": [
+                        "Multiline",
+                        [f"val/reward/{k}" for k in binary_keys],
+                    ],
+                }
+            }
+            add_custom_scalars(layout)
+        except Exception:
+            return
+
+    def _q_layouts(self) -> None:
+        try:
+            add_custom_scalars = getattr(self.writer, "add_custom_scalars", None)
+            if add_custom_scalars is None:
+                return
+
+            base_keys = [k.value for k in RewardKeys.get_base_keys()]
+            n_step_keys = [k.value for k in RewardKeys.get_n_step_keys()]
+
+            layout = {
+                "critic_q": {
+                    "expected_mean_base_train": [
+                        "Multiline",
+                        [f"train/critic/q_expected_mean/{k}" for k in base_keys],
+                    ],
+                    "expected_mean_base_val": [
+                        "Multiline",
+                        [f"val/critic/q_expected_mean/{k}" for k in base_keys],
+                    ],
+                    "expected_mean_n_step_train": [
+                        "Multiline",
+                        [f"train/critic/q_expected_mean/{k}" for k in n_step_keys],
+                    ],
+                    "expected_mean_n_step_val": [
+                        "Multiline",
+                        [f"val/critic/q_expected_mean/{k}" for k in n_step_keys],
+                    ],
+                    "expected_std_base_train": [
+                        "Multiline",
+                        [f"train/critic/q_expected_std/{k}" for k in base_keys],
+                    ],
+                    "expected_std_base_val": [
+                        "Multiline",
+                        [f"val/critic/q_expected_std/{k}" for k in base_keys],
+                    ],
+                    "expected_std_n_step_train": [
+                        "Multiline",
+                        [f"train/critic/q_expected_std/{k}" for k in n_step_keys],
+                    ],
+                    "expected_std_n_step_val": [
+                        "Multiline",
+                        [f"val/critic/q_expected_std/{k}" for k in n_step_keys],
+                    ],
+                }
+            }
+
+            add_custom_scalars(layout)
+        except Exception:
+            return
+
+    def _td_error_layouts(self) -> None:
+        try:
+            add_custom_scalars = getattr(self.writer, "add_custom_scalars", None)
+            if add_custom_scalars is None:
+                return
+
+            all_keys = [k.value for k in RewardKeys.get_base_keys()] + [
+                k.value for k in RewardKeys.get_n_step_keys()
+            ]
+
+            layout = {
+                "td_error": {
+                    "mean_train": [
+                        "Multiline",
+                        [f"train/td_error/mean/{k}" for k in all_keys],
+                    ],
+                    "mean_val": [
+                        "Multiline",
+                        [f"val/td_error/mean/{k}" for k in all_keys],
+                    ],
+                    "std_train": [
+                        "Multiline",
+                        [f"train/td_error/std/{k}" for k in all_keys],
+                    ],
+                    "std_val": [
+                        "Multiline",
+                        [f"val/td_error/std/{k}" for k in all_keys],
+                    ],
+                    "max_train": [
+                        "Multiline",
+                        [f"train/td_error/max/{k}" for k in all_keys],
+                    ],
+                    "max_val": [
+                        "Multiline",
+                        [f"val/td_error/max/{k}" for k in all_keys],
+                    ],
+                }
+            }
+
+            add_custom_scalars(layout)
+        except Exception:
+            return
+
+    def _register_custom_scalar_layouts(self) -> None:
+        self._submission_layouts()
+        self._replay_layouts()
+        self._loss_layouts()
+        self._reward_layouts()
+        self._q_layouts()
+        self._td_error_layouts()
+        self._env_info_layouts()
 
     # -------------------- Internal helpers --------------------
     def _log_minimal_metrics(self, ctx: OnStepContext, *, phase: str) -> None:
@@ -183,14 +454,6 @@ class TensorBoardWriterManager:
 
         # Reward heads: log per-batch average for each reward key
         batch: TensorDict = ctx.batch
-
-        reward_td = batch["reward"]
-        # Handle dict-like rewards
-        for key, val in reward_td.items():
-            # Compute mean across all dimensions
-            mean_val = float(val.float().mean().detach().cpu().item())
-            self.writer.add_scalar(f"{phase}/reward/{key}", mean_val, iteration)
-
         # Submission stats (rate, success, failure)
         submit_raw: torch.Tensor = batch["actions"]["submit"]
         if submit_raw.ndim >= 2:
@@ -201,17 +464,53 @@ class TensorBoardWriterManager:
             submit = submit_raw
 
         submit = submit.reshape(-1).to(dtype=torch.long)
+
+        reward_td = batch["reward"]
+        # Handle dict-like rewards
+        for key, val in reward_td.items():
+            # Compute mean across all dimensions
+            mean_val = float(val.float().mean().detach().cpu().item())
+            submitted_mask = submit == 1
+            not_mask = ~submitted_mask
+            submitted_mean = val[submitted_mask].mean()  # if any submitted
+            not_submitted_mean = val[not_mask].mean()  # if any not-submitted
+            self.writer.add_scalar(f"{phase}/reward/{key}", mean_val, iteration)
+            self.writer.add_scalar(
+                f"{phase}/reward/{key}/submitted", submitted_mean, iteration
+            )
+            self.writer.add_scalar(
+                f"{phase}/reward/{key}/not_submitted",
+                not_submitted_mean,
+                iteration,
+            )
+
+        # Env info-derived metrics (if present)
+        try:
+            info = batch.get("info", None)
+            if info is not None and hasattr(info, "keys"):
+                if "grid_perfect" in info.keys():
+                    grid_perfect = info["grid_perfect"].detach().float().reshape(-1)
+                    perfect_rate = float(grid_perfect.mean().cpu().item())
+                    self.writer.add_scalar(
+                        f"{phase}/env/grid_perfect_rate", perfect_rate, iteration
+                    )
+                if "improvement" in info.keys():
+                    improvement = info["improvement"].detach().float().reshape(-1)
+                    improvement_rate = float(
+                        (improvement > 0).float().mean().cpu().item()
+                    )
+                    self.writer.add_scalar(
+                        f"{phase}/env/improvement_rate", improvement_rate, iteration
+                    )
+        except Exception:
+            pass
+
         batch_size = int(submit.shape[0])
         submit_count = int(submit.sum().detach().cpu().item())
 
         self.writer.add_scalar(
             f"{phase}/submission/rate",
             float(submit_count) / float(max(1, batch_size)),
-            iteration,
-        )
-        self.writer.add_scalar(
-            f"{phase}/submission/count",
-            float(submit_count),
             iteration,
         )
 
@@ -235,16 +534,6 @@ class TensorBoardWriterManager:
                 self.writer.add_scalar(
                     f"{phase}/submission/failure_rate",
                     float(failure_count) / float(n_submitted),
-                    iteration,
-                )
-                self.writer.add_scalar(
-                    f"{phase}/submission/success_count",
-                    float(success_count),
-                    iteration,
-                )
-                self.writer.add_scalar(
-                    f"{phase}/submission/failure_count",
-                    float(failure_count),
                     iteration,
                 )
 
@@ -364,8 +653,9 @@ class TensorBoardWriterManager:
 
         actor_norm = l2_norm(core.actor)
         critic_norm = l2_norm(core.critic)
-        self.writer.add_scalar(f"{phase}/actor/weight_l2_norm", actor_norm, iteration)
-        self.writer.add_scalar(f"{phase}/critic/weight_l2_norm", critic_norm, iteration)
+        if phase == "train":
+            self.writer.add_scalar("actor/weight_l2_norm", actor_norm, iteration)
+            self.writer.add_scalar("critic/weight_l2_norm", critic_norm, iteration)
 
 
 def make_tensorboard_callbacks(

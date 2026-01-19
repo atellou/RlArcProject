@@ -44,6 +44,16 @@ class RewardKeys(StrEnum):
         """Get the reward keys."""
         return [RewardKeys.PIXEL_WISE, RewardKeys.BINARY]
 
+    @staticmethod
+    def get_pixel_wise_keys() -> list[RewardKeys]:
+        """Get the reward keys for pixel-wise rewards."""
+        return [RewardKeys.PIXEL_WISE_N_REWARD, RewardKeys.PIXEL_WISE]
+
+    @staticmethod
+    def get_binary_keys() -> list[RewardKeys]:
+        """Get the reward keys for binary rewards."""
+        return [RewardKeys.BINARY_N_REWARD, RewardKeys.BINARY]
+
 
 class ArcEnvRunningMode(StrEnum):
     """Running mode for the ARC environment."""
