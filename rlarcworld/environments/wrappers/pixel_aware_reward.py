@@ -277,7 +277,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             * float(self.perfect_no_submit_penalty_coef)
         )
 
-        return shaping + submit_term + not_submit_term
+        return shaping + submit_term + not_submit_term, {
+            "shaping": shaping,
+            "submit_term": submit_term,
+            "not_submit_term": not_submit_term,
+        }
 
     def step(
         self, actions: TensorDict | dict[str, torch.Tensor]
@@ -304,9 +308,13 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.last_diffs = self.get_difference()
         obs, _, terminated, truncated, info = self.env.step(actions)
         self.grid_diffs = self.get_difference()
-        reward = self.reward(
+        reward, reward_info = self.reward(
             self.last_diffs, self.grid_diffs, actions[ActionKeys.SUBMIT.value]
         )
+        if isinstance(info, TensorDict):
+            info.update(reward_info)
+        elif isinstance(info, dict):
+            info.update(reward_info)
 
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(-1))
         self.last_reward = reward

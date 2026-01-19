@@ -552,7 +552,9 @@ class ArcBatchGridEnv(gym.Env):
             last_wrong = (last_grid != target).flatten(1).sum(dim=1)
 
             self.information["grid_perfect"] = cur_wrong == 0
-            self.information["improvement"] = (last_wrong - cur_wrong).clamp(-1, 1)
+            self.information["improvement"] = (
+                (last_wrong - cur_wrong).clamp(-1, 1).long()
+            )
         else:
             self.information[StateKeys.TERMINATED.value] = submit
         return (

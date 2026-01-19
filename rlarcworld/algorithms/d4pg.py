@@ -528,10 +528,10 @@ class D4PGCore:
                         and grad_norm_critic is not None
                     ):
                         self.tb_writer.add_scalar(
-                            "actor/grad_l2_norm", grad_norm_actor, self._update_counter
+                            "grad_l2_norm/actor", grad_norm_actor, self._update_counter
                         )
                         self.tb_writer.add_scalar(
-                            "critic/grad_l2_norm",
+                            "grad_l2_norm/critic",
                             grad_norm_critic,
                             self._update_counter,
                         )
