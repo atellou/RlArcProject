@@ -203,6 +203,8 @@ class D4PGConfig:
         entropy_coef_decay (float): Entropy coefficient decay rate.
         entropy_floor_coef (float): Coefficient for minimum-entropy floor penalty.
         min_entropy (float): Minimum entropy value.
+        submit_entropy_scale (float): Multiplier applied to entropy regularization
+            coming from the submit action head only.
         target_update_frequency (int): Frequency of target network updates.
         model_update_frequency (int): Frequency of model updates.
         max_grad_norm (float): Maximum gradient norm for clipping.
@@ -223,6 +225,7 @@ class D4PGConfig:
     entropy_coef_decay: float = 1.0
     entropy_floor_coef: float = 0.0
     min_entropy: float = 0.01
+    submit_entropy_scale: float = 1.0
     target_update_frequency: int = 10
     model_update_frequency: int = 1
     cache_enabled: bool = False

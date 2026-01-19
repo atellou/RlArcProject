@@ -125,6 +125,7 @@ def dict_to_config(config_dict: dict) -> ArcD4PGConfig:
         "tau",
         "entropy_coef",
         "entropy_coef_decay",
+        "submit_entropy_scale",
         "max_grad_norm",
     ]
     for key in float_fields:

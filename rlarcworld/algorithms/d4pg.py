@@ -14,7 +14,7 @@ from torch.nn import Parameter
 from torch.utils.tensorboard import SummaryWriter
 
 from rlarcworld.algorithms.distributions import categorical_projection
-from rlarcworld.common.enums import RewardKeys
+from rlarcworld.common.enums import ActionKeys, RewardKeys
 from rlarcworld.models.nn_modules import CriticResponseManager
 from rlarcworld.trainers.core import OnStepContext
 from rlarcworld.utils.checkpointing import (
@@ -61,6 +61,7 @@ class D4PGCore:
         entropy_coef_decay: float = 1.0,
         entropy_floor_coef: float = 0.0,
         min_entropy: float = 0.0,
+        submit_entropy_scale: float = 1.0,
         target_update_frequency: int = 10,
         model_update_frequency: int = 1,
         cache_enabled: bool = False,
@@ -94,6 +95,9 @@ class D4PGCore:
                 entropy floor penalty. Defaults to 0.0.
             min_entropy (float, optional): Minimum entropy floor to prevent
                 complete entropy collapse. Defaults to 0.0.
+            submit_entropy_scale (float, optional): Scale factor applied only to
+                the submit head contribution when computing the entropy
+                regularization term. Defaults to 1.0.
             device_config (Optional[CudaConfig], optional): Device configuration
                 dictionary. Defaults to None.
             max_grad_norm (float, optional): Maximum gradient norm. Defaults to
@@ -112,6 +116,7 @@ class D4PGCore:
         assert entropy_coef_decay >= 0, "Entropy coefficient decay must be non-negative"
         assert entropy_floor_coef >= 0, "Entropy floor coefficient must be non-negative"
         assert min_entropy >= 0, "Minimum entropy must be non-negative"
+        assert submit_entropy_scale >= 0, "Submit entropy scale must be non-negative"
 
         # Config/device/AMP
         self.device_config = (
@@ -132,6 +137,7 @@ class D4PGCore:
         self.entropy_coef_decay = entropy_coef_decay
         self.entropy_floor_coef = entropy_floor_coef
         self.min_entropy = min_entropy
+        self.submit_entropy_scale = submit_entropy_scale
         self.max_grad_norm = max_grad_norm
         self.target_update_frequency = target_update_frequency
         self.model_update_frequency = model_update_frequency
@@ -356,15 +362,23 @@ class D4PGCore:
             entropy: torch.Tensor = torch.tensor(0.0, device=self.device)
             log_probs: list[torch.Tensor] = []
             action = self._categorize_actions(action_probs, as_dict=True)
+            entropy_weight_sum: torch.Tensor = torch.tensor(0.0, device=self.device)
             for key in action_probs.keys():
                 if self.carsm:
                     dist = torch.distributions.Categorical(probs=action_probs[key])
                     log_probs.append(dist.log_prob(action[key]))
                 if self.entropy_coef != 0 or self.entropy_floor_coef != 0:
-                    entropy += -torch.sum(
+                    head_entropy = -torch.sum(
                         action_probs[key] * torch.log(action_probs[key] + 1e-10), dim=-1
                     ).mean()
-            entropy = entropy / max(1, len(action_probs))
+                    head_weight = 1.0
+                    if key == ActionKeys.SUBMIT.value:
+                        head_weight = float(self.submit_entropy_scale)
+                    entropy = entropy + head_entropy * head_weight
+                    entropy_weight_sum = entropy_weight_sum + head_weight
+
+            if self.entropy_coef != 0 or self.entropy_floor_coef != 0:
+                entropy = entropy / torch.clamp(entropy_weight_sum, min=1.0)
             if self.carsm:
                 log_probs_tensor = torch.sum(
                     torch.stack(log_probs, dim=-1), dim=-1
