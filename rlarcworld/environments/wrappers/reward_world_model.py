@@ -270,24 +270,20 @@ class RewardWorldModelWrapper(gym.Wrapper):
         - Submit grading term is +1 if perfect else -max_penalty (only when submit).
         """
         submission = self.__submission
-        grid_diff_percentage = self.__model_reward[RewardKeys.PIXEL_WISE.value]
+        improvement_logits = self.__model_reward[RewardKeys.PIXEL_WISE.value].float()
+        improvement_probs = torch.softmax(improvement_logits, dim=-1)
+        improvement_values = torch.tensor(
+            [-1.0, 0.0, 1.0],
+            device=improvement_probs.device,
+            dtype=improvement_probs.dtype,
+        )
+        shaping = torch.sum(improvement_probs * improvement_values, dim=-1).clamp(
+            -1.0, 1.0
+        )
 
-        # Convert predicted percentage -> predicted number of wrong pixels.
-        cur_grid_diff_est = grid_diff_percentage.float() * float(self.grid_size**2)
-        self.__cur_grid_diff_est = cur_grid_diff_est
-
-        prev = self.__prev_grid_diff_est
-        if prev is None:
-            prev = cur_grid_diff_est.detach()
-
-        shaping = (prev - cur_grid_diff_est).clamp(-1.0, 1.0)
-
-        # Perfectness is based on predicted % wrong pixels.
+        is_perfect_prob = self.__model_reward[RewardKeys.BINARY.value][..., 1].float()
         if self.smooth_transition:
-            smooth_is_perfect = torch.sigmoid(
-                -self.transition_steepness
-                * (grid_diff_percentage.float() - float(self.grid_diff_epsilon))
-            )
+            smooth_is_perfect = is_perfect_prob
             submit_term = submission.float() * (
                 smooth_is_perfect * 1.0
                 + (1.0 - smooth_is_perfect) * (-float(self.max_penalty))
@@ -298,7 +294,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
                 * (-float(self.max_penalty))
             )
         else:
-            is_perfect = (grid_diff_percentage <= self.grid_diff_epsilon).float()
+            is_perfect = (is_perfect_prob > 0.5).float()
             submit_term = submission.float() * (
                 is_perfect * 1.0 + (1.0 - is_perfect) * (-float(self.max_penalty))
             )

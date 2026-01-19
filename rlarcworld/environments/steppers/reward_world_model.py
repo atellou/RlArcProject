@@ -281,23 +281,23 @@ class ArcWorldModelStepper:
     def compute_model_loss(
         self,
         pred: TensorDict,
-        true_reward: TensorDict,
+        grid_perfect: torch.Tensor,
+        improvement: torch.Tensor,
     ) -> tuple[torch.Tensor, dict]:
         """Compute world model loss.
 
         Args:
             pred: Predicted rewards from environment {binary, pixel_wise}
-            true_reward: True rewards from environment {binary, pixel_wise}
+            grid_perfect: Is the grid perfect or not (0, 1).
+            improvement: Was the grid improved or not (-1, 0, 1).
 
         Returns:
             Total loss and dict of component losses
         """
         # Binary classification loss
-        # true_reward["binary"] is in [0, 1], pred["binary"] is [P(0), P(1)]
-        binary_target = true_reward[RewardKeys.BINARY.value].long()
+        binary_target = grid_perfect.long()
         if binary_target.dim() > 1:
             binary_target = binary_target.squeeze(-1)
-        # Clamp to valid class indices
         binary_target = binary_target.clamp(0, 1)
         if not torch.isfinite(binary_target.float()).all():
             raise RuntimeError("Non-finite binary reward target in world model.")
@@ -311,21 +311,15 @@ class ArcWorldModelStepper:
         if not torch.isfinite(binary_loss).all():
             raise RuntimeError("Non-finite binary loss in world model.")
 
-        # Pixel-wise regression loss (MSE)
-        # Normalize true pixel_wise to [0, 1] percentage
-        pixel_target = true_reward[RewardKeys.PIXEL_WISE.value].float()
+        # Improvement signal classification loss
+        pixel_target = improvement.long() + 1
         if pixel_target.dim() > 1:
             pixel_target = pixel_target.squeeze(-1)
-        # Clamp to valid range [0, 1]
-        pixel_target = pixel_target.clamp(0, 1)
+        pixel_target = pixel_target.clamp(0, 2)
         if not torch.isfinite(pixel_target).all():
             raise RuntimeError("Non-finite pixel_wise reward target in world model.")
-        pixel_pred = pred[RewardKeys.PIXEL_WISE.value].float()
-        if not torch.isfinite(pixel_pred).all():
-            raise RuntimeError(
-                "Non-finite pixel_wise reward prediction in world model."
-            )
-        pixel_loss = F.mse_loss(pixel_pred, pixel_target)
+
+        pixel_loss = F.cross_entropy(pred[RewardKeys.PIXEL_WISE.value], pixel_target)
         if not torch.isfinite(pixel_loss).all():
             raise RuntimeError("Non-finite pixel_wise loss in world model.")
 
@@ -342,20 +336,24 @@ class ArcWorldModelStepper:
     def update_model(
         self,
         state: TensorDict,
-        true_reward: TensorDict,
+        grid_perfect: torch.Tensor,
+        improvement: torch.Tensor,
     ) -> dict:
         """Compute loss and update world model.
 
         Args:
             state: Environment state TensorDict
-            true_reward: True rewards from real environment {binary, pixel_wise}
+            grid_perfect: Is the grid perfect or not.
+            improvement: Was the grid improved or not.
 
         Returns:
             Dict of loss values
         """
         self.model_optimizer.zero_grad()
         loss, loss_dict = self.compute_model_loss(
-            self.model.forward(state), true_reward
+            self.model.forward(state),
+            grid_perfect,
+            improvement,
         )
         loss.backward()
         self.model_optimizer.step()
@@ -440,9 +438,25 @@ class ArcWorldModelStepper:
             # These are the rewards to look for in the model
             # and it then can be used to compute the ones that include
             # penalties, discounts, etc.
+            info = ctx.batch.get("info")
+            if info is None:
+                raise RuntimeError(
+                    "World model update requires 'info' in ctx.batch. "
+                    "Ensure StepperCore.step() includes env info in the transition."
+                )
+            if "grid_perfect" not in info.keys() or "improvement" not in info.keys():
+                raise RuntimeError(
+                    "World model update requires 'grid_perfect' and 'improvement' "
+                    "in ctx.batch['info']."
+                )
+
+            grid_perfect = info["grid_perfect"]
+            improvement = info["improvement"]
+
             loss_dict = self.update_model(
                 state=ctx.batch["state"],
-                true_reward=ctx.batch["reward"],
+                grid_perfect=grid_perfect,
+                improvement=improvement,
             )
             logger.debug(
                 f"World model updated. Iteration {ctx.iteration}, loss: {loss_dict}"

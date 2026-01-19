@@ -305,6 +305,8 @@ class ArcBatchGridEnv(gym.Env):
                 StateKeys.INDEX.value: batch_in.clone() * 0,
                 StateKeys.TERMINATED.value: torch.zeros(self.batch_size, dtype=int),
                 StateKeys.EXAMPLES.value: options["examples"],
+                "grid_perfect": torch.zeros(self.batch_size, dtype=torch.bool),
+                "improvement": torch.zeros(self.batch_size, dtype=torch.long),
             },
             batch_size=self.batch_size,
         ).to(self.device)
@@ -541,6 +543,16 @@ class ArcBatchGridEnv(gym.Env):
             self.information[StateKeys.TERMINATED.value] = self.episode_terminated(
                 submit
             )
+
+            target = self.observations[StateKeys.TARGET.value]
+            cur_grid = self.observations[StateKeys.GRID.value]
+            last_grid = self.last_grid
+
+            cur_wrong = (cur_grid != target).flatten(1).sum(dim=1)
+            last_wrong = (last_grid != target).flatten(1).sum(dim=1)
+
+            self.information["grid_perfect"] = cur_wrong == 0
+            self.information["improvement"] = (last_wrong - cur_wrong).clamp(-1, 1)
         else:
             self.information[StateKeys.TERMINATED.value] = submit
         return (

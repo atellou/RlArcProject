@@ -538,11 +538,11 @@ class RewardHeadFromEncoder(nn.Module):
 
         # Classification heads for reward predictions
         # Binary: 2 classes (incorrect, correct)
-        # Pixel-wise: 1 output (regression)
+        # Pixel-wise: 3 classes (worse, same, better)
         self.classifiers = nn.ModuleDict(
             {
                 RewardKeys.BINARY.value: nn.Linear(hidden_size, 2),
-                RewardKeys.PIXEL_WISE.value: nn.Linear(hidden_size, 1),
+                RewardKeys.PIXEL_WISE.value: nn.Linear(hidden_size, 3),
             }
         )
 
@@ -592,10 +592,9 @@ class RewardHeadFromEncoder(nn.Module):
             reward_outputs[RewardKeys.BINARY.value].float(), dim=-1
         )
 
-        # Pixel-wise: sigmoid to predict percentage of wrong pixels in [0, 1]
-        pixel_wise_percentage = torch.sigmoid(
-            reward_outputs[RewardKeys.PIXEL_WISE.value].float().squeeze(-1)
-        )
+        # Pixel-wise: 3-class improvement classifier logits
+        # Class mapping: 0=worse (-1), 1=same (0), 2=better (+1)
+        pixel_wise_percentage = reward_outputs[RewardKeys.PIXEL_WISE.value].float()
 
         return TensorDict(
             {

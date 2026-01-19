@@ -176,7 +176,7 @@ class TensorBoardWriterManager:
                 pass
 
         # Algo hyperparams (plateau diagnostics)
-        if hasattr(core, "entropy_coef"):
+        if hasattr(core, "entropy_coef") and phase == "train":
             self.writer.add_scalar(
                 f"{phase}/algo/entropy_coef", float(core.entropy_coef), iteration
             )
