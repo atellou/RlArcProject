@@ -56,7 +56,8 @@ class ArcWorldModelStepper:
         n_step_config: NStepMinVMaxConfig | None = None,
         max_penalty: float = 1.0,
         step_cost: float = 0.0,
-        # Smooth transition params
+        perfect_no_submit_penalty_coef: float = 1.0,
+        zero_improvement_penalty: float = 0.0,
         grid_diff_epsilon: float = 0.01,
         smooth_transition: bool = True,
         transition_steepness: float = 100.0,
@@ -80,6 +81,8 @@ class ArcWorldModelStepper:
             n_step_config: N-step configuration.
             max_penalty: Maximum penalty for submitted bad grids.
             step_cost: Cost for each step taken.
+            perfect_no_submit_penalty_coef: Coefficient for perfect no-submit penalty.
+            zero_improvement_penalty: Coefficient for zero improvement penalty.
             grid_diff_epsilon: Threshold for "perfect" grid detection.
             smooth_transition: Use smooth sigmoid transition.
             transition_steepness: Steepness of smooth transition.
@@ -135,6 +138,8 @@ class ArcWorldModelStepper:
             transition_steepness=transition_steepness,
             max_penalty=self.max_penalty,
             step_cost=self.step_cost,
+            perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
+            zero_improvement_penalty=zero_improvement_penalty,
         )
 
         self.stepper = EnvStepper(

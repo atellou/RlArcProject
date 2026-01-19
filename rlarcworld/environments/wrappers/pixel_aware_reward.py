@@ -36,6 +36,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self,
         env: ArcBatchGridEnv,
         max_penalty: float = 1.0,
+        perfect_no_submit_penalty_coef: float = 1.0,
+        zero_improvement_penalty: float = 0.0,
         n_steps: int = 1,
         gamma: float = 0.99,
     ):
@@ -45,6 +47,10 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             env (gym.Env): Environment to wrap.
             max_penalty (float, optional): Maximum penalty for the reward.
                 Defaults to 1.0.
+            perfect_no_submit_penalty_coef (float, optional): Coefficient for
+                perfect no-submit penalty. Defaults to 1.0.
+            zero_improvement_penalty (float, optional): Penalty for zero
+                improvement. Defaults to 0.0.
             n_steps (int, optional): Number of steps in the reward computation.
                 Defaults to 1.
             gamma (float, optional): Discount factor in the reward
@@ -62,7 +68,17 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         assert (
             isinstance(max_penalty, float) and max_penalty > 0
         ), "max_penalty must be a float greater than 0, got {}".format(max_penalty)
+        assert (
+            isinstance(perfect_no_submit_penalty_coef, float)
+            and perfect_no_submit_penalty_coef >= 0
+        ), "perfect_no_submit_penalty_coef must be a float >= 0"
+        assert (
+            isinstance(zero_improvement_penalty, float)
+            and zero_improvement_penalty >= 0
+        ), "zero_improvement_penalty must be a float >= 0"
         self.__max_penalty = max_penalty
+        self.perfect_no_submit_penalty_coef = perfect_no_submit_penalty_coef
+        self.zero_improvement_penalty = zero_improvement_penalty
         self.n_steps = n_steps
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
@@ -240,6 +256,12 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
         # Dense shaping: positive when we reduce diff, negative when we make it worse.
         shaping = (last_diff - grid_diff).clamp(-1.0, 1.0)
+        if self.zero_improvement_penalty != 0.0:
+            shaping = torch.where(
+                shaping == 0,
+                shaping - float(self.zero_improvement_penalty),
+                shaping,
+            )
 
         # Submit grading term: +1 if perfect, else -max_penalty.
         perfect = (grid_diff == 0).float()
@@ -249,7 +271,10 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         # If the grid is already perfect but the agent doesn't submit, apply a small
         # penalty to avoid the "stall at 0 reward" local optimum.
         not_submit_term = (
-            (1.0 - submission.float()) * perfect * (-float(self.max_penalty))
+            (1.0 - submission.float())
+            * perfect
+            * (-float(self.max_penalty))
+            * float(self.perfect_no_submit_penalty_coef)
         )
 
         return shaping + submit_term + not_submit_term

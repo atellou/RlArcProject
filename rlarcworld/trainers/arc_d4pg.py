@@ -278,6 +278,8 @@ class ArcD4PG:
             augmentation_generator=aug_gen,
             max_penalty=config.env.max_penalty,
             step_cost=config.env.step_cost,
+            perfect_no_submit_penalty_coef=config.env.perfect_no_submit_penalty_coef,
+            zero_improvement_penalty=config.env.zero_improvement_penalty,
             n_step_config=config.d4pg.n_step_config,
         )
         logger.info("Training stepper created successfully")
@@ -298,6 +300,8 @@ class ArcD4PG:
             augmentation_generator=None,
             max_penalty=config.env.max_penalty,
             step_cost=config.env.step_cost,
+            perfect_no_submit_penalty_coef=config.env.perfect_no_submit_penalty_coef,
+            zero_improvement_penalty=config.env.zero_improvement_penalty,
             n_step_config=config.d4pg.n_step_config,
         )
         logger.info("Validation stepper created successfully")
@@ -323,6 +327,9 @@ class ArcD4PG:
                 n_step_config=config.d4pg.n_step_config,
                 gamma=config.d4pg.gamma,
                 max_penalty=config.env.max_penalty,
+                step_cost=config.env.step_cost,
+                perfect_no_submit_penalty_coef=config.env.perfect_no_submit_penalty_coef,
+                zero_improvement_penalty=config.env.zero_improvement_penalty,
                 model_update_frequency=config.world_model.model_update_frequency,
                 imagination_ratio=config.world_model.imagination_ratio,
                 imagination_frequency=config.world_model.imagination_frequency,

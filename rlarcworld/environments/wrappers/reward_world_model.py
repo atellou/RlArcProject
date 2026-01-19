@@ -44,6 +44,8 @@ class RewardWorldModelWrapper(gym.Wrapper):
         transition_steepness: float = 100.0,
         max_penalty: float = 1.0,
         step_cost: float = 0.0,
+        perfect_no_submit_penalty_coef: float = 1.0,
+        zero_improvement_penalty: float = 0.0,
     ):
         """Initialize the RewardWorldModelWrapper.
 
@@ -64,6 +66,10 @@ class RewardWorldModelWrapper(gym.Wrapper):
             max_penalty (float, optional): Maximum penalty for submitted bad grids.
                 Defaults to 1.0.
             step_cost (float, optional): Cost for each step taken. Defaults to 0.0.
+            perfect_no_submit_penalty_coef (float, optional): Coefficient for perfect
+                no-submit penalty. Defaults to 1.0.
+            zero_improvement_penalty (float, optional): Coefficient for zero improvement
+                penalty. Defaults to 0.0.
         """
         super().__init__(env)
         assert (
@@ -83,6 +89,14 @@ class RewardWorldModelWrapper(gym.Wrapper):
         assert (
             isinstance(transition_steepness, float) and transition_steepness > 0
         ), "transition_steepness must be a positive float"
+        assert (
+            isinstance(perfect_no_submit_penalty_coef, float)
+            and perfect_no_submit_penalty_coef >= 0
+        ), "perfect_no_submit_penalty_coef must be a float >= 0"
+        assert (
+            isinstance(zero_improvement_penalty, float)
+            and zero_improvement_penalty >= 0
+        ), "zero_improvement_penalty must be a float >= 0"
 
         self.step_horizon = step_horizon
         self.n_steps = n_steps
@@ -100,6 +114,8 @@ class RewardWorldModelWrapper(gym.Wrapper):
             else self.get_wrapper_attr("max_penalty")
         )
         self.step_cost = step_cost if step_cost is not None else 0.0
+        self.perfect_no_submit_penalty_coef = perfect_no_submit_penalty_coef
+        self.zero_improvement_penalty = zero_improvement_penalty
 
     def get_discount_factor(self) -> torch.Tensor:
         """Return the per-step discount factors tensor of shape (B, n_steps)."""
@@ -280,6 +296,12 @@ class RewardWorldModelWrapper(gym.Wrapper):
         shaping = torch.sum(improvement_probs * improvement_values, dim=-1).clamp(
             -1.0, 1.0
         )
+        if self.zero_improvement_penalty != 0.0:
+            shaping = torch.where(
+                shaping == 0,
+                shaping - float(self.zero_improvement_penalty),
+                shaping,
+            )
 
         is_perfect_prob = self.__model_reward[RewardKeys.BINARY.value][..., 1].float()
         if self.smooth_transition:
@@ -292,6 +314,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
                 (1.0 - submission.float())
                 * smooth_is_perfect
                 * (-float(self.max_penalty))
+                * float(self.perfect_no_submit_penalty_coef)
             )
         else:
             is_perfect = (is_perfect_prob > 0.5).float()
@@ -299,7 +322,10 @@ class RewardWorldModelWrapper(gym.Wrapper):
                 is_perfect * 1.0 + (1.0 - is_perfect) * (-float(self.max_penalty))
             )
             not_submit_term = (
-                (1.0 - submission.float()) * is_perfect * (-float(self.max_penalty))
+                (1.0 - submission.float())
+                * is_perfect
+                * (-float(self.max_penalty))
+                * float(self.perfect_no_submit_penalty_coef)
             )
 
         reward = shaping + submit_term + not_submit_term

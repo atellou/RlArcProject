@@ -59,6 +59,8 @@ class EnvConfig:
     color_values: int = 10
     max_penalty: float = 1.0
     step_cost: float = 0.0
+    perfect_no_submit_penalty_coef: float = 1.0
+    zero_improvement_penalty: float = 0.0
     batch_size: int = 32
 
 
