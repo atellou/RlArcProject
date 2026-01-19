@@ -114,7 +114,7 @@ class TensorBoardWriterManager:
         # Nicer visualizations
         iteration = ctx.iteration
 
-        if iteration % self.minimal_frequency != 0 or ctx.warmup:
+        if (iteration % self.minimal_frequency != 0 and not ctx.run_end) or ctx.warmup:
             return
 
         # Losses
@@ -277,7 +277,7 @@ class TensorBoardWriterManager:
         overhead small.
         """
         iteration = ctx.iteration
-        if iteration % self.medium_frequency != 0 or ctx.warmup:
+        if (iteration % self.medium_frequency != 0 and not ctx.run_end) or ctx.warmup:
             return
 
         logger.debug(
