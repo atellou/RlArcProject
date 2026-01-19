@@ -328,7 +328,6 @@ def train_reward_world_model(batch_size: int, device: str = "cpu"):
 
     # Forward pass
     optimizer = torch.optim.RMSprop(network.parameters())
-    criterion = torch.nn.MSELoss()
 
     output = network(input_sample)
 
@@ -342,7 +341,7 @@ def train_reward_world_model(batch_size: int, device: str = "cpu"):
         batch_size,
         2,
     )  # [P(incorrect), P(correct)]
-    assert output[RewardKeys.PIXEL_WISE.value].shape == (batch_size,)
+    assert output[RewardKeys.PIXEL_WISE.value].shape == (batch_size, 3)
 
     # Binary should be probability distribution (from softmax)
     assert torch.all(output[RewardKeys.BINARY.value] >= 0)
@@ -354,10 +353,7 @@ def train_reward_world_model(batch_size: int, device: str = "cpu"):
         atol=1e-6,
     )
 
-    # Pixel-wise should be percentage in [0, 1] (from sigmoid)
-    # Represents percentage of wrong pixels (grid_diff / grid_size²)
-    assert torch.all(output[RewardKeys.PIXEL_WISE.value] >= 0)
-    assert torch.all(output[RewardKeys.PIXEL_WISE.value] <= 1)
+    assert torch.isfinite(output[RewardKeys.PIXEL_WISE.value]).all()
 
     # Create synthetic targets
     target = TensorDict(
@@ -365,17 +361,15 @@ def train_reward_world_model(batch_size: int, device: str = "cpu"):
             RewardKeys.BINARY.value: torch.randint(
                 0, 2, size=(batch_size,)
             ),  # Class indices
-            RewardKeys.PIXEL_WISE.value: torch.rand(batch_size),  # Percentage in [0, 1]
+            RewardKeys.PIXEL_WISE.value: torch.randint(0, 3, size=(batch_size,)),
         }
     ).to(network.device)
 
     # Compute loss
     # Binary: cross-entropy (classification)
-    binary_loss = F.cross_entropy(
-        output[RewardKeys.BINARY.value], target[RewardKeys.BINARY.value]
-    )
-    # Pixel-wise: MSE (regression)
-    pixel_wise_loss = criterion(
+    log_binary_pred = torch.log(output[RewardKeys.BINARY.value].clamp_min(1e-10))
+    binary_loss = F.nll_loss(log_binary_pred, target[RewardKeys.BINARY.value])
+    pixel_wise_loss = F.cross_entropy(
         output[RewardKeys.PIXEL_WISE.value], target[RewardKeys.PIXEL_WISE.value]
     )
     loss = binary_loss + pixel_wise_loss

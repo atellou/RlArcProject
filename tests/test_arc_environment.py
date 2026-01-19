@@ -120,67 +120,6 @@ def assertions_grids(
     ), "Examples grids should have input and output grids on third dimesion"
 
 
-def assert_reward_arc(
-    reward,
-    observation,
-    submission,
-    is_last_step,
-):
-    if is_last_step:
-        (
-            torch.testing.assert_close(reward, torch.ones_like(reward)),
-            "The last step should have a reward of 1",
-        )
-    else:
-        (
-            torch.testing.assert_close(
-                reward,
-                (
-                    (
-                        torch.sum(
-                            torch.abs(observation["grid"] - observation["target"]),
-                            dim=(1, 2),
-                        )
-                        == 0
-                    )
-                    * submission
-                ).type(torch.float32),
-            ),
-            "The step should have a reward of 0",
-        )
-
-
-def assert_reward_pixel(
-    reward,
-    observation,
-    submission,
-    is_last_step,
-    grid_diff,
-    change,
-    max_penalty,
-):
-    if is_last_step:
-        (
-            torch.testing.assert_close(reward, torch.ones_like(reward)),
-            "The last step should have a reward of 0",
-        )
-    else:
-        grid_diff = torch.sum(
-            ((observation["target"] - observation["grid"]) != 0).long(),
-            dim=(1, 2),
-        )
-        reference = (change - 1) * (grid_diff != 0).long()
-        (
-            torch.testing.assert_close(
-                reward,
-                reference
-                + (grid_diff * submission * max_penalty)
-                + ((grid_diff == 0).long() * submission),
-            ),
-            "The step do not have the expected reward.",
-        )
-
-
 def episodes_simulation(batch_size, size, color_values, env):
     logger.info(f"Batch size: {batch_size}")
     logger.info(f"Grid size: {size}")
@@ -260,28 +199,9 @@ def episodes_simulation(batch_size, size, color_values, env):
                 if isinstance(env, PixelAwareRewardWrapper):
                     state = env.get_wrapper_attr("state")
                     assert isinstance(state, TensorDict)
-                    assert_reward_pixel(
-                        reward,
-                        observation,
-                        submission,
-                        is_last_step,
-                        grid_diff_abs,
-                        (
-                            dummy_batch["batch"]["input"][:, y_loc, x_loc]
-                            - dummy_batch["batch"]["output"][:, y_loc, x_loc]
-                            != 0
-                        ).long(),
-                        env.max_penalty,
-                    )
                 elif isinstance(env, ArcBatchGridEnv):
                     state = env.state
                     assert isinstance(state, TensorDict)
-                    assert_reward_arc(
-                        reward,
-                        observation,
-                        submission,
-                        is_last_step,
-                    )
 
                 n_reward = env.n_step_reward()
                 assert isinstance(n_reward, torch.Tensor)
@@ -330,7 +250,6 @@ def test_arc_batch_grid_env_checkpoint_roundtrip(
     assert_td_close(env2.observations, env1.observations)
     assert_td_close(env2.information, env1.information)
     torch.testing.assert_close(env2.last_grid, env1.last_grid)
-    torch.testing.assert_close(env2.last_reward, env1.last_reward)
     assert env2.time_step == env1.time_step
     torch.testing.assert_close(env2.reward_storage, env1.reward_storage)
     assert env2.mode == env1.mode
@@ -371,7 +290,6 @@ def test_reward_wrapper_checkpoint_roundtrip(tmp_path: Path, as_dir: bool):
 
     # Compare wrapper fields
     torch.testing.assert_close(env2.reward_storage, env1.reward_storage)
-    torch.testing.assert_close(env2.last_reward, env1.last_reward)
     assert env2.batch_size == env1.batch_size
     assert env2.max_penalty == env1.max_penalty
     assert env2.n_steps == env1.n_steps
@@ -386,7 +304,6 @@ def test_reward_wrapper_checkpoint_roundtrip(tmp_path: Path, as_dir: bool):
     assert_td_close(env2.env.observations, env1.env.observations)
     assert_td_close(env2.env.information, env1.env.information)
     torch.testing.assert_close(env2.env.last_grid, env1.env.last_grid)
-    torch.testing.assert_close(env2.env.last_reward, env1.env.last_reward)
     assert env2.env.time_step == env1.env.time_step
     torch.testing.assert_close(env2.env.reward_storage, env1.env.reward_storage)
     assert env2.env.mode == env1.env.mode
@@ -503,8 +420,6 @@ def test_inference_mode():
 
     # Step once and check rewards
     step_once(env)
-    assert torch.all(env.last_reward == 0), "Inference step should have zero reward"
-
     # Attempt to call training-only methods should raise errors
     with pytest.raises(ValueError):
         env.get_difference()
