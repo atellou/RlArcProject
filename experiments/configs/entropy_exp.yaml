@@ -1,0 +1,73 @@
+
+# =============================================================================
+# REGULARIZATION EXPERIMENTS
+# =============================================================================
+
+# TODO: Add hyperparameter sweep from reward experiments selection
+no_entropy_regularization:
+  description: "No entropy regularization experiment"
+  d4pg:
+    entropy_coef: 0.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.0
+
+small_entropy_regularization:
+  description: "Small entropy regularization experiment"
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 0.99
+    entropy_floor_coef: 0.01
+    min_entropy: 0.01
+
+strong_entropy_regularization:
+  description: "Strong entropy regularization experiment"
+  d4pg:
+    entropy_coef: 0.5
+    entropy_coef_decay: 0.99999999
+    entropy_floor_coef: 0.05
+    min_entropy: 0.3
+
+perpetual_entropy_regularization:
+  description: "Perpetual entropy regularization experiment"
+  d4pg:
+    entropy_coef: 0.5
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.05
+    min_entropy: 0.3
+
+
+# =============================================================================
+# SUBMIT-HEAD ENTROPY SCALE EXPERIMENTS: Run after selecting from above
+# =============================================================================
+
+# TODO: Add hyperparameter sweep from above selection
+submit_entropy_scale_1_0:
+  description: "Baseline (no submit-head entropy down-weighting)"
+  d4pg:
+    submit_entropy_scale: 1.0
+
+submit_entropy_scale_0_25:
+  description: "Reduce submit-head entropy contribution (0.25x)"
+  d4pg:
+    submit_entropy_scale: 0.25
+
+submit_entropy_scale_0_5:
+  description: "Reduce submit-head entropy contribution (0.5x)"
+  d4pg:
+    submit_entropy_scale: 0.5
+
+submit_entropy_scale_0_0:
+  description: "Disable submit-head entropy contribution (0.0x)"
+  d4pg:
+    submit_entropy_scale: 0.0
+
+
+# =============================================================================
+# CARSM EXPERIMENTS: Run after selecting from above
+# =============================================================================
+
+# TODO: Add hyperparameter sweep from above and LR experiments selection
+enable_carsm:
+  description: "Enable CARSM experiment"
+  d4pg:
+    carsm: true

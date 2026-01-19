@@ -18,6 +18,8 @@
 #
 # Total: 4 LRs × 5 n_steps = 20 experiments
 
+# TODO: Add hyperparameter sweep from reward and entropy experiments selection
+
 # =============================================================================
 # LR = 1.0e-3 (Aggressive)
 # =============================================================================

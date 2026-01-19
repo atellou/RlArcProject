@@ -430,7 +430,6 @@ class TensorBoardWriterManager:
             self.writer.add_scalar(
                 "hyperparams/entropy_coef", float(core.entropy_coef), iteration
             )
-
         # Sampler hyperparams if present
         sampler = None
         if self.replay_buffer is not None:
@@ -461,6 +460,19 @@ class TensorBoardWriterManager:
 
         if (iteration % self.minimal_frequency != 0 and not ctx.run_end) or ctx.warmup:
             return
+
+        # Epoch
+        epoch = ctx.epoch
+        if epoch is not None:
+            self.writer.add_scalars(
+                "steps_data",
+                tag_scalar_dict={
+                    "epoch": epoch,
+                    "epoch_step_idx": ctx.epoch_step_idx,
+                    "episode_step_idx": ctx.episode_step_idx,
+                },
+                global_step=iteration,
+            )
 
         self._add_loss_metrics(ctx, phase=phase, iteration=iteration)
 

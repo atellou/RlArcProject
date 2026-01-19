@@ -8,6 +8,8 @@ env:
   color_values: 10
   max_penalty: 1.0
   step_cost: 0.0
+  perfect_no_submit_penalty_coef: 0.75
+  zero_improvement_penalty: 0.25
   batch_size: 32
 
 network:
@@ -41,10 +43,11 @@ d4pg:
     n_steps: 1
   compute_td_error: true
   carsm: false
-  entropy_coef: 0.01
-  entropy_coef_decay: 0.999
-  entropy_floor_coef: 0.01
-  min_entropy: 0.01
+  entropy_coef: 0.05
+  entropy_coef_decay: 1.0
+  entropy_floor_coef: 0.05
+  min_entropy: 0.5
+  submit_entropy_scale: 1.0
   target_update_frequency: 10
   model_update_frequency: 1
   cache_enabled: true

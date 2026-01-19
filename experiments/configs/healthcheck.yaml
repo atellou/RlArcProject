@@ -1,7 +1,3 @@
-# Experiment configurations
-# Each experiment inherits from base and overrides specific values
-# Run with: python -m rlarcworld.experiments.run_experiment --config experiments/configs/experiments.yaml --experiment <name>
-
 # =============================================================================
 # HEALTHCHECK EXPERIMENTS
 # Enables most features to test if everything works
