@@ -35,20 +35,20 @@ class PixelAwareRewardWrapper(gym.Wrapper):
     def __init__(
         self,
         env: ArcBatchGridEnv,
-        max_penalty: float = 0.0,
+        max_penalty: float = 1.0,
         n_steps: int = 1,
-        gamma: float = 1.0,
+        gamma: float = 0.99,
     ):
         """Initialize the PixelAwareRewardWrapper.
 
         Args:
             env (gym.Env): Environment to wrap.
             max_penalty (float, optional): Maximum penalty for the reward.
-                Defaults to -1.0.
+                Defaults to 1.0.
             n_steps (int, optional): Number of steps in the reward computation.
                 Defaults to 1.
             gamma (float, optional): Discount factor in the reward
-                computation. Defaults to 1.0.
+                computation. Defaults to 0.99.
         """
         super().__init__(env)
         assert isinstance(max_penalty, float), "max_penalty must be a float"
@@ -60,10 +60,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         ), "gamma must be a positive float lower or equal than 1.0"
 
         assert (
-            isinstance(max_penalty, float) and max_penalty >= 0
-        ), "max_penalty must be a float greater or equal than 0, got {}".format(
-            max_penalty
-        )
+            isinstance(max_penalty, float) and max_penalty > 0
+        ), "max_penalty must be a float greater than 0, got {}".format(max_penalty)
         self.__max_penalty = max_penalty
         self.n_steps = n_steps
         self.gamma = gamma
@@ -235,19 +233,26 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         else:
             submission = submission.to(grid_diffs.device)
 
-        penalization = submission * -self.max_penalty
-        last_diffs = torch.sum(torch.abs(last_diffs), dim=(1, 2))
-        grid_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2))
-        penalization = (grid_diff > 0).long() * penalization
-        penalization = (grid_diff / self.grid_size**2) * penalization
-        improvement = last_diffs - grid_diff
-        # The minus one is to avoid the reward to be positive (maximum reward is 0)
-        reward = (
-            (improvement - 1) * (grid_diff != 0).long()
-            + penalization
-            + (grid_diff == 0).long() * submission
+        # Work in normalized pixel units so the signal stays in a small,
+        # meaningful range and doesn't saturate downstream.
+        last_diff = torch.sum(torch.abs(last_diffs), dim=(1, 2)).float()
+        grid_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2)).float()
+
+        # Dense shaping: positive when we reduce diff, negative when we make it worse.
+        shaping = (last_diff - grid_diff).clamp(-1.0, 1.0)
+
+        # Submit grading term: +1 if perfect, else -max_penalty.
+        perfect = (grid_diff == 0).float()
+        submit_term = submission.float() * (
+            perfect * 1.0 + (1.0 - perfect) * (-float(self.max_penalty))
         )
-        return reward
+        # If the grid is already perfect but the agent doesn't submit, apply a small
+        # penalty to avoid the "stall at 0 reward" local optimum.
+        not_submit_term = (
+            (1.0 - submission.float()) * perfect * (-float(self.max_penalty))
+        )
+
+        return shaping + submit_term + not_submit_term
 
     def step(
         self, actions: TensorDict | dict[str, torch.Tensor]

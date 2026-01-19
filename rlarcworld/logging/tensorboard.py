@@ -153,18 +153,30 @@ class TensorBoardWriterManager:
         ):
             actor_lr = core.actor_scheduler.get_last_lr()[0]
             self.writer.add_scalar(f"{phase}/optim/actor_lr", actor_lr, iteration)
+        elif hasattr(core, "actor_optimizer") and core.actor_optimizer is not None:
+            try:
+                actor_lr = core.actor_optimizer.param_groups[0]["lr"]
+                self.writer.add_scalar(
+                    f"{phase}/optim/actor_lr", float(actor_lr), iteration
+                )
+            except Exception:
+                pass
         if hasattr(core, "critic_scheduler") and isinstance(
             core.critic_scheduler, optim.lr_scheduler.StepLR
         ):
             critic_lr = core.critic_scheduler.get_last_lr()[0]
             self.writer.add_scalar(f"{phase}/optim/critic_lr", critic_lr, iteration)
+        elif hasattr(core, "critic_optimizer") and core.critic_optimizer is not None:
+            try:
+                critic_lr = core.critic_optimizer.param_groups[0]["lr"]
+                self.writer.add_scalar(
+                    f"{phase}/optim/critic_lr", float(critic_lr), iteration
+                )
+            except Exception:
+                pass
 
-        # Algo hyperparams that change over time (e.g., entropy coef)
-        if (
-            hasattr(core, "entropy_coef")
-            and hasattr(core, "entropy_coef_decay")
-            and core.entropy_coef_decay != 1.0
-        ):
+        # Algo hyperparams (plateau diagnostics)
+        if hasattr(core, "entropy_coef"):
             self.writer.add_scalar(
                 f"{phase}/algo/entropy_coef", float(core.entropy_coef), iteration
             )
@@ -303,11 +315,43 @@ class TensorBoardWriterManager:
                 z = z.to(probs.device)
                 q = torch.sum(probs * z, dim=-1)
                 q_mean = float(q.mean().detach().cpu())
+                q_std = float(q.std(unbiased=False).detach().cpu())
                 self.writer.add_scalar(
                     f"{phase}/critic/q_expected_mean/{key}",
                     q_mean,
                     iteration,
                 )
+                self.writer.add_scalar(
+                    f"{phase}/critic/q_expected_std/{key}",
+                    q_std,
+                    iteration,
+                )
+
+        td_error = getattr(ctx, "td_error", None)
+        if td_error is not None and hasattr(td_error, "items"):
+            for key, val in td_error.items():
+                try:
+                    v = val.detach().float().reshape(-1)
+                    v = v[torch.isfinite(v)]
+                    if v.numel() == 0:
+                        continue
+                    self.writer.add_scalar(
+                        f"{phase}/td_error/mean/{key}",
+                        float(v.mean().cpu()),
+                        iteration,
+                    )
+                    self.writer.add_scalar(
+                        f"{phase}/td_error/std/{key}",
+                        float(v.std(unbiased=False).cpu()),
+                        iteration,
+                    )
+                    self.writer.add_scalar(
+                        f"{phase}/td_error/max/{key}",
+                        float(v.max().cpu()),
+                        iteration,
+                    )
+                except Exception:
+                    continue
 
         # Weight norms (L2) for actor and critic
         def l2_norm(module) -> float:

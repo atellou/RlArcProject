@@ -58,6 +58,7 @@ class EnvConfig:
     grid_size: int = 30
     color_values: int = 10
     max_penalty: float = 1.0
+    step_cost: float = 0.0
     batch_size: int = 32
 
 

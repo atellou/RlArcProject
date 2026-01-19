@@ -39,6 +39,7 @@ class PixelWiseArcStepper:
         dataset_shuffle_seed: int | None = None,
         augmentation_generator: torch.Generator | None = None,
         max_penalty: float = 1.0,
+        step_cost: float = 0.0,
         n_step_config: NStepMinVMaxConfig | None = None,
     ) -> None:
         """Creates a stepper for the environment and dataset.
@@ -58,6 +59,7 @@ class PixelWiseArcStepper:
             augmentation_generator (torch.Generator | None):
                 Generator for deterministic randomness.
             max_penalty (float): Maximum penalty for the environment reward.
+            step_cost (float): Per-step time cost applied in train mode.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
         """
@@ -120,6 +122,7 @@ class PixelWiseArcStepper:
             color_values=color_values,
             device=env_device,
             max_penalty=max_penalty,
+            step_cost=step_cost,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
         self.environment = PixelAwareRewardWrapper(

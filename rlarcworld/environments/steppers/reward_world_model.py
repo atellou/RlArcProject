@@ -54,6 +54,8 @@ class ArcWorldModelStepper:
         step_horizon: int = 5,
         gamma: float = 0.99,
         n_step_config: NStepMinVMaxConfig | None = None,
+        max_penalty: float = 1.0,
+        step_cost: float = 0.0,
         # Smooth transition params
         grid_diff_epsilon: float = 0.01,
         smooth_transition: bool = True,
@@ -76,6 +78,8 @@ class ArcWorldModelStepper:
             step_horizon: Planning horizon for imagined rollouts.
             gamma: Discount factor.
             n_step_config: N-step configuration.
+            max_penalty: Maximum penalty for submitted bad grids.
+            step_cost: Cost for each step taken.
             grid_diff_epsilon: Threshold for "perfect" grid detection.
             smooth_transition: Use smooth sigmoid transition.
             transition_steepness: Steepness of smooth transition.
@@ -91,6 +95,9 @@ class ArcWorldModelStepper:
         self.n_step_config = (
             n_step_config if n_step_config is not None else NStepMinVMaxConfig()
         )
+
+        self.max_penalty = max_penalty
+        self.step_cost = step_cost
 
         # Metrics tracking using tensors for compute optimization
         self._max_tracked_losses = 1000
@@ -113,6 +120,8 @@ class ArcWorldModelStepper:
             grid_size=grid_size,
             color_values=color_values,
             device=self.device,
+            max_penalty=self.max_penalty,
+            step_cost=self.step_cost,
         )
 
         self.environment = RewardWorldModelWrapper(
@@ -124,6 +133,8 @@ class ArcWorldModelStepper:
             grid_diff_epsilon=grid_diff_epsilon,
             smooth_transition=smooth_transition,
             transition_steepness=transition_steepness,
+            max_penalty=self.max_penalty,
+            step_cost=self.step_cost,
         )
 
         self.stepper = EnvStepper(
@@ -421,6 +432,14 @@ class ArcWorldModelStepper:
 
         # 1. Update world model with true rewards
         if ctx.iteration % self.model_update_frequency == 0:
+            # TODO!!!!: The target reward is wrong.
+            # It should be a simple not modified metric
+            # We should pass:
+            # - binary: 1 if the grid is correct and submitted, 0 otherwise
+            # - pixel_wise: percentage of completion
+            # These are the rewards to look for in the model
+            # and it then can be used to compute the ones that include
+            # penalties, discounts, etc.
             loss_dict = self.update_model(
                 state=ctx.batch["state"],
                 true_reward=ctx.batch["reward"],

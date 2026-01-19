@@ -76,9 +76,10 @@ class ArcBatchGridEnv(gym.Env):
         grid_size: int,
         color_values: int,
         *,
-        max_penalty: float = 0.0,
+        max_penalty: float = 1.0,
+        step_cost: float = 0.0,
         n_steps: int = 1,
-        gamma: float = 1.0,
+        gamma: float = 0.99,
         device: str | None = None,
     ):
         """Initialize the environment.
@@ -88,8 +89,11 @@ class ArcBatchGridEnv(gym.Env):
             color_values (int): Number of color values in the grid (upper bound).
             max_penalty (float, optional): Maximum penalty for the reward.
                 Defaults to 0.
+            step_cost (float, optional): Per-step time cost applied in train mode.
+                This creates urgency even when intermediate rewards are 0.
+                Defaults to 0.0.
             n_steps (int, optional): Number of steps to look ahead. Defaults to 1.
-            gamma (float, optional): Discount factor. Defaults to 1.0.
+            gamma (float, optional): Discount factor. Defaults to 0.99.
             device (str, optional): Device to use. Defaults to None.
         """
         assert (
@@ -109,11 +113,13 @@ class ArcBatchGridEnv(gym.Env):
 
         # N-step attributes
         assert (
-            isinstance(max_penalty, float) and max_penalty >= 0
-        ), "max_penalty must be a float greater or equal than 0, got {}".format(
-            max_penalty
-        )
+            isinstance(max_penalty, float) and max_penalty > 0
+        ), "max_penalty must be a float greater than 0, got {}".format(max_penalty)
+        assert (
+            isinstance(step_cost, float) and step_cost >= 0
+        ), "step_cost must be a float greater or equal than 0, got {}".format(step_cost)
         self.__max_penalty = max_penalty
+        self.step_cost = step_cost
         self.n_steps = n_steps
         self.gamma = gamma
 
@@ -289,7 +295,6 @@ class ArcBatchGridEnv(gym.Env):
             queue_size=self.n_steps,
             queue_dim=1,
         ).to(self.device)
-        self.last_reward = torch.zeros(self.batch_size, dtype=int).to(self.device)
         self.time_step = 0
 
         # Validate examples
@@ -525,8 +530,9 @@ class ArcBatchGridEnv(gym.Env):
                 device=self._reward_storage.device,
                 dtype=self._reward_storage.dtype,
             )
+        if self.step_cost != 0.0:
+            reward = reward - float(self.step_cost)
         self._reward_storage = self._reward_storage.push(reward.unsqueeze(1))
-        self.last_reward = reward
 
         # TODO: No truncate version, evaluate time constraints
         submit = torch.as_tensor(actions[ActionKeys.SUBMIT.value]).to(self.device)
@@ -556,12 +562,12 @@ class ArcBatchGridEnv(gym.Env):
                 "observations": self.observations,
                 "information": self.information,
                 "last_grid": self.last_grid,
-                "last_reward": self.last_reward,
                 "time_step": self.time_step,
                 "reward_storage": self.reward_storage,
                 "mode": self.mode.value,
                 "n_steps": self.n_steps,
                 "gamma": self.gamma,
+                "step_cost": self.step_cost,
                 "grid_size": self.grid_size,
                 "color_values": self.color_values,
                 "batch_size": self.batch_size,
@@ -624,7 +630,6 @@ class ArcBatchGridEnv(gym.Env):
         self.observations = checkpoint["observations"]
         self.information = checkpoint["information"]
         self.last_grid = checkpoint["last_grid"]
-        self.last_reward = checkpoint["last_reward"]
         self.time_step = checkpoint["time_step"]
         self.reward_storage = checkpoint["reward_storage"]
         self.mode = ArcEnvRunningMode(checkpoint["mode"])
@@ -632,6 +637,7 @@ class ArcBatchGridEnv(gym.Env):
 
         assert self.n_steps == checkpoint["n_steps"]
         assert self.gamma == checkpoint["gamma"]
+        assert self.step_cost == checkpoint.get("step_cost", self.step_cost)
         assert self.grid_size == checkpoint["grid_size"]
         assert self.color_values == checkpoint["color_values"]
 
