@@ -37,6 +37,8 @@ class TensorBoardWriterManager:
         self,
         experiment_path: str | Path,
         *,
+        experiment_name: str | None = None,
+        experiment_description: str | None = None,
         logdir_name: str = "tensorboard",
         replay_buffer: ReplayBufferProto | None = None,
         warmup_buffer_ratio: float = 0.2,
@@ -47,6 +49,8 @@ class TensorBoardWriterManager:
 
         Args:
             experiment_path: Root path for this run's artifacts.
+            experiment_name: Name of the experiment.
+            experiment_description: Description of the experiment.
             logdir_name: Directory name under experiment root for TB logs.
             replay_buffer: Replay buffer to log stats from.
             warmup_buffer_ratio: Ratio used to display buffer warmup threshold.
@@ -63,6 +67,19 @@ class TensorBoardWriterManager:
                 "torch.utils.tensorboard.SummaryWriter is not available."
             )
         self.writer = SummaryWriter(log_dir=str(self.logdir))
+
+        if experiment_name is not None or experiment_description is not None:
+            title = (experiment_name or "").strip()
+            title = title.replace("_", " ").replace("-", " ").strip().title()
+            desc = (experiment_description or "").strip()
+            text = "# {title}\n\n{desc}".format(
+                title=title or "Experiment",
+                desc=desc or "(no description)",
+            )
+            try:
+                self.writer.add_text("experiment", text, global_step=0)
+            except Exception:
+                pass
         self.replay_buffer = replay_buffer
         self.warmup_buffer_ratio = float(warmup_buffer_ratio)
         self.medium_frequency = int(max(1, medium_frequency))
@@ -166,16 +183,22 @@ class TensorBoardWriterManager:
                 )
 
             scalars = {}
-            for k in [
-                "reward_shaping",
-                "reward_submit_term",
-                "reward_not_submit_term",
-            ]:
-                if k in info.keys():
-                    v = info[k].detach().float().reshape(-1)
-                    if v.numel() == 0:
-                        continue
-                    scalars[f"{k}_mean"] = float(v.mean().cpu().item())
+            key_aliases = {
+                "reward_shaping": ["reward_shaping", "shaping"],
+                "reward_submit_term": ["reward_submit_term", "submit_term"],
+                "reward_not_submit_term": [
+                    "reward_not_submit_term",
+                    "not_submit_term",
+                ],
+            }
+            for canonical, aliases in key_aliases.items():
+                for k in aliases:
+                    if k in info.keys():
+                        v = info[k].detach().float().reshape(-1)
+                        if v.numel() == 0:
+                            continue
+                        scalars[f"{canonical}_mean"] = float(v.mean().cpu().item())
+                        break
             if scalars:
                 self.writer.add_scalars(
                     main_tag="{phase}/env/pixel_reward".format(phase=phase),
@@ -463,7 +486,7 @@ class TensorBoardWriterManager:
 
         # Epoch
         epoch = ctx.epoch
-        if epoch is not None:
+        if epoch is not None and phase == "train":
             self.writer.add_scalars(
                 "steps_data",
                 tag_scalar_dict={
@@ -576,6 +599,8 @@ class TensorBoardWriterManager:
 def make_tensorboard_callbacks(
     experiment_path: str | Path,
     *,
+    experiment_name: str | None = None,
+    experiment_description: str | None = None,
     replay_buffer: Any | None = None,
     warmup_buffer_ratio: float = 0.2,
     medium_frequency: int = 100,
@@ -592,6 +617,8 @@ def make_tensorboard_callbacks(
 
     Args:
         experiment_path: Root path for this run's artifacts.
+        experiment_name: Name of the experiment.
+        experiment_description: Description of the experiment.
         replay_buffer: Replay buffer to attach for logging stats.
         warmup_buffer_ratio: Ratio used to display buffer warmup threshold.
         medium_frequency: Frequency at which to log medium-tier metrics.
@@ -602,6 +629,8 @@ def make_tensorboard_callbacks(
     """
     mgr = TensorBoardWriterManager(
         experiment_path,
+        experiment_name=experiment_name,
+        experiment_description=experiment_description,
         replay_buffer=replay_buffer,
         warmup_buffer_ratio=warmup_buffer_ratio,
         medium_frequency=medium_frequency,

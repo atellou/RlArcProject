@@ -71,17 +71,24 @@ class ArcD4PG:
     def __init__(
         self,
         config: ArcD4PGConfig,
+        experiment_name: str | None = None,
+        experiment_description: str | None = None,
         **kwargs,
     ):
         """Initialize the ArcD4PG experiment.
 
         Args:
             config: Complete experiment configuration
+            experiment_name: Name of the experiment.
+            experiment_description: Description of the experiment.
             **kwargs: Additional arguments passed to D4PGCore
         """
         # Store full config for reference
         config = config.get_validated_config()
         self.exp_config = config
+
+        self.experiment_name = experiment_name
+        self.experiment_description = experiment_description
 
         self.global_seed: int | None = None
         if config.reproducibility.global_seed is not None:
@@ -477,6 +484,8 @@ class ArcD4PG:
                 return
             self.tb_manager, tb_train_cb, tb_val_cb = make_tensorboard_callbacks(
                 self.checkpoint_dir,
+                experiment_name=self.experiment_name,
+                experiment_description=self.experiment_description,
                 replay_buffer=self.replay_buffer,
                 warmup_buffer_ratio=warmup_buffer_ratio,
                 minimal_frequency=self.exp_config.logging.tb_minimal_frequency,

@@ -289,7 +289,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=str,
-        default="experiments/configs/experiments.yaml",
+        default="experiments/configs/healthcheck.yaml",
         help="Path to experiments YAML file",
     )
     parser.add_argument(
@@ -398,7 +398,17 @@ def main() -> None:
         logger.info(f"Overriding global_seed with CLI value: {args.seed}")
 
     logger.info("Initializing experiment...")
-    experiment = ArcD4PG(config)
+    exp_description = None
+    try:
+        exp_description = list_experiments(args.config).get(args.experiment)
+    except Exception:
+        exp_description = None
+
+    experiment = ArcD4PG(
+        config,
+        experiment_name=args.experiment,
+        experiment_description=exp_description,
+    )
 
     logger.info(f"Starting training for {args.epochs} epochs...")
     experiment.train(epochs=args.epochs)
