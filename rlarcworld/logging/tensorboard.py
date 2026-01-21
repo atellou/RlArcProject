@@ -77,7 +77,13 @@ class TensorBoardWriterManager:
                 desc=desc or "(no description)",
             )
             try:
-                self.writer.add_text("experiment", text, global_step=0)
+                # Use step=1 so it shows up when TensorBoard defaults to "latest step".
+                self.writer.add_text("Experiment", text, global_step=1)
+                self.writer.add_text("Experiment/title", title or "Experiment", 1)
+                self.writer.add_text(
+                    "Experiment/description", desc or "(no description)", 1
+                )
+                self.writer.flush()
             except Exception:
                 pass
         self.replay_buffer = replay_buffer
