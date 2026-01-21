@@ -1,6 +1,7 @@
 """PixelWiseArcStepper class to handle environment stepping and episode simulation."""
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable, Tuple
 
 import torch
@@ -13,12 +14,25 @@ from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
 from rlarcworld.common.types import RewardDict
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.core import EnvStepper
+from rlarcworld.environments.wrappers.curriculum import (
+    ArcActionCurriculum,
+    PixelLocationStrategy,
+)
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.utils.augmentation import ArcAugmentationTransformer
 from rlarcworld.utils.device import CudaConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ArcActionCurriculumConfig:
+    """Configuration for the curriculum."""
+
+    enabled: bool = False
+    replace_probability: float = 1.0
+    pixel_location_strategy: PixelLocationStrategy = PixelLocationStrategy.RANDOM
 
 
 class PixelWiseArcStepper:
@@ -43,6 +57,7 @@ class PixelWiseArcStepper:
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
         n_step_config: NStepMinVMaxConfig | None = None,
+        curriculum: ArcActionCurriculumConfig | None = None,
     ) -> None:
         """Creates a stepper for the environment and dataset.
 
@@ -67,6 +82,8 @@ class PixelWiseArcStepper:
             zero_improvement_penalty (float): Coefficient for zero improvement penalty.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
+            curriculum (ArcActionCurriculumConfig | None):
+                Curriculum configuration.
         """
         # Initialize dataset and environment
         logger.info("Setting up dataset and environment...")
@@ -138,6 +155,15 @@ class PixelWiseArcStepper:
             n_steps=self.n_step_config.n_steps,
             gamma=base_env.gamma,
         )
+        self.curriculum: ArcActionCurriculum | None = None
+        if curriculum is not None:
+            self.environment = ArcActionCurriculum(
+                self.environment,
+                self.environment.color_values,
+                enabled=curriculum.enabled,
+                replace_probability=curriculum.replace_probability,
+                pixel_location_strategy=curriculum.pixel_location_strategy,
+            )
 
         self.core = EnvStepper(
             actor=actor,
@@ -149,6 +175,16 @@ class PixelWiseArcStepper:
             amp_enabled=device_config.get("amp_enabled", True),
             on_step=self._get_on_step_rewards(),
         )
+
+    def curriculum_set_replace_probability(self, probability: float):
+        """Setter for the curriculum."""
+        if self.curriculum is not None:
+            self.curriculum.replace_probability = probability
+
+    def curriculum_set_enabled(self, enabled: bool):
+        """Setter for the curriculum."""
+        if self.curriculum is not None:
+            self.curriculum.enabled = enabled
 
     def _collate_fn(self, samples: list[dict]) -> dict:
         """Collate function for the dataloader."""

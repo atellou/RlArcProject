@@ -700,7 +700,11 @@ class ArcD4PG:
             Dictionary of callbacks for training steps
         """
         callbacks: OrderedDict[str, Callable[[OnStepContext], Any]] = OrderedDict(
-            {"core_step": self.d4pg_core.on_step, "logging": self._log_step}
+            {
+                "core_step": self.d4pg_core.on_step,
+                "logging": self._log_step,
+                "curriculum": self._curriculum_callback,
+            }
         )
 
         if self.ckpt_save_frequency > 0:
@@ -763,6 +767,28 @@ class ArcD4PG:
                     reward_pairs.sort()
                     msg += ", Rewards: [" + ",".join(reward_pairs) + "]"
             logger.info(msg)
+
+    def _curriculum_callback(self, ctx: OnStepContext):
+        if not self.exp_config.training.enable_curriculum:
+            return
+        curriculum_replace_probabilities = (
+            self.exp_config.training.curriculum_replace_probabilities
+        )
+
+        replace_probability = 0.0
+        if ctx.warmup:
+            replace_probability = curriculum_replace_probabilities.on_warmup
+        else:
+            if (
+                ctx.episode_step_idx
+                <= curriculum_replace_probabilities.episode_start_steps
+            ):
+                replace_probability = curriculum_replace_probabilities.on_episode_start
+        replace_probability = max(
+            replace_probability, curriculum_replace_probabilities.on_train
+        )
+
+        self.training_stepper.curriculum_set_replace_probability(replace_probability)
 
     def _periodic_checkpoint(self, ctx: OnStepContext):
         """Periodic lightweight checkpoint: core + trainer + config + provenance.

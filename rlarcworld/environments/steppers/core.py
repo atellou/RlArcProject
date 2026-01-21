@@ -82,7 +82,7 @@ class EnvStepper:
                 Callable to reset the environment with a batch of objects and kwargs.
             amp_enabled: Whether to use automatic mixed precision
             on_step: Optional callback function to be called after each step
-        """  # noqa: E501
+        """
         self.actor = actor
         self.device = device
         self.env = env
@@ -144,6 +144,27 @@ class EnvStepper:
             else:
                 actions_env = actions
             observation, reward, terminated, truncated, info = env.step(actions_env)
+            curriculum_action = info.pop("curriculum_action", None)
+            if curriculum_action is not None:
+                # If a wrapper overrides the executed action, ensure the transition
+                # stores action probabilities consistent with the executed action.
+                if isinstance(curriculum_action, TensorDict):
+                    curriculum_action = curriculum_action.to(self.device)
+                else:
+                    curriculum_action = TensorDict(curriculum_action).to(self.device)
+
+                # Convert executed discrete actions into one-hot distributions that
+                # match the actor head shapes.
+                one_hot_probs = {}
+                for key, probs in action_probs.items():
+                    idx = curriculum_action[key].long().to(self.device)
+                    oh = torch.zeros_like(probs)
+                    oh.scatter_(-1, idx.unsqueeze(-1), 1.0)
+                    one_hot_probs[key] = oh
+                action_probs = TensorDict(one_hot_probs).to(self.device)
+
+                # Keep actions_env consistent for any downstream consumers.
+                actions_env = curriculum_action
 
             if self.on_step:
                 (

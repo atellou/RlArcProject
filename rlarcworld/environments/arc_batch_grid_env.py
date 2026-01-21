@@ -422,6 +422,16 @@ class ArcBatchGridEnv(gym.Env):
         state[StateKeys.EXAMPLES.value] = self.information[StateKeys.EXAMPLES.value]
         return state
 
+    def get_target(self) -> torch.Tensor:
+        """Return the target grid."""
+        if not self.mode.is_train():
+            raise ValueError("get_target called outside of training mode")
+        return self.observations[StateKeys.TARGET.value]
+
+    def get_current_grid(self) -> torch.Tensor:
+        """Return the current grid."""
+        return self.observations[StateKeys.GRID.value]
+
     def get_state(self, unsqueeze: Optional[int] = None) -> TensorDict:
         """Return the current state, optionally adding a batch dim.
 
