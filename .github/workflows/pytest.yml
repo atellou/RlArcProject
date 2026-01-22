@@ -37,7 +37,7 @@ jobs:
 
     - name: Run tests with pytest
       run: |
-        uv run pytest
+        uv run pytest -v
 
     - name: Upload coverage reports
       if: matrix.python-version == '3.12'
