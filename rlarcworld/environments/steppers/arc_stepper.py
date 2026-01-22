@@ -34,6 +34,17 @@ class ArcActionCurriculumConfig:
     replace_probability: float = 1.0
     pixel_location_strategy: PixelLocationStrategy = PixelLocationStrategy.RANDOM
 
+    def __init__(
+        self,
+        enabled: bool,
+        replace_probability: float,
+        pixel_location_strategy: PixelLocationStrategy,
+    ):
+        """Initialize the curriculum configuration."""
+        self.enabled = enabled
+        self.replace_probability = replace_probability
+        self.pixel_location_strategy = pixel_location_strategy
+
 
 class PixelWiseArcStepper:
     """PixelWiseArcStepper to handle environment stepping and episode simulation."""
@@ -147,22 +158,30 @@ class PixelWiseArcStepper:
             step_cost=step_cost,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
-        self.environment = PixelAwareRewardWrapper(
-            base_env,
-            max_penalty=max_penalty,
-            perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
-            zero_improvement_penalty=zero_improvement_penalty,
-            n_steps=self.n_step_config.n_steps,
-            gamma=base_env.gamma,
-        )
+        pixel_aware_env_args = {
+            "max_penalty": max_penalty,
+            "perfect_no_submit_penalty_coef": perfect_no_submit_penalty_coef,
+            "zero_improvement_penalty": zero_improvement_penalty,
+            "n_steps": self.n_step_config.n_steps,
+            "gamma": base_env.gamma,
+        }
         self.curriculum: ArcActionCurriculum | None = None
         if curriculum is not None:
             self.environment = ArcActionCurriculum(
-                self.environment,
-                self.environment.color_values,
+                env=base_env,
                 enabled=curriculum.enabled,
                 replace_probability=curriculum.replace_probability,
                 pixel_location_strategy=curriculum.pixel_location_strategy,
+                **pixel_aware_env_args,
+            )
+        else:
+            self.environment = PixelAwareRewardWrapper(
+                base_env,
+                max_penalty=max_penalty,
+                perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
+                zero_improvement_penalty=zero_improvement_penalty,
+                n_steps=self.n_step_config.n_steps,
+                gamma=base_env.gamma,
             )
 
         self.core = EnvStepper(

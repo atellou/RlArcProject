@@ -78,10 +78,6 @@ class TensorBoardWriterManager:
             )
             # Use step=1 so it shows up when TensorBoard defaults to "latest step".
             self.writer.add_text("Experiment", text, global_step=1)
-            self.writer.add_text("Experiment/title", title or "Experiment", 1)
-            self.writer.add_text(
-                "Experiment/description", desc or "(no description)", 1
-            )
             self.writer.flush()
         self.replay_buffer = replay_buffer
         self.warmup_buffer_ratio = float(warmup_buffer_ratio)

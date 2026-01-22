@@ -118,16 +118,12 @@ class EnvStepper:
             if state is None:
                 state = env.get_state(unsqueeze=1).to(self.device)
 
-            # Get action from actor (AMP ctx is a no-op if disabled/CPU)
-            # Force eval mode temporarily to avoid BatchNorm errors with small batches
             prev_training = self.actor.training
-            try:
-                self.actor.eval()
-                with self.amp_cm:
-                    action_probs = self.actor(state)
-            finally:
-                if prev_training:
-                    self.actor.train(True)
+            self.actor.eval()
+            with self.amp_cm:
+                action_probs = self.actor(state).to(self.device)
+            if prev_training:
+                self.actor.train(True)
 
             # Convert to discrete actions for environment (ensure 1D per batch)
             actions = TensorDict(
@@ -138,12 +134,7 @@ class EnvStepper:
             ).to(self.device)
 
             # Step environment
-            env_device = getattr(env, "device", None)
-            if env_device is not None:
-                actions_env = actions.to(env_device)
-            else:
-                actions_env = actions
-            observation, reward, terminated, truncated, info = env.step(actions_env)
+            observation, reward, terminated, truncated, info = env.step(actions)
             curriculum_action = info.pop("curriculum_action", None)
             if curriculum_action is not None:
                 # If a wrapper overrides the executed action, ensure the transition
@@ -162,9 +153,6 @@ class EnvStepper:
                     oh.scatter_(-1, idx.unsqueeze(-1), 1.0)
                     one_hot_probs[key] = oh
                 action_probs = TensorDict(one_hot_probs).to(self.device)
-
-                # Keep actions_env consistent for any downstream consumers.
-                actions_env = curriculum_action
 
             if self.on_step:
                 on_step_args = OnEnvStepArgs(

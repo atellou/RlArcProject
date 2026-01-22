@@ -57,7 +57,7 @@ class EnvConfig:
     """
 
     grid_size: int = 30
-    color_values: int = 10
+    color_values: int = 11
     max_penalty: float = 1.0
     step_cost: float = 0.0
     perfect_no_submit_penalty_coef: float = 1.0

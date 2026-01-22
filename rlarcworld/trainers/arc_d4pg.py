@@ -40,7 +40,10 @@ from rlarcworld.common.configs import (
     RlArcWorldViTARCConfig,
 )
 from rlarcworld.common.enums import RewardKeys
-from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
+from rlarcworld.environments.steppers.arc_stepper import (
+    ArcActionCurriculumConfig,
+    PixelWiseArcStepper,
+)
 from rlarcworld.environments.steppers.reward_world_model import ArcWorldModelStepper
 from rlarcworld.logging.tensorboard import make_tensorboard_callbacks
 from rlarcworld.models.actor import ViTARCActor
@@ -53,7 +56,7 @@ from rlarcworld.utils.checkpointing import (
     resolve_load_path,
     resolve_save_path,
 )
-from rlarcworld.utils.device import enable_cuda
+from rlarcworld.utils.device import CudaConfig, enable_cuda
 from rlarcworld.utils.torch_queue import TorchQueue
 
 logger = logging.getLogger(__name__)
@@ -169,6 +172,12 @@ class ArcD4PG:
                 "use_checkpointing": False,
             }
         self.device = self.cuda_config["device"]
+        self.cpu_device = "cpu"
+        self.cpu_config = CudaConfig(
+            amp_enabled=False,
+            use_checkpointing=False,
+            device="cpu",
+        )
 
         # Store commonly accessed values for convenience
         self.grid_size = config.env.grid_size
@@ -269,6 +278,14 @@ class ArcD4PG:
         elif self.global_seed is not None:
             aug_gen = torch.Generator(device="cpu").manual_seed(self.global_seed)
 
+        curriculum_config = None
+        if config.training.enable_curriculum:
+            curriculum_config = ArcActionCurriculumConfig(
+                enabled=config.training.enable_curriculum,
+                replace_probability=config.training.curriculum_replace_probabilities.on_warmup,
+                pixel_location_strategy=config.training.curriculum_pixel_location_strategy,
+            )
+
         # Create training stepper
         logger.info("Creating training stepper...")
         self.training_stepper = PixelWiseArcStepper(
@@ -277,7 +294,7 @@ class ArcD4PG:
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
             actor=self.actor,
-            device_config=self.cuda_config,
+            device_config=self.cpu_config,
             batch_size=self.batch_size,
             augmentation_enabled=config.training.augmentation_enabled,
             max_examples=10,
@@ -288,6 +305,7 @@ class ArcD4PG:
             perfect_no_submit_penalty_coef=config.env.perfect_no_submit_penalty_coef,
             zero_improvement_penalty=config.env.zero_improvement_penalty,
             n_step_config=config.d4pg.n_step_config,
+            curriculum=curriculum_config,
         )
         logger.info("Training stepper created successfully")
 
@@ -299,7 +317,7 @@ class ArcD4PG:
             grid_size=config.env.grid_size,
             color_values=config.env.color_values,
             actor=self.actor,
-            device_config=self.cuda_config,
+            device_config=self.cpu_config,
             batch_size=self.batch_size,
             augmentation_enabled=False,
             max_examples=10,
@@ -326,7 +344,7 @@ class ArcD4PG:
                 grid_size=config.env.grid_size,
                 color_values=config.env.color_values,
                 actor=self.actor,
-                device_config=self.cuda_config,
+                device_config=self.cpu_config,
                 reward_model=reward_model,
                 reward_model_lr=config.world_model.learning_rate,
                 lr_scheduler_kwargs=config.world_model.lr_scheduler_kwargs,
@@ -470,7 +488,7 @@ class ArcD4PG:
             warmup_buffer_ratio=warmup_buffer_ratio,
             on_train_step=on_step_callbacks,
             on_validation_step=self._on_validation_callbacks(),
-            device=self.device,
+            device=self.cpu_device,
             min_train_batch_size=self.min_train_batch_size,
         )
 
@@ -524,8 +542,6 @@ class ArcD4PG:
             raise ValueError("Skipping priority update: missing td_error or info")
 
         td_error = ctx.td_error
-        priority_eps = 1e-6
-        priority_max = 1e6
 
         # Check if info has index metadata (required for update_tensordict_priority)
         if "index" not in info.keys():
@@ -537,22 +553,18 @@ class ArcD4PG:
 
         if td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value) is not None:
             priority = td_error.get(RewardKeys.PIXEL_WISE_N_REWARD.value)
-            assert priority is not None
-            priority = priority.detach().to(dtype=torch.float32)
-            priority = torch.nan_to_num(
-                priority, nan=0.0, posinf=priority_max, neginf=0.0
-            ).abs()
-            priority = priority.clamp(min=priority_eps, max=priority_max)
-            replay_buffer.update_priority(info["index"], priority)
+            reward_key = RewardKeys.PIXEL_WISE_N_REWARD.value
         else:
             priority = td_error.get(RewardKeys.PIXEL_WISE.value)
-            assert priority is not None
-            priority = priority.detach().to(dtype=torch.float32)
-            priority = torch.nan_to_num(
-                priority, nan=0.0, posinf=priority_max, neginf=0.0
-            ).abs()
-            priority = priority.clamp(min=priority_eps, max=priority_max)
-            replay_buffer.update_priority(info["index"], priority)
+            reward_key = RewardKeys.PIXEL_WISE.value
+        if priority is None:
+            raise ValueError("Missing priority for {}".format(reward_key))
+        if not torch.isfinite(priority).all():
+            raise RuntimeError(
+                "Non-finite PER priority detected (nan/inf) for {}".format(reward_key)
+            )
+        priority = priority.detach().to(dtype=torch.float32)
+        replay_buffer.update_priority(info["index"], priority.abs())
 
     def _on_validation_callbacks(
         self,
@@ -1195,7 +1207,7 @@ class ArcD4PG:
         # Restore environment/wrapper
         env_state = checkpoint.get("env")
         if env_state is not None and hasattr(self, "training_stepper"):
-            self.training_stepper.environment.load(env_state, device=self.device)
+            self.training_stepper.environment.load(env_state, device=self.cpu_device)
             restored_env = True
 
         # Restore trainer progress
@@ -1276,7 +1288,7 @@ class ArcD4PG:
                         if hasattr(self.trainer.replay_buffer, "load"):
                             self.trainer.replay_buffer.load(str(rb_path))
                         elif hasattr(self.trainer.replay_buffer, "load_state_dict"):
-                            state = torch.load(rb_path, map_location=self.device)
+                            state = torch.load(rb_path, map_location=self.cpu_device)
                             self.trainer.replay_buffer.load_state_dict(state)
                         sampler = getattr(self.trainer.replay_buffer, "sampler", None)
                         if sampler is not None and isinstance(

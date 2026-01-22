@@ -10,11 +10,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-import gymnasium as gym
 import torch
 from tensordict import TensorDict
 
 from rlarcworld.common.enums import ActionKeys
+from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
+from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 
 
 class CurriculumBaseEnv(Protocol):
@@ -22,6 +23,10 @@ class CurriculumBaseEnv(Protocol):
 
     def step(self, action):
         """Step the environment."""
+        ...
+
+    def get_source_env_reward(self) -> torch.Tensor:
+        """Returns the last reward from the source environment."""
         ...
 
     def get_current_grid(self) -> torch.Tensor:
@@ -173,6 +178,7 @@ class ArcActions:
                     [y_rand, x_rand], dtype=torch.long, device=device
                 )
             else:
+                miss_locations_b = miss_locations_b[:, 1:]
                 match self.pixel_location_strategy:
                     case PixelLocationStrategy.RANDOM:
                         locations[b] = miss_locations_b[
@@ -203,16 +209,16 @@ class ArcActions:
         x = locations[:, 1].long()
         b = torch.arange(current.shape[0], device=device)
         color = target[b, y, x].long()
-        submit = torch.zeros_like(x)
+        submit_tensor = torch.zeros_like(x)
         if on_match_submit:
-            submit = on_pixel_diff.long()
+            submit_tensor = on_pixel_diff.long()
 
         return TensorDict(
             {
                 ActionKeys.X_LOCATION.value: x,
                 ActionKeys.Y_LOCATION.value: y,
                 ActionKeys.COLOR_VALUES.value: color,
-                ActionKeys.SUBMIT.value: submit,
+                ActionKeys.SUBMIT.value: submit_tensor,
             },
             batch_size=[current.shape[0]],
         )
@@ -238,16 +244,16 @@ class ArcActions:
             color + 1,
             color - 1,
         )
-        submit = torch.zeros_like(x)
+        submit_tensor = torch.zeros_like(x)
         if submit:
-            submit = torch.ones_like(x)
+            submit_tensor = torch.ones_like(x)
 
         return TensorDict(
             {
                 ActionKeys.X_LOCATION.value: x,
                 ActionKeys.Y_LOCATION.value: y,
                 ActionKeys.COLOR_VALUES.value: color,
-                ActionKeys.SUBMIT.value: submit,
+                ActionKeys.SUBMIT.value: submit_tensor,
             },
             batch_size=[current.shape[0]],
         )
@@ -265,16 +271,16 @@ class ArcActions:
         x = torch.randint(0, width, (bsz,), device=device)
         b = torch.arange(bsz, device=device)
         color = current[b, y, x].long()
-        submit = torch.zeros_like(x)
+        submit_tensor = torch.zeros_like(x)
         if submit:
-            submit = torch.ones_like(x)
+            submit_tensor = torch.ones_like(x)
 
         return TensorDict(
             {
                 ActionKeys.X_LOCATION.value: x,
                 ActionKeys.Y_LOCATION.value: y,
                 ActionKeys.COLOR_VALUES.value: color,
-                ActionKeys.SUBMIT.value: submit,
+                ActionKeys.SUBMIT.value: submit_tensor,
             },
             batch_size=[current.shape[0]],
         )
@@ -409,10 +415,13 @@ class ArcActions:
             td_no_submit2 = self.no_change(current[submit_mask], submit=True)
             _assign(submit_mask, td_no_submit2)
 
+        for k, v in out.items():
+            assert v.shape[0] == bsz, f"Key {k} has shape {v.shape}, expected {bsz}"
+
         return out
 
 
-class ArcActionCurriculum(gym.Wrapper):
+class ArcActionCurriculum(PixelAwareRewardWrapper):
     """Curriculum for training ARC environments.
 
     Implements an object able to modify the actions
@@ -421,12 +430,12 @@ class ArcActionCurriculum(gym.Wrapper):
 
     def __init__(
         self,
-        env: CurriculumBaseEnv,
-        color_values: int,
+        env: ArcBatchGridEnv,
         *,
         enabled: bool = True,
         replace_probability: float = 1.0,
         pixel_location_strategy: PixelLocationStrategy = PixelLocationStrategy.RANDOM,
+        **kwargs,
     ):
         """Initialize the curriculum.
 
@@ -438,15 +447,14 @@ class ArcActionCurriculum(gym.Wrapper):
                 pixel locations when modifying the grid. Defaults to RANDOM.
             replace_probability (float): Probability of replacing the given action
                 with a curriculum-generated action. Defaults to 1.0.
-
+            **kwargs: Additional keyword arguments passed to the parent environment.
         """
-        super().__init__(env)
-        self.color_values = color_values
-        self.env = env
+        super().__init__(env, **kwargs)
+        self.color_values = env.color_values
         self.enabled = enabled
         self._replace_probability = float(replace_probability)
         self.arc_actions = ArcActions(
-            color_values=color_values,
+            color_values=self.color_values,
             pixel_location_strategy=pixel_location_strategy,
         )
 
@@ -459,20 +467,6 @@ class ArcActionCurriculum(gym.Wrapper):
     def replace_probability(self, value: float):
         """Set the replace probability."""
         self._replace_probability = float(value)
-
-    def get_state(self, **kwargs) -> dict:
-        """Return the state of the environment.
-
-        Args:
-            **kwargs: Additional keyword arguments passed to the parent
-                environment's get_state method.
-
-        Returns:
-            The state of the environment, which is a dictionary containing the
-            current grid, last grid, initial grid, index, terminated, and
-            examples.
-        """
-        return self.env.get_state(**kwargs)
 
     def step(self, action):
         """Step the environment."""

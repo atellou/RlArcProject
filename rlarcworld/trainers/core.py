@@ -208,10 +208,7 @@ class Trainer:
             step_state = step_state.auto_batch_size_()
 
         # Add to replay buffer without introducing an extra leading time dimension.
-        try:
-            step_state_for_storage = step_state.to("cpu")
-        except Exception:
-            step_state_for_storage = step_state
+        step_state_for_storage = step_state.to("cpu")
 
         indices = self.replay_buffer.extend(step_state_for_storage)
         storage_len = len(self.replay_buffer.storage)
@@ -261,6 +258,36 @@ class Trainer:
         """Get the current training iteration."""
         return self._train_iteration
 
+    def _compute_loss(
+        self, batch: TensorDict, info: TensorDict | None = None, training: bool = True
+    ) -> tuple[
+        tuple[float | None, float | None, torch.Tensor | None],
+        tuple[TensorDict, TensorDict],
+    ]:
+        bz = batch.batch_size
+        selected_indices = (
+            (batch["state"]["terminated"] == 0)
+            .nonzero(as_tuple=True)[0]
+            .to(self.device)
+        )
+        if bz != selected_indices.shape[0]:
+            batch = batch[selected_indices].auto_batch_size_()
+            # Also filter info indices to match the filtered batch
+            if info is not None and "index" in info:
+                info["index"] = info["index"][selected_indices]
+
+        # Enforce minimum batch size for stable updates
+        effective_bs = selected_indices.shape[0]
+
+        if training and effective_bs < self.min_train_batch_size:
+            # Skip remaining steps in this epoch due to small batch size
+            return (None, None, None), (batch, info)
+
+        return self.core.compute_loss(batch.to(self.core.device), training=training), (
+            batch,
+            info,
+        )
+
     # ---------------- Public API ----------------
     def _run(
         self,
@@ -301,8 +328,15 @@ class Trainer:
         warmup = False
         buffer_warmup = 0.0
         # Track and set module modes for validation
-        prev_actor_mode = getattr(self.core.actor, "training", True)
-        prev_critic_mode = getattr(self.core.critic, "training", True)
+        prev_actor_mode = self.core.actor.training
+        prev_critic_mode = self.core.critic.training
+        if prev_actor_mode != prev_critic_mode:
+            logger.warning(
+                "Actor and Critic have different training modes."
+                + " Critic in {},".format("train" if prev_critic_mode else "eval")
+                + " and Actor in {}.".format("train" if prev_actor_mode else "eval")
+                + " Modes will be returned to the original ar the end of the process."
+            )
         if training:
             epoch = self._train_epoch
             iteration = self._train_iteration
@@ -311,14 +345,13 @@ class Trainer:
                     f"Resuming {self.__class__.__name__} training from epoch "
                     f"{epoch}/{epochs} and iteration {iteration}"
                 )
+            self.core.actor.train()
+            self.core.critic.train()
         else:
             epoch = 0
             iteration = 0
-            try:
-                self.core.actor.eval()
-                self.core.critic.eval()
-            except Exception:
-                pass
+            self.core.actor.eval()
+            self.core.critic.eval()
         try:
             for current_epoch in range(epoch, epochs):
                 epoch_step_offset = 0
@@ -338,53 +371,26 @@ class Trainer:
                 ):
                     # Store transition and maybe sample batch
                     if training:
-                        batch, info = self._maybe_store_and_sample(step_state)
+                        batch, info = self._maybe_store_and_sample(
+                            step_state.to(self.device)
+                        )
                     else:
                         batch, info = step_state.to(self.device), None
 
                     # Update networks if we have a batch
                     if batch is not None:
-                        # Filter out completed transitions to avoid training on
-                        # states that won't evolve further and can create
-                        # degenerate micro-batches.
-                        try:
-                            mask = batch["state"]["terminated"] == 0
-                            selected_indices = mask.nonzero(as_tuple=True)[0]
-                            batch = batch[selected_indices]
-                            # Also filter info indices to match the filtered batch
-                            if info is not None and "index" in info:
-                                info["index"] = info["index"][selected_indices]
-                        except Exception:
-                            # If structure is different, proceed without filtering.
-                            pass
-
-                        # Enforce minimum batch size for stable updates
-                        effective_bs = None
-                        try:
-                            # Prefer explicit leading dim from a known tensor
-                            effective_bs = int(batch["state"]["terminated"].shape[0])
-                        except Exception:
-                            try:
-                                effective_bs = int(batch.batch_size[0])
-                            except Exception:
-                                effective_bs = None
-                        if effective_bs is None:
-                            effective_bs = int(self.batch_size)
-
-                        if training and effective_bs < self.min_train_batch_size:
-                            logger.debug(
-                                "Skipping rest of epoch %d due to small batch(%d < %d)",
-                                current_epoch,
-                                effective_bs,
+                        (loss_actor, loss_critic, td_error), (batch, info) = (
+                            self._compute_loss(batch, info, training)
+                        )
+                        if batch.shape[0] < self.min_train_batch_size:
+                            logger.warning(
+                                "Batch size %d < %d, skipping rest of epoch %d",
+                                batch.shape[0],
                                 self.min_train_batch_size,
+                                current_epoch,
                             )
-                            # Skip remaining steps in this epoch
                             break
 
-                        loss_actor, loss_critic, td_error = self.core.compute_loss(
-                            batch,
-                            training=training,
-                        )
                     else:
                         loss_actor, loss_critic, td_error = None, None, None
 
@@ -460,37 +466,50 @@ class Trainer:
                     self._train_epoch_step_idx = 0
                     self._train_episode_step_idx = 0
         except Exception as e:
-            logger.exception(
-                f"Exception during training step iteration {iteration}: {e}"
-            )
-            ctx = OnStepContext(
-                epoch=epoch,
-                epoch_step_idx=epoch_step,
-                episode_step_idx=step_idx,
-                iteration=iteration,
-                batch=batch,
-                loss_actor=loss_actor,
-                loss_critic=loss_critic,
-                td_error=td_error,
-                core=self.core,
-                hyperparameters=self.hyperparameters,
-                warmup=warmup,
-                buffer_warmup=buffer_warmup,
-            )
-            if self.on_exception is not None:
-                for (
-                    callback_name,
-                    callback_exception,
-                ) in self.on_exception.items():
-                    logger.debug(
-                        "Calling {} on_exception {}".format(
-                            "training" if training else "validation",
-                            callback_name,
-                        )
+            try:
+                logger.exception(
+                    f"Exception during training step iteration {iteration}: {e}, "
+                    f"epoch {epoch}, epoch_step {epoch_step}, episode_step {step_idx}"
+                )
+                if self.on_exception is not None:
+                    ctx = OnStepContext(
+                        epoch=epoch,
+                        epoch_step_idx=epoch_step,
+                        episode_step_idx=step_idx,
+                        iteration=iteration,
+                        batch=batch,
+                        loss_actor=loss_actor,
+                        loss_critic=loss_critic,
+                        td_error=td_error,
+                        core=self.core,
+                        hyperparameters=self.hyperparameters,
+                        warmup=warmup,
+                        buffer_warmup=buffer_warmup,
                     )
-                    callback_exception(e, ctx)
+                    for (
+                        callback_name,
+                        callback_exception,
+                    ) in self.on_exception.items():
+                        logger.debug(
+                            "Calling {} on_exception {}".format(
+                                "training" if training else "validation",
+                                callback_name,
+                            )
+                        )
+                        callback_exception(e, ctx)
+            except NameError as err:
+                logger.exception(
+                    "Skipping callback exception, "
+                    "the run likely did not started properly: {}".format(err)
+                )
             raise e
         finally:
+            logger.info(
+                "{} finalized at step iteration {}".format(
+                    "Training" if training else "Validation", iteration
+                )
+                + " calling finalization callbacks"
+            )
             # Restore previous modes if altered
             ctx = OnStepContext(
                 epoch=epoch,
@@ -516,18 +535,22 @@ class Trainer:
                         )
                     )
                     callback(ctx)
-            if not training:
-                try:
-                    if prev_actor_mode:
-                        self.core.actor.train(True)
-                    else:
-                        self.core.actor.eval()
-                    if prev_critic_mode:
-                        self.core.critic.train(True)
-                    else:
-                        self.core.critic.eval()
-                except Exception:
-                    pass
+
+            if prev_actor_mode:
+                self.core.actor.train(True)
+            else:
+                self.core.actor.eval()
+            if prev_critic_mode:
+                self.core.critic.train(True)
+            else:
+                self.core.critic.eval()
+
+            logger.info(
+                "Finalization Callbacks completed, "
+                + "restoring Actor and Critic to {} mode".format(
+                    "training" if prev_actor_mode else "evaluation"
+                )
+            )
 
     def _validate_train_buffer(self, epochs: int, max_steps_per_epoch: int) -> None:
         """Validate that the replay buffer has enough data for training."""

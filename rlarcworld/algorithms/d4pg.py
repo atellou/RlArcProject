@@ -456,6 +456,13 @@ class D4PGCore:
             Tuple[torch.Tensor, torch.Tensor, TensorDict]: Actor loss, critic loss,
                 and TD error.
         """
+        if training:
+            self.actor.train()
+            self.critic.train()
+        else:
+            self.actor.eval()
+            self.critic.eval()
+
         with getattr(torch, "enable_grad" if training else "no_grad")():
             should_step = force_update or (
                 (self._update_counter + 1) % self.model_update_frequency == 0
@@ -698,6 +705,8 @@ class D4PGCore:
         # Refresh targets to match online networks
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.critic_target.load_state_dict(self.critic.state_dict())
+        self.actor_target.eval()
+        self.critic_target.eval()
 
         # Load optimizers
         if load_optimizers:
