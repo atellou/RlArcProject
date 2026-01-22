@@ -132,6 +132,14 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         total = torch.sum(self._reward_storage * self.discount_factor, dim=1)
         return total.to(self.device)
 
+    def get_current_grid(self) -> torch.Tensor:
+        """Return the current grid."""
+        return self.env.get_current_grid()
+
+    def get_target(self) -> torch.Tensor:
+        """Return the target grid."""
+        return self.env.get_target()
+
     def get_state(self, **kwargs) -> dict:
         """Return the state of the environment.
 

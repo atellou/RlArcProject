@@ -1,7 +1,8 @@
 """PixelWiseArcStepper class to handle environment stepping and episode simulation."""
 
 import logging
-from typing import Any, Callable, Tuple
+from dataclasses import dataclass
+from typing import Callable
 
 import torch
 from tensordict import TensorDict
@@ -12,13 +13,37 @@ from rlarcworld.common.configs import NStepMinVMaxConfig
 from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
 from rlarcworld.common.types import RewardDict
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.environments.steppers.core import EnvStepper
+from rlarcworld.environments.steppers.core import EnvStepper, OnEnvStepArgs
+from rlarcworld.environments.wrappers.curriculum import (
+    ArcActionCurriculum,
+    PixelLocationStrategy,
+)
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.utils.augmentation import ArcAugmentationTransformer
 from rlarcworld.utils.device import CudaConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ArcActionCurriculumConfig:
+    """Configuration for the curriculum."""
+
+    enabled: bool = False
+    replace_probability: float = 1.0
+    pixel_location_strategy: PixelLocationStrategy = PixelLocationStrategy.RANDOM
+
+    def __init__(
+        self,
+        enabled: bool,
+        replace_probability: float,
+        pixel_location_strategy: PixelLocationStrategy,
+    ):
+        """Initialize the curriculum configuration."""
+        self.enabled = enabled
+        self.replace_probability = replace_probability
+        self.pixel_location_strategy = pixel_location_strategy
 
 
 class PixelWiseArcStepper:
@@ -43,6 +68,7 @@ class PixelWiseArcStepper:
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
         n_step_config: NStepMinVMaxConfig | None = None,
+        curriculum: ArcActionCurriculumConfig | None = None,
     ) -> None:
         """Creates a stepper for the environment and dataset.
 
@@ -67,6 +93,8 @@ class PixelWiseArcStepper:
             zero_improvement_penalty (float): Coefficient for zero improvement penalty.
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
+            curriculum (ArcActionCurriculumConfig | None):
+                Curriculum configuration.
         """
         # Initialize dataset and environment
         logger.info("Setting up dataset and environment...")
@@ -130,14 +158,31 @@ class PixelWiseArcStepper:
             step_cost=step_cost,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
-        self.environment = PixelAwareRewardWrapper(
-            base_env,
-            max_penalty=max_penalty,
-            perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
-            zero_improvement_penalty=zero_improvement_penalty,
-            n_steps=self.n_step_config.n_steps,
-            gamma=base_env.gamma,
-        )
+        pixel_aware_env_args = {
+            "max_penalty": max_penalty,
+            "perfect_no_submit_penalty_coef": perfect_no_submit_penalty_coef,
+            "zero_improvement_penalty": zero_improvement_penalty,
+            "n_steps": self.n_step_config.n_steps,
+            "gamma": base_env.gamma,
+        }
+        self.curriculum: ArcActionCurriculum | None = None
+        if curriculum is not None:
+            self.environment = ArcActionCurriculum(
+                env=base_env,
+                enabled=curriculum.enabled,
+                replace_probability=curriculum.replace_probability,
+                pixel_location_strategy=curriculum.pixel_location_strategy,
+                **pixel_aware_env_args,
+            )
+        else:
+            self.environment = PixelAwareRewardWrapper(
+                base_env,
+                max_penalty=max_penalty,
+                perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
+                zero_improvement_penalty=zero_improvement_penalty,
+                n_steps=self.n_step_config.n_steps,
+                gamma=base_env.gamma,
+            )
 
         self.core = EnvStepper(
             actor=actor,
@@ -149,6 +194,16 @@ class PixelWiseArcStepper:
             amp_enabled=device_config.get("amp_enabled", True),
             on_step=self._get_on_step_rewards(),
         )
+
+    def curriculum_set_replace_probability(self, probability: float):
+        """Setter for the curriculum."""
+        if self.curriculum is not None:
+            self.curriculum.replace_probability = probability
+
+    def curriculum_set_enabled(self, enabled: bool):
+        """Setter for the curriculum."""
+        if self.curriculum is not None:
+            self.curriculum.enabled = enabled
 
     def _collate_fn(self, samples: list[dict]) -> dict:
         """Collate function for the dataloader."""
@@ -298,7 +353,7 @@ class PixelWiseArcStepper:
 
         return rewards
 
-    def _get_on_step_rewards(self) -> Callable[..., Tuple[Any, ...]]:
+    def _get_on_step_rewards(self) -> Callable[[OnEnvStepArgs], OnEnvStepArgs]:
         """Create a default on_step callback that processes rewards.
 
         Returns:
@@ -306,19 +361,12 @@ class PixelWiseArcStepper:
         """
 
         def on_step(
-            env, state, action_probs, reward, observation, terminated, truncated, info
+            env_step_args: OnEnvStepArgs,
         ):
             # Process rewards
-            reward = self.process_rewards(env=env, reward=reward)
-            return (
-                env,
-                state,
-                action_probs,
-                reward,
-                observation,
-                terminated,
-                truncated,
-                info,
+            env_step_args.reward = self.process_rewards(
+                env=env_step_args.environment, reward=env_step_args.reward
             )
+            return env_step_args
 
         return on_step

@@ -9,6 +9,7 @@ import torch
 from transformers.modeling_outputs import BaseModelOutput
 
 from rlarcworld.common.enums import RewardKeys
+from rlarcworld.environments.wrappers.curriculum import PixelLocationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class EnvConfig:
     """
 
     grid_size: int = 30
-    color_values: int = 10
+    color_values: int = 11
     max_penalty: float = 1.0
     step_cost: float = 0.0
     perfect_no_submit_penalty_coef: float = 1.0
@@ -301,6 +302,24 @@ class ReplayBufferConfig:
 
 
 @dataclass
+class CurriculumReplaceProbabilitiesConfig:
+    """Curriculum replace probabilities configuration.
+
+    Attributes:
+        on_warmup (float): Replace probability on warmup.
+        on_episode_start (float): Replace probability on episode start.
+        on_train (float): Replace probability on training.
+        episode_start_steps (int): Number of steps to consider episode starting.
+    """
+
+    on_warmup: float = 1.0
+    on_episode_start: float = 1.0
+    on_train: float = 0.0
+
+    episode_start_steps: int = 100
+
+
+@dataclass
 class TrainingConfig:
     """Training loop configuration.
 
@@ -323,6 +342,13 @@ class TrainingConfig:
     validation_steps_frequency: int = 100
     min_train_batch_size: int = 2
     augmentation_enabled: bool = False
+    enable_curriculum: bool = False
+    curriculum_replace_probabilities: CurriculumReplaceProbabilitiesConfig = field(
+        default_factory=lambda: CurriculumReplaceProbabilitiesConfig()
+    )
+    curriculum_pixel_location_strategy: PixelLocationStrategy = (
+        PixelLocationStrategy.RANDOM
+    )
 
 
 @dataclass
@@ -454,10 +480,15 @@ class ArcD4PGConfig:
     )
     system: SystemConfig = field(default_factory=SystemConfig)
 
-    def get_validated_config(self) -> "ArcD4PGConfig":
+    def __post_init__(self):
         """Get a validated version of the configuration."""
         self.network.grid_size = self.env.grid_size
         self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
+        self.training.curriculum_replace_probabilities = (
+            CurriculumReplaceProbabilitiesConfig(
+                **self.training.curriculum_replace_probabilities
+            )
+        )
 
         if self.d4pg.model_update_frequency == 0:
             self.d4pg.model_update_frequency = 1

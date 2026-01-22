@@ -1,6 +1,7 @@
 """Minimal replay buffer implementations for testing."""
 
 import torch
+from tensordict import TensorDict
 
 
 class MiniBuffer:
@@ -18,7 +19,7 @@ class MiniBuffer:
         """
         self._max_size = max_size
         self._len = 0
-        self._last = None
+        self._last: TensorDict | None = None
 
     @property
     def storage(self):
@@ -39,16 +40,47 @@ class MiniBuffer:
         """Get the current number of items in the buffer."""
         return self._len
 
-    def extend(self, batch):
+    def extend(self, batch: torch.Tensor):
         """Store batch (squeezed) and return indices."""
         self._last = batch.squeeze(0)
         self._len = min(self._len + 1, self._max_size)
         return [0]
 
-    def sample(self, batch_size, return_info=False):
+    def sample(self, batch_size: int, return_info: bool = False) -> torch.Tensor:
         """Return last stored batch."""
+        if self._last is None:
+            raise RuntimeError("MiniBuffer.sample() called before any data was added")
         if return_info:
-            return self._last, {"index": torch.tensor([0])}
+            # Some trainer code expects PER-style info["index"] to have the same
+            # leading dimension as the sampled batch.
+            try:
+                n = int(self._last.batch_size[0])
+            except Exception:
+                try:
+                    n = int(self._last.shape[0])
+                except Exception:
+                    n = int(batch_size)
+
+            device = getattr(self._last, "device", None)
+            if device is None:
+                try:
+                    # tensordict.device can be None even if underlying tensors are
+                    # on CUDA. Find the first tensor leaf and use its device.
+                    stack = [self._last]
+                    while stack:
+                        x = stack.pop()
+                        if isinstance(x, torch.Tensor):
+                            device = x.device
+                            break
+                        if hasattr(x, "values"):
+                            try:
+                                stack.extend(list(x.values()))
+                            except Exception:
+                                pass
+                except Exception:
+                    device = None
+
+            return self._last, {"index": torch.arange(n, device=device)}
         return self._last
 
     def update_priority(self, indices, priorities):

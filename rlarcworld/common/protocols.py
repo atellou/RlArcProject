@@ -40,6 +40,7 @@ class ActorCriticCoreProto(Protocol):
 
     actor: torch.nn.Module
     critic: torch.nn.Module
+    device: str
 
     def compute_loss(
         self,

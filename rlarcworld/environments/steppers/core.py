@@ -6,6 +6,7 @@ separating environment stepping logic from the training loop.
 
 import logging
 from collections.abc import Callable, Generator, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -18,32 +19,31 @@ from rlarcworld.utils.device import AmpScaler
 
 logger = logging.getLogger(__name__)
 
-# Step callback type: receives
-# (env, state, action_probs, reward, observation, terminated, truncated, info)
-# and returns the same tuple possibly modified
-StepArgs = tuple[
-    Env,
-    TensorDict,
-    dict[str, torch.Tensor],
-    torch.Tensor,
-    TensorDict,
-    bool,
-    bool,
-    dict,
-]
-OnStepFn = Callable[
-    [
-        Env,
-        TensorDict,
-        dict[str, torch.Tensor],
-        torch.Tensor,
-        TensorDict,
-        bool,
-        bool,
-        dict,
-    ],
-    StepArgs,
-]
+
+@dataclass
+class OnEnvStepArgs:
+    """Callback argument for environment stepping.
+
+    Args:
+        environment (Env): Running Environment
+        state (TensorDict): Current state tensor dictionary
+        action_probs (dict[str, torch.Tensor]): Action probability distributions
+        reward (torch.Tensor): Reward tensor from the environment
+        observation (TensorDict): New observation after taking action
+        terminated (bool): Whether the episode has terminated
+        truncated (bool): Whether the episode was truncated
+        info (dict): Additional environment information
+    """
+
+    environment: Env
+    state: TensorDict
+    action_probs: dict[str, torch.Tensor]
+    reward: torch.Tensor
+    observation: TensorDict
+    terminated: bool
+    truncated: bool
+    info: dict
+
 
 # Object that the sampler iterator returns
 ResetSample = Any
@@ -67,7 +67,7 @@ class EnvStepper:
         max_steps: int = -1,
         env_sample_reset: Callable[..., None] | None = None,
         amp_enabled: bool = True,
-        on_step: OnStepFn | None = None,
+        on_step: Callable[[OnEnvStepArgs], OnEnvStepArgs] | None = None,
     ):
         """Initialize the environment stepper.
 
@@ -82,7 +82,7 @@ class EnvStepper:
                 Callable to reset the environment with a batch of objects and kwargs.
             amp_enabled: Whether to use automatic mixed precision
             on_step: Optional callback function to be called after each step
-        """  # noqa: E501
+        """
         self.actor = actor
         self.device = device
         self.env = env
@@ -118,16 +118,12 @@ class EnvStepper:
             if state is None:
                 state = env.get_state(unsqueeze=1).to(self.device)
 
-            # Get action from actor (AMP ctx is a no-op if disabled/CPU)
-            # Force eval mode temporarily to avoid BatchNorm errors with small batches
             prev_training = self.actor.training
-            try:
-                self.actor.eval()
-                with self.amp_cm:
-                    action_probs = self.actor(state)
-            finally:
-                if prev_training:
-                    self.actor.train(True)
+            self.actor.eval()
+            with self.amp_cm:
+                action_probs = self.actor(state).to(self.device)
+            if prev_training:
+                self.actor.train(True)
 
             # Convert to discrete actions for environment (ensure 1D per batch)
             actions = TensorDict(
@@ -138,24 +134,28 @@ class EnvStepper:
             ).to(self.device)
 
             # Step environment
-            env_device = getattr(env, "device", None)
-            if env_device is not None:
-                actions_env = actions.to(env_device)
-            else:
-                actions_env = actions
-            observation, reward, terminated, truncated, info = env.step(actions_env)
+            observation, reward, terminated, truncated, info = env.step(actions)
+            curriculum_action = info.get("curriculum_action", None)
+            if curriculum_action is not None:
+                # If a wrapper overrides the executed action, ensure the transition
+                # stores action probabilities consistent with the executed action.
+                if isinstance(curriculum_action, TensorDict):
+                    curriculum_action = curriculum_action.to(self.device)
+                else:
+                    curriculum_action = TensorDict(curriculum_action).to(self.device)
+
+                # Convert executed discrete actions into one-hot distributions that
+                # match the actor head shapes.
+                one_hot_probs = {}
+                for key, probs in action_probs.items():
+                    idx = curriculum_action[key].long().to(self.device)
+                    oh = torch.zeros_like(probs)
+                    oh.scatter_(-1, idx.unsqueeze(-1), 1.0)
+                    one_hot_probs[key] = oh
+                action_probs = TensorDict(one_hot_probs).to(self.device)
 
             if self.on_step:
-                (
-                    env,
-                    state,
-                    action_probs,
-                    reward,
-                    observation,
-                    terminated,
-                    truncated,
-                    info,
-                ) = self.on_step(
+                on_step_args = OnEnvStepArgs(
                     env,
                     state,
                     action_probs,
@@ -165,6 +165,15 @@ class EnvStepper:
                     truncated,
                     info,
                 )
+                on_step_args = self.on_step(on_step_args)
+                env = on_step_args.environment
+                state = on_step_args.state
+                action_probs = on_step_args.action_probs
+                reward = on_step_args.reward
+                observation = on_step_args.observation
+                terminated = on_step_args.terminated
+                truncated = on_step_args.truncated
+                info = on_step_args.info
 
             # Get next state
             next_state = env.get_state(unsqueeze=1).to(self.device)

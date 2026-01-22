@@ -7,7 +7,7 @@ from rlarcworld.common.configs import NStepMinVMaxConfig, RlArcWorldViTARCConfig
 from rlarcworld.common.enums import RewardKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.steppers.arc_stepper import PixelWiseArcStepper
-from rlarcworld.environments.steppers.core import EnvStepper
+from rlarcworld.environments.steppers.core import EnvStepper, OnEnvStepArgs
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.utils.device import CudaConfig
@@ -58,19 +58,9 @@ def test_env_stepper_one_step(device):
     def env_reset_fn(env, sample, seed=None):
         env.reset(options={**sample, "mode": "train"}, seed=seed)
 
-    def on_step_fn(
-        env, state, action_probs, reward, observation, terminated, truncated, info
-    ):
-        return (
-            env,
-            state,
-            action_probs,
-            {"reward": reward},
-            observation,
-            terminated,
-            truncated,
-            info,
-        )
+    def on_step_fn(on_step_args: OnEnvStepArgs) -> OnEnvStepArgs:
+        on_step_args.reward = {"reward": on_step_args.reward}
+        return on_step_args
 
     stepper = EnvStepper(
         actor=actor,
@@ -129,22 +119,14 @@ def test_env_stepper_one_step_with_on_step(device):
         env.reset(options={**sample, "mode": "train"}, seed=seed)
 
     # Use on_step callback to process rewards
-    def process_rewards(
-        env, state, action_probs, reward, observation, terminated, truncated, info
-    ):
-        reward = TensorDict(
-            {"pixel_wise": reward, "binary": env.get_source_env_reward()}
+    def process_rewards(on_step_args: OnEnvStepArgs) -> OnEnvStepArgs:
+        on_step_args.reward = TensorDict(
+            {
+                "pixel_wise": on_step_args.reward,
+                "binary": on_step_args.environment.get_source_env_reward(),
+            }
         )
-        return (
-            env,
-            state,
-            action_probs,
-            reward,
-            observation,
-            terminated,
-            truncated,
-            info,
-        )
+        return on_step_args
 
     stepper = EnvStepper(
         actor=actor,
@@ -321,22 +303,14 @@ def test_env_stepper_episode_stream(device):
     def env_reset_fn(env, sample, seed=None):
         env.reset(options={**sample, "mode": "train"}, seed=seed)
 
-    def on_step(
-        env, state, action_probs, reward, observation, terminated, truncated, info
-    ):
-        reward = TensorDict(
-            {"pixel_wise": reward, "binary": env.get_source_env_reward()}
+    def on_step(on_step_args: OnEnvStepArgs) -> OnEnvStepArgs:
+        on_step_args.reward = TensorDict(
+            {
+                "pixel_wise": on_step_args.reward,
+                "binary": on_step_args.environment.get_source_env_reward(),
+            }
         )
-        return (
-            env,
-            state,
-            action_probs,
-            reward,
-            observation,
-            terminated,
-            truncated,
-            info,
-        )
+        return on_step_args
 
     stepper = EnvStepper(
         actor=actor,

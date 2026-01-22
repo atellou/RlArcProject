@@ -5,7 +5,7 @@ dataset: "/home/andresftu/Documents/Repos/RlArcProject/tests/test_data"
 
 env:
   grid_size: 30
-  color_values: 10
+  color_values: 11
   max_penalty: 1.0
   step_cost: 0.0
   perfect_no_submit_penalty_coef: 0.75
@@ -78,8 +78,15 @@ training:
   validation_steps_per_epoch: 100
   validation_steps_per_episode: 100
   validation_steps_frequency: 300
-  min_train_batch_size: 16
+  min_train_batch_size: 8
   augmentation_enabled: false
+  enable_curriculum: true
+  curriculum_replace_probabilities:
+    on_warmup: 1.0
+    on_episode_start: 1.0
+    on_train: 0.0
+    episode_start_steps: 100
+  curriculum_pixel_location_strategy: random
 
 world_model:
   enabled: false
