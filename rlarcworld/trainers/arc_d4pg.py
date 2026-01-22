@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -84,7 +85,6 @@ class ArcD4PG:
             **kwargs: Additional arguments passed to D4PGCore
         """
         # Store full config for reference
-        config = config.get_validated_config()
         self.exp_config = config
 
         self.experiment_name = experiment_name
@@ -770,6 +770,54 @@ class ArcD4PG:
 
     def _curriculum_callback(self, ctx: OnStepContext):
         if not self.exp_config.training.enable_curriculum:
+            return
+
+        if ctx.run_end and hasattr(self, "tb_manager") and self.tb_manager is not None:
+            stats = self.training_stepper.environment.arc_actions.get_stats(reset=False)
+            logger.info("Creating Curriculum action strategy tensorboard graphs")
+
+            counts = {
+                k: float(v)
+                for k, v in stats.items()
+                if k
+                not in {
+                    "oracle_calls",
+                    "samples_total",
+                }
+            }
+            if counts:
+                keys = sorted(counts.keys())
+                vals = [counts[k] for k in keys]
+                fig, ax = plt.subplots(figsize=(max(6.0, 0.6 * len(keys)), 4.0))
+                ax.bar(keys, vals)
+                ax.set_title("Action strategy counts")
+                ax.set_ylabel("count")
+                ax.tick_params(axis="x", labelrotation=45)
+                fig.tight_layout()
+                self.tb_manager.writer.add_figure(
+                    "curriculum/action_strategy_counts",
+                    fig,
+                    global_step=int(ctx.iteration),
+                )
+                plt.close(fig)
+
+            # Also log totals for quick sanity checks.
+            totals = {
+                "oracle_calls": float(stats.get("oracle_calls", 0)),
+                "samples_total": float(stats.get("samples_total", 0)),
+            }
+            fig, ax = plt.subplots(figsize=(5.0, 3.5))
+            ax.bar(list(totals.keys()), list(totals.values()))
+            ax.set_title("Action strategy totals")
+            ax.set_ylabel("count")
+            fig.tight_layout()
+            self.tb_manager.writer.add_figure(
+                "curriculum/action_strategy_totals",
+                fig,
+                global_step=int(ctx.iteration),
+            )
+            plt.close(fig)
+            self.tb_manager.writer.flush()
             return
         curriculum_replace_probabilities = (
             self.exp_config.training.curriculum_replace_probabilities

@@ -80,7 +80,7 @@ training:
   validation_steps_frequency: 300
   min_train_batch_size: 16
   augmentation_enabled: false
-  enable_curriculum: false
+  enable_curriculum: true
   curriculum_replace_probabilities:
     on_warmup: 1.0
     on_episode_start: 1.0

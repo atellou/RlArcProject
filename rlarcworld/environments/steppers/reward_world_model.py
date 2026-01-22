@@ -5,7 +5,7 @@ world model training, and imagination (Dyna-style).
 """
 
 import logging
-from typing import Any, Callable, Generator, Tuple
+from typing import Callable, Generator
 
 import torch
 import torch.nn.functional as F
@@ -16,7 +16,7 @@ from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
 from rlarcworld.common.protocols import ActorCriticCoreProto, RewardWorldModelProto
 from rlarcworld.common.types import RewardDict
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.environments.steppers.core import EnvStepper
+from rlarcworld.environments.steppers.core import EnvStepper, OnEnvStepArgs
 from rlarcworld.environments.wrappers.reward_world_model import RewardWorldModelWrapper
 from rlarcworld.models.actor import ViTARCActor
 from rlarcworld.trainers.core import OnStepContext
@@ -256,28 +256,17 @@ class ArcWorldModelStepper:
 
         return rewards
 
-    def _get_on_step_rewards(self) -> Callable[..., Tuple[Any, ...]]:
+    def _get_on_step_rewards(self) -> Callable[[OnEnvStepArgs], OnEnvStepArgs]:
         """Create a default on_step callback that processes rewards.
 
         Returns:
             An on_step callback function
         """
 
-        def on_step(
-            env, state, action_probs, reward, observation, terminated, truncated, info
-        ):
+        def on_step(on_step_args: OnEnvStepArgs) -> OnEnvStepArgs:
             # Process rewards
-            reward = self.process_rewards(env=env)
-            return (
-                env,
-                state,
-                action_probs,
-                reward,
-                observation,
-                terminated,
-                truncated,
-                info,
-            )
+            on_step_args.reward = self.process_rewards(env=on_step_args.environment)
+            return on_step_args
 
         return on_step
 

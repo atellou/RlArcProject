@@ -112,6 +112,32 @@ class ArcActions:
         self.color_values = color_values
         self.pixel_location_strategy = pixel_location_strategy
         self.action_strategy = action_strategy
+        self._strategy_counts: dict[str, int] = {
+            "oracle_calls": 0,
+            "samples_total": 0,
+            "no_change": 0,
+            "no_change_submit": 0,
+            "improve": 0,
+            "degrade": 0,
+            "degrade_submit": 0,
+            "perfect_submit_override": 0,
+        }
+
+    def reset_stats(self) -> None:
+        """Reset internal action counters."""
+        for k in self._strategy_counts.keys():
+            self._strategy_counts[k] = 0
+
+    def get_stats(self, *, reset: bool = False) -> dict[str, int]:
+        """Get internal action counters.
+
+        Args:
+            reset: If True, reset counters after reading.
+        """
+        out = dict(self._strategy_counts)
+        if reset:
+            self.reset_stats()
+        return out
 
     def _get_locations(
         self, current: torch.Tensor, target: torch.Tensor, to_improve: bool
@@ -258,6 +284,10 @@ class ArcActions:
         device = current.device
         bsz = current.shape[0]
 
+        # Stats: count every sample produced by the oracle.
+        self._strategy_counts["oracle_calls"] += 1
+        self._strategy_counts["samples_total"] += int(bsz)
+
         perfect = (current == target).view(bsz, -1).all(dim=-1)
 
         probs = torch.tensor(
@@ -325,6 +355,13 @@ class ArcActions:
         m3 = cat == 3
         m4 = cat == 4
 
+        # Stats: base counts before perfect-grid overrides.
+        self._strategy_counts["no_change"] += int(m0.sum().item())
+        self._strategy_counts["no_change_submit"] += int(m1.sum().item())
+        self._strategy_counts["improve"] += int(m2.sum().item())
+        self._strategy_counts["degrade"] += int(m3.sum().item())
+        self._strategy_counts["degrade_submit"] += int(m4.sum().item())
+
         _gen_and_assign(m0, lambda: self.no_change(current[m0], submit=False))
         _gen_and_assign(m1, lambda: self.no_change(current[m1], submit=True))
         _gen_and_assign(
@@ -348,6 +385,27 @@ class ArcActions:
         # Safety: never "improve" a perfect grid by changing pixels when we submit.
         # If we're submitting on a perfect grid, convert to no-op submit.
         if bool(submit_mask.any().item()):
+            # Stats: these elements were force-overridden to no_change_submit.
+            n_override = int(submit_mask.sum().item())
+            self._strategy_counts["perfect_submit_override"] += n_override
+
+            # Remove previous category counts for overridden elements and add them
+            # into the final executed category: no_change_submit.
+            if n_override > 0:
+                sub_cat = cat[submit_mask]
+                # categories: 0=no_change, 1=no_change_submit, 2=improve,
+                # 3=degrade, 4=degrade_submit
+                self._strategy_counts["no_change"] -= int((sub_cat == 0).sum().item())
+                self._strategy_counts["no_change_submit"] -= int(
+                    (sub_cat == 1).sum().item()
+                )
+                self._strategy_counts["improve"] -= int((sub_cat == 2).sum().item())
+                self._strategy_counts["degrade"] -= int((sub_cat == 3).sum().item())
+                self._strategy_counts["degrade_submit"] -= int(
+                    (sub_cat == 4).sum().item()
+                )
+                self._strategy_counts["no_change_submit"] += n_override
+
             td_no_submit2 = self.no_change(current[submit_mask], submit=True)
             _assign(submit_mask, td_no_submit2)
 

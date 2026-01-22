@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Tuple
+from typing import Callable
 
 import torch
 from tensordict import TensorDict
@@ -13,7 +13,7 @@ from rlarcworld.common.configs import NStepMinVMaxConfig
 from rlarcworld.common.enums import ArcEnvRunningMode, RewardKeys
 from rlarcworld.common.types import RewardDict
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
-from rlarcworld.environments.steppers.core import EnvStepper
+from rlarcworld.environments.steppers.core import EnvStepper, OnEnvStepArgs
 from rlarcworld.environments.wrappers.curriculum import (
     ArcActionCurriculum,
     PixelLocationStrategy,
@@ -334,7 +334,7 @@ class PixelWiseArcStepper:
 
         return rewards
 
-    def _get_on_step_rewards(self) -> Callable[..., Tuple[Any, ...]]:
+    def _get_on_step_rewards(self) -> Callable[[OnEnvStepArgs], OnEnvStepArgs]:
         """Create a default on_step callback that processes rewards.
 
         Returns:
@@ -342,19 +342,12 @@ class PixelWiseArcStepper:
         """
 
         def on_step(
-            env, state, action_probs, reward, observation, terminated, truncated, info
+            env_step_args: OnEnvStepArgs,
         ):
             # Process rewards
-            reward = self.process_rewards(env=env, reward=reward)
-            return (
-                env,
-                state,
-                action_probs,
-                reward,
-                observation,
-                terminated,
-                truncated,
-                info,
+            env_step_args.reward = self.process_rewards(
+                env=env_step_args.environment, reward=env_step_args.reward
             )
+            return env_step_args
 
         return on_step

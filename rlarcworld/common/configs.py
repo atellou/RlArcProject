@@ -480,10 +480,15 @@ class ArcD4PGConfig:
     )
     system: SystemConfig = field(default_factory=SystemConfig)
 
-    def get_validated_config(self) -> "ArcD4PGConfig":
+    def __post_init__(self):
         """Get a validated version of the configuration."""
         self.network.grid_size = self.env.grid_size
         self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
+        self.training.curriculum_replace_probabilities = (
+            CurriculumReplaceProbabilitiesConfig(
+                **self.training.curriculum_replace_probabilities
+            )
+        )
 
         if self.d4pg.model_update_frequency == 0:
             self.d4pg.model_update_frequency = 1

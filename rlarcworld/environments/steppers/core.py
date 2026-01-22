@@ -6,6 +6,7 @@ separating environment stepping logic from the training loop.
 
 import logging
 from collections.abc import Callable, Generator, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -18,32 +19,31 @@ from rlarcworld.utils.device import AmpScaler
 
 logger = logging.getLogger(__name__)
 
-# Step callback type: receives
-# (env, state, action_probs, reward, observation, terminated, truncated, info)
-# and returns the same tuple possibly modified
-StepArgs = tuple[
-    Env,
-    TensorDict,
-    dict[str, torch.Tensor],
-    torch.Tensor,
-    TensorDict,
-    bool,
-    bool,
-    dict,
-]
-OnStepFn = Callable[
-    [
-        Env,
-        TensorDict,
-        dict[str, torch.Tensor],
-        torch.Tensor,
-        TensorDict,
-        bool,
-        bool,
-        dict,
-    ],
-    StepArgs,
-]
+
+@dataclass
+class OnEnvStepArgs:
+    """Callback argument for environment stepping.
+
+    Args:
+        environment (Env): Running Environment
+        state (TensorDict): Current state tensor dictionary
+        action_probs (dict[str, torch.Tensor]): Action probability distributions
+        reward (torch.Tensor): Reward tensor from the environment
+        observation (TensorDict): New observation after taking action
+        terminated (bool): Whether the episode has terminated
+        truncated (bool): Whether the episode was truncated
+        info (dict): Additional environment information
+    """
+
+    environment: Env
+    state: TensorDict
+    action_probs: dict[str, torch.Tensor]
+    reward: torch.Tensor
+    observation: TensorDict
+    terminated: bool
+    truncated: bool
+    info: dict
+
 
 # Object that the sampler iterator returns
 ResetSample = Any
@@ -67,7 +67,7 @@ class EnvStepper:
         max_steps: int = -1,
         env_sample_reset: Callable[..., None] | None = None,
         amp_enabled: bool = True,
-        on_step: OnStepFn | None = None,
+        on_step: Callable[[OnEnvStepArgs], OnEnvStepArgs] | None = None,
     ):
         """Initialize the environment stepper.
 
@@ -167,16 +167,7 @@ class EnvStepper:
                 actions_env = curriculum_action
 
             if self.on_step:
-                (
-                    env,
-                    state,
-                    action_probs,
-                    reward,
-                    observation,
-                    terminated,
-                    truncated,
-                    info,
-                ) = self.on_step(
+                on_step_args = OnEnvStepArgs(
                     env,
                     state,
                     action_probs,
@@ -186,6 +177,15 @@ class EnvStepper:
                     truncated,
                     info,
                 )
+                on_step_args = self.on_step(on_step_args)
+                env = on_step_args.environment
+                state = on_step_args.state
+                action_probs = on_step_args.action_probs
+                reward = on_step_args.reward
+                observation = on_step_args.observation
+                terminated = on_step_args.terminated
+                truncated = on_step_args.truncated
+                info = on_step_args.info
 
             # Get next state
             next_state = env.get_state(unsqueeze=1).to(self.device)
