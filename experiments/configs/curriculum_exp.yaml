@@ -13,7 +13,7 @@ low_penalties_base_curriculum:
       on_warmup: 1.0
       on_episode_start: 1.0
       on_train: 0.0
-      episode_start_steps: 100
+      episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
 low_improvement_penalty_base_curriculum:
@@ -27,7 +27,7 @@ low_improvement_penalty_base_curriculum:
       on_warmup: 1.0
       on_episode_start: 1.0
       on_train: 0.0
-      episode_start_steps: 100
+      episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
 low_penalties_on_train_curriculum:
@@ -41,7 +41,7 @@ low_penalties_on_train_curriculum:
       on_warmup: 1.0
       on_episode_start: 1.0
       on_train: 0.05
-      episode_start_steps: 100
+      episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
 low_improvement_penalty_on_train_curriculum:
@@ -55,5 +55,5 @@ low_improvement_penalty_on_train_curriculum:
       on_warmup: 1.0
       on_episode_start: 1.0
       on_train: 0.05
-      episode_start_steps: 100
+      episode_start_steps: 50
     curriculum_pixel_location_strategy: random

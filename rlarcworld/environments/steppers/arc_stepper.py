@@ -165,7 +165,6 @@ class PixelWiseArcStepper:
             "n_steps": self.n_step_config.n_steps,
             "gamma": base_env.gamma,
         }
-        self.curriculum: ArcActionCurriculum | None = None
         if curriculum is not None:
             self.environment = ArcActionCurriculum(
                 env=base_env,
@@ -197,13 +196,17 @@ class PixelWiseArcStepper:
 
     def curriculum_set_replace_probability(self, probability: float):
         """Setter for the curriculum."""
-        if self.curriculum is not None:
-            self.curriculum.replace_probability = probability
+        if isinstance(self.environment, ArcActionCurriculum):
+            self.environment.replace_probability = probability
+        else:
+            raise AttributeError("Environment is not an ArcActionCurriculum")
 
     def curriculum_set_enabled(self, enabled: bool):
         """Setter for the curriculum."""
-        if self.curriculum is not None:
-            self.curriculum.enabled = enabled
+        if isinstance(self.environment, ArcActionCurriculum):
+            self.environment.enabled = enabled
+        else:
+            raise AttributeError("Environment is not an ArcActionCurriculum")
 
     def _collate_fn(self, samples: list[dict]) -> dict:
         """Collate function for the dataloader."""

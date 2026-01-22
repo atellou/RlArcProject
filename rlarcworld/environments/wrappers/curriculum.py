@@ -6,6 +6,7 @@ helps guide the learning process by modifying actions based on the
 current state and target configuration.
 """
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -16,6 +17,8 @@ from tensordict import TensorDict
 from rlarcworld.common.enums import ActionKeys
 from rlarcworld.environments.arc_batch_grid_env import ArcBatchGridEnv
 from rlarcworld.environments.wrappers.pixel_aware_reward import PixelAwareRewardWrapper
+
+logger = logging.getLogger(__name__)
 
 
 class CurriculumBaseEnv(Protocol):
@@ -468,8 +471,31 @@ class ArcActionCurriculum(PixelAwareRewardWrapper):
         """Set the replace probability."""
         self._replace_probability = float(value)
 
-    def step(self, action):
+    def step(
+        self, action: TensorDict
+    ) -> tuple[TensorDict, torch.Tensor, bool, bool, dict]:
         """Step the environment."""
+
+        def _infer_batch_size(td: TensorDict | None) -> int:
+            if td is None:
+                return 1
+            try:
+                if (
+                    hasattr(td, "batch_size")
+                    and td.batch_size is not None
+                    and len(td.batch_size) > 0
+                ):
+                    return int(td.batch_size[0])
+            except Exception:
+                pass
+            try:
+                for v in td.values():
+                    if hasattr(v, "shape") and len(v.shape) > 0:
+                        return int(v.shape[0])
+            except Exception:
+                pass
+            return 1
+
         curriculum_action = None
         if self.enabled and self.replace_probability > 0:
             if (
@@ -485,7 +511,11 @@ class ArcActionCurriculum(PixelAwareRewardWrapper):
                 curriculum_action
             )
             info["curriculum_action"] = curriculum_action
+            bsz = _infer_batch_size(curriculum_action)
+            info["curriculum_used"] = torch.ones((bsz,), dtype=torch.long)
         else:
             observation, reward, terminated, truncated, info = super().step(action)
+            bsz = _infer_batch_size(action)
+            info["curriculum_used"] = torch.zeros((bsz,), dtype=torch.long)
 
         return observation, reward, terminated, truncated, info

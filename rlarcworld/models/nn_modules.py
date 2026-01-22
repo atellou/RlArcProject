@@ -925,7 +925,6 @@ class RlArcWorldViTARC(nn.Module):
 
         cache_enabled = self._cache_valid
 
-        logger.debug("Example cache MISS (key=%s)", cache_key)
         learnable_examples = min(int(self.max_learnable_examples), int(num_examples))
 
         hidden_learnable = self._encode_example_batch(examples[:, :learnable_examples])
@@ -934,7 +933,6 @@ class RlArcWorldViTARC(nn.Module):
             return hidden_learnable
 
         if cache_enabled and cache_key in self._example_cache:
-            logger.debug("Example cache HIT (key=%s)", cache_key)
             hidden_frozen = self._example_cache[cache_key]
         else:
             with torch.no_grad():

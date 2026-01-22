@@ -83,6 +83,8 @@ class TensorBoardWriterManager:
         self.replay_buffer = replay_buffer
         self.warmup_buffer_ratio = float(warmup_buffer_ratio)
         self.medium_frequency = int(max(1, medium_frequency))
+        self.curriculum_actual_usage = 0
+        self.total_samples = 0
 
     # -------------------- Public API --------------------
     def close(self) -> None:
@@ -134,17 +136,21 @@ class TensorBoardWriterManager:
     ) -> None:
         """Callback to log curriculum metrics."""
 
-        def to_camel_case(s: str) -> str:
+        def to_space_case(s: str) -> str:
             parts = [p for p in s.replace("-", "_").split("_") if p]
-            return "".join(p[:1].upper() + p[1:] for p in parts)
+            return " ".join(p[:1].upper() + p[1:] for p in parts)
 
         # Also log totals for quick sanity checks.
         totals = {
-            "oracle_calls": float(curriculum_action_stats["oracle_calls"]),
-            "samples_total": float(curriculum_action_stats["samples_total"]),
+            "curriculum_generated": float(curriculum_action_stats["samples_total"]),
+            "training_usage": float(self.curriculum_actual_usage),
+            "actor_generated_usage": float(
+                self.curriculum_actual_usage - self.total_samples
+            ),
+            "total_samples": float(self.total_samples),
         }
         counts = {
-            k: float(v) / totals["samples_total"]
+            k: float(v) / totals["curriculum_generated"]
             for k, v in curriculum_action_stats.items()
             if k
             not in {
@@ -152,15 +158,18 @@ class TensorBoardWriterManager:
                 "samples_total",
             }
         }
+        used_for_training = totals["training_usage"] / totals["total_samples"]
         if counts:
             keys = sorted(counts.keys())
             vals = [counts[k] for k in keys]
             fig, ax = plt.subplots(figsize=(max(6.0, 0.6 * len(keys)), 4.0), dpi=150)
-            ax.bar([to_camel_case(k) for k in keys], vals)
+            ax.bar([to_space_case(k) for k in keys], vals)
             ax.bar_label(ax.containers[0], fmt="%.4f")
-            ax.set_title("Action strategy counts")
-            ax.set_ylabel("count")
-            ax.tick_params(axis="x", labelrotation=45)
+            ax.set_title(
+                "Action strategy counts, %.2f%% used for training" % used_for_training
+            )
+            ax.set_ylabel("Usage [%]")
+            ax.tick_params(axis="x", labelrotation=75)
             ax.margins(y=0.1)
             fig.tight_layout()
             self.writer.add_figure(
@@ -173,16 +182,19 @@ class TensorBoardWriterManager:
         fig, ax = plt.subplots(figsize=(5.0, 3.5), dpi=150)
         total_keys = list(totals.keys())
         total_vals = [totals[k] for k in total_keys]
-        ax.bar([to_camel_case(k) for k in total_keys], total_vals)
+        ax.bar([to_space_case(k) for k in total_keys], total_vals)
         ax.bar_label(ax.containers[0], fmt="%.0f")
-        ax.set_title("Action strategy totals")
-        ax.set_ylabel("count")
+        ax.set_title("Sample totals")
+        ax.set_ylabel("Count")
+        ax.tick_params(axis="x", labelrotation=75)
         ax.margins(y=0.1)
 
         if any(v <= 0 for v in totals.values()):
             ax.set_yscale("symlog", linthresh=1.0)
         else:
             ax.set_yscale("log")
+        ax.yaxis.grid(True, which="both", linestyle="-", linewidth=0.5, alpha=0.35)
+        ax.set_axisbelow(True)
         fig.tight_layout()
         self.writer.add_figure(
             "curriculum/action_strategy_totals",
@@ -565,16 +577,24 @@ class TensorBoardWriterManager:
             )
             self._add_step_hyperparams(ctx.core, iteration)
 
-        batch: TensorDict = ctx.batch
-        curriculum_action = batch["info"].get("curriculum_action", None) is not None
-
-        self.writer.add_scalar(
-            f"{phase}/curriculum/used", float(curriculum_action), iteration
-        )
-
         self._add_loss_metrics(ctx, phase=phase, iteration=iteration)
 
-        if not curriculum_action:
+        batch: TensorDict = ctx.batch
+        self.total_samples += batch.shape[0]
+        curriculum_used = batch["info"].get("curriculum_used", None)
+        actor_mask = torch.ones(batch.shape[0], dtype=torch.bool)
+        used_rate = 0.0
+        if isinstance(curriculum_used, torch.Tensor):
+            self.curriculum_actual_usage += int(
+                curriculum_used.sum().detach().cpu().item()
+            )
+            used_rate = float(curriculum_used.float().mean().detach().cpu().item())
+            actor_mask = (curriculum_used == 0).reshape(-1).nonzero(as_tuple=True)[0]
+
+        self.writer.add_scalar(f"{phase}/curriculum/usage_rate", used_rate, iteration)
+
+        if used_rate < 1.0:
+            batch = batch[actor_mask]
             # Reward heads: log per-batch average for each reward key
             # Submission stats (rate, success, failure)
             submit_raw: torch.Tensor = batch["actions"]["submit"]
