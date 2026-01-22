@@ -117,7 +117,7 @@ class ArcActions:
         self.color_values = color_values
         self.pixel_location_strategy = pixel_location_strategy
         self.action_strategy = action_strategy
-        self._strategy_counts: dict[str, int] = {
+        self._strategy_counts: dict[str, float] = {
             "oracle_calls": 0,
             "samples_total": 0,
             "no_change": 0,
@@ -133,7 +133,7 @@ class ArcActions:
         for k in self._strategy_counts.keys():
             self._strategy_counts[k] = 0
 
-    def get_stats(self, *, reset: bool = False) -> dict[str, int]:
+    def get_stats(self, *, reset: bool = False) -> dict[str, float]:
         """Get internal action counters.
 
         Args:

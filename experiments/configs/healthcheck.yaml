@@ -44,3 +44,12 @@ healthcheck:
     log_frequency: 1
     tb_minimal_frequency: 1
     tb_medium_frequency: 1
+
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 1.0
+      on_train: 0.05
+      episode_start_steps: 100
+    curriculum_pixel_location_strategy: random

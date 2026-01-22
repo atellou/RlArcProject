@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import matplotlib.pyplot as plt
 import torch
 import torch.optim as optim
 from tensordict import TensorDict
@@ -123,6 +124,73 @@ class TensorBoardWriterManager:
         except Exception:
             logger.warning("Failed to log hyperparameters")
             pass
+
+    # -------------------- External helpers --------------------
+
+    def curriculum_stats(
+        self,
+        iteration: int,
+        curriculum_action_stats: dict[str, float],
+    ) -> None:
+        """Callback to log curriculum metrics."""
+
+        def to_camel_case(s: str) -> str:
+            parts = [p for p in s.replace("-", "_").split("_") if p]
+            return "".join(p[:1].upper() + p[1:] for p in parts)
+
+        # Also log totals for quick sanity checks.
+        totals = {
+            "oracle_calls": float(curriculum_action_stats["oracle_calls"]),
+            "samples_total": float(curriculum_action_stats["samples_total"]),
+        }
+        counts = {
+            k: float(v) / totals["samples_total"]
+            for k, v in curriculum_action_stats.items()
+            if k
+            not in {
+                "oracle_calls",
+                "samples_total",
+            }
+        }
+        if counts:
+            keys = sorted(counts.keys())
+            vals = [counts[k] for k in keys]
+            fig, ax = plt.subplots(figsize=(max(6.0, 0.6 * len(keys)), 4.0), dpi=150)
+            ax.bar([to_camel_case(k) for k in keys], vals)
+            ax.bar_label(ax.containers[0], fmt="%.4f")
+            ax.set_title("Action strategy counts")
+            ax.set_ylabel("count")
+            ax.tick_params(axis="x", labelrotation=45)
+            ax.margins(y=0.1)
+            fig.tight_layout()
+            self.writer.add_figure(
+                "curriculum/action_strategy_counts",
+                fig,
+                global_step=int(iteration),
+            )
+            plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(5.0, 3.5), dpi=150)
+        total_keys = list(totals.keys())
+        total_vals = [totals[k] for k in total_keys]
+        ax.bar([to_camel_case(k) for k in total_keys], total_vals)
+        ax.bar_label(ax.containers[0], fmt="%.0f")
+        ax.set_title("Action strategy totals")
+        ax.set_ylabel("count")
+        ax.margins(y=0.1)
+
+        if any(v <= 0 for v in totals.values()):
+            ax.set_yscale("symlog", linthresh=1.0)
+        else:
+            ax.set_yscale("log")
+        fig.tight_layout()
+        self.writer.add_figure(
+            "curriculum/action_strategy_totals",
+            fig,
+            global_step=int(iteration),
+        )
+        plt.close(fig)
+        self.writer.flush()
 
     # -------------------- Internal helpers --------------------
 
@@ -495,32 +563,39 @@ class TensorBoardWriterManager:
                 },
                 global_step=iteration,
             )
+            self._add_step_hyperparams(ctx.core, iteration)
+
+        batch: TensorDict = ctx.batch
+        curriculum_action = batch["info"].get("curriculum_action", None) is not None
+
+        self.writer.add_scalar(
+            f"{phase}/curriculum/used", float(curriculum_action), iteration
+        )
 
         self._add_loss_metrics(ctx, phase=phase, iteration=iteration)
 
-        # Reward heads: log per-batch average for each reward key
-        batch: TensorDict = ctx.batch
-        # Submission stats (rate, success, failure)
-        submit_raw: torch.Tensor = batch["actions"]["submit"]
-        if submit_raw.ndim >= 2:
-            # action probabilities -> discrete submit decision
-            submit = torch.argmax(submit_raw, dim=-1)
-        else:
-            # already discrete
-            submit = submit_raw
-        submit = submit.reshape(-1).to(dtype=torch.long)
+        if not curriculum_action:
+            # Reward heads: log per-batch average for each reward key
+            # Submission stats (rate, success, failure)
+            submit_raw: torch.Tensor = batch["actions"]["submit"]
+            if submit_raw.ndim >= 2:
+                # action probabilities -> discrete submit decision
+                submit = torch.argmax(submit_raw, dim=-1)
+            else:
+                # already discrete
+                submit = submit_raw
+            submit = submit.reshape(-1).to(dtype=torch.long)
 
-        reward_td = batch["reward"]
-        self._add_reward_metrics(reward_td, submit, phase=phase, iteration=iteration)
+            reward_td = batch["reward"]
+            self._add_reward_metrics(
+                reward_td, submit, phase=phase, iteration=iteration
+            )
 
-        info = batch.get("info", None)
-        if info is not None and hasattr(info, "keys"):
-            self._add_env_info_metrics(info, phase=phase, iteration=iteration)
+            info = batch.get("info", None)
+            if info is not None and hasattr(info, "keys"):
+                self._add_env_info_metrics(info, phase=phase, iteration=iteration)
 
-        self._add_submission_metrics(submit, reward_td, iteration, phase)
-
-        if phase == "train":
-            self._add_step_hyperparams(ctx.core, iteration)
+            self._add_submission_metrics(submit, reward_td, iteration, phase)
 
         # Ensure periodic flush for visibility without too much overhead
         try:
@@ -569,7 +644,7 @@ class TensorBoardWriterManager:
             n_heads += 1
         if n_heads > 0:
             entropy /= n_heads
-            self.writer.add_scalar(f"{phase}/policy/entropy", entropy, iteration)
+            self.writer.add_scalar(f"{phase}/policy/actor_entropy", entropy, iteration)
 
         # TD-error metrics
         td_error = getattr(ctx, "td_error", None)
@@ -577,17 +652,18 @@ class TensorBoardWriterManager:
             self._add_td_error_metrics(td_error, iteration, phase)
 
         # Weight norms (L2) for actor and critic
-        def l2_norm(module) -> float:
-            total = 0.0
-            for p in module.parameters():
-                if p is None:
-                    continue
-                total += float(p.detach().norm(2).item())
-            return total
-
-        actor_norm = l2_norm(core.actor)
-        critic_norm = l2_norm(core.critic)
         if phase == "train":
+
+            def l2_norm(module) -> float:
+                total = 0.0
+                for p in module.parameters():
+                    if p is None:
+                        continue
+                    total += float(p.detach().norm(2).item())
+                return total
+
+            actor_norm = l2_norm(core.actor)
+            critic_norm = l2_norm(core.critic)
             self.writer.add_scalars(
                 main_tag="weight_l2_norm",
                 tag_scalar_dict={"actor": actor_norm, "critic": critic_norm},

@@ -135,7 +135,7 @@ class EnvStepper:
 
             # Step environment
             observation, reward, terminated, truncated, info = env.step(actions)
-            curriculum_action = info.pop("curriculum_action", None)
+            curriculum_action = info.get("curriculum_action", None)
             if curriculum_action is not None:
                 # If a wrapper overrides the executed action, ensure the transition
                 # stores action probabilities consistent with the executed action.
