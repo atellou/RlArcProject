@@ -55,7 +55,46 @@ Decision after this stage:
   - submission success/failure rates
   - `grid_perfect_rate` and `improvement_rate`
 
-## 3) Entropy regularization sweep (pick stable exploration)
+## 2.5) Reward shaping sweep (second iteration: all_penalties_low_*)
+
+Run these after stage 2 to test reduced penalties variants.
+
+```bash
+./experiments/run_experiments.sh \
+  --config ./experiments/configs/reward_exp.yaml \
+  --base "${BASE_CONFIG}" \
+  --samples-path-list "${SAMPLES_PATH_LIST}" \
+  --seed "${SEED}" \
+  --epochs "${EPOCHS}" \
+  --experiments all_penalties_low_improvement_penalty,all_penalties_low_perfect_no_submit_penalty,all_penalties_low_both
+```
+
+Decision after this stage:
+
+- Promote the best reward configs to curriculum tests.
+
+## 3) Curriculum experiments (reward configs under curriculum)
+
+Run curriculum with the selected reward settings and compare warm-start-only vs warm-start + ongoing assist.
+
+```bash
+./experiments/run_experiments.sh \
+  --config ./experiments/configs/curriculum_exp.yaml \
+  --base "${BASE_CONFIG}" \
+  --samples-path-list "${SAMPLES_PATH_LIST}" \
+  --seed "${SEED}" \
+  --epochs "${EPOCHS}" \
+  --experiments low_penalties_base_curriculum,low_improvement_penalty_base_curriculum,low_penalties_on_train_curriculum,low_improvement_penalty_on_train_curriculum
+```
+
+Decision after this stage:
+
+- Pick **one** entropy regime that:
+  - avoids entropy collapse
+  - avoids extreme oscillation
+  - yields the best reward/submission metrics under the best reward shaping
+
+## 4) Entropy regularization sweep (pick stable exploration)
 
 Run on top of the selected reward setting(s) from stage 2.
 
@@ -76,7 +115,7 @@ Decision after this stage:
   - avoids extreme oscillation
   - yields the best reward/submission metrics under the best reward shaping
 
-## 4) Submit-head entropy scale sweep
+## 5) Submit-head entropy scale sweep
 
 Run only after stage 3 (otherwise it’s too many degrees of freedom).
 
@@ -94,7 +133,7 @@ Recommended first sweep values:
   --experiments submit_entropy_scale_0_0,submit_entropy_scale_0_25,submit_entropy_scale_0_5
 ```
 
-## 5) Learning-rate sweep (run before CARSM)
+## 6) Learning-rate sweep (run before CARSM)
 
 Recommendation: run LR sweeps **before** CARSM. CARSM changes the actor objective and typically changes gradient scale, so doing LR after CARSM confounds attribution.
 
