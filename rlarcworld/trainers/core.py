@@ -274,7 +274,8 @@ class Trainer:
             batch = batch[selected_indices].auto_batch_size_()
             # Also filter info indices to match the filtered batch
             if info is not None and "index" in info:
-                info["index"] = info["index"][selected_indices]
+                info_device = info["index"].device
+                info["index"] = info["index"][selected_indices.to(info_device)]
 
         # Enforce minimum batch size for stable updates
         effective_bs = selected_indices.shape[0]
