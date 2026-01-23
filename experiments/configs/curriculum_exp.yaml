@@ -2,8 +2,8 @@
 # CURRICULUM EXPERIMENTS
 # =============================================================================
 
-low_penalties_base_curriculum:
-  description: "Curriculum run with 'No submit penalty' and 'zero improvement penalty' low"
+low_both_curriculum_ongoing:
+  description: "Low-both penalties with ongoing-only curriculum (warmup=1.0, episode_start=0.0, on_train=0.02)"
   env:
     perfect_no_submit_penalty_coef: 0.25
     zero_improvement_penalty: 0.05
@@ -11,27 +11,13 @@ low_penalties_base_curriculum:
     enable_curriculum: true
     curriculum_replace_probabilities:
       on_warmup: 1.0
-      on_episode_start: 1.0
-      on_train: 0.0
-      episode_start_steps: 50
+      on_episode_start: 0.0
+      on_train: 0.02
+      episode_start_steps: 0
     curriculum_pixel_location_strategy: random
 
-low_improvement_penalty_base_curriculum:
-  description: "Curriculum run with 'zero improvement penalty' low"
-  env:
-    perfect_no_submit_penalty_coef: 0.75
-    zero_improvement_penalty: 0.05
-  training:
-    enable_curriculum: true
-    curriculum_replace_probabilities:
-      on_warmup: 1.0
-      on_episode_start: 1.0
-      on_train: 0.0
-      episode_start_steps: 50
-    curriculum_pixel_location_strategy: random
-
-low_penalties_on_train_curriculum:
-  description: "Curriculum run with 'No submit penalty' and 'zero improvement penalty' low. Add 5% of change getting curriculum samples during train (aside of episode start)"
+low_both_curriculum_episode_start_ongoing:
+  description: "Low-both penalties with episode-start + ongoing curriculum (warmup=1.0, episode_start=0.5 for first 50 steps, on_train=0.02)"
   env:
     perfect_no_submit_penalty_coef: 0.25
     zero_improvement_penalty: 0.05
@@ -39,13 +25,13 @@ low_penalties_on_train_curriculum:
     enable_curriculum: true
     curriculum_replace_probabilities:
       on_warmup: 1.0
-      on_episode_start: 1.0
-      on_train: 0.05
+      on_episode_start: 0.5
+      on_train: 0.02
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
-low_improvement_penalty_on_train_curriculum:
-  description: "Curriculum run with 'zero improvement penalty' low. Add 5% of change getting curriculum samples during train (aside of episode start)"
+low_improvement_penalty_curriculum_ongoing:
+  description: "Low improvement penalty with ongoing-only curriculum (warmup=1.0, episode_start=0.0, on_train=0.02)"
   env:
     perfect_no_submit_penalty_coef: 0.75
     zero_improvement_penalty: 0.05
@@ -53,7 +39,21 @@ low_improvement_penalty_on_train_curriculum:
     enable_curriculum: true
     curriculum_replace_probabilities:
       on_warmup: 1.0
-      on_episode_start: 1.0
-      on_train: 0.05
+      on_episode_start: 0.0
+      on_train: 0.02
+      episode_start_steps: 0
+    curriculum_pixel_location_strategy: random
+
+low_improvement_penalty_curriculum_episode_start_ongoing:
+  description: "Low improvement penalty with episode-start + ongoing curriculum (warmup=1.0, episode_start=0.5 for first 50 steps, on_train=0.02)"
+  env:
+    perfect_no_submit_penalty_coef: 0.75
+    zero_improvement_penalty: 0.05
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 0.5
+      on_train: 0.02
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random

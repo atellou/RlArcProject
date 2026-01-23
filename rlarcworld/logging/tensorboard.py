@@ -145,7 +145,7 @@ class TensorBoardWriterManager:
             "curriculum_generated": float(curriculum_action_stats["samples_total"]),
             "training_usage": float(self.curriculum_actual_usage),
             "actor_generated_usage": float(
-                self.curriculum_actual_usage - self.total_samples
+                self.total_samples - self.curriculum_actual_usage
             ),
             "total_samples": float(self.total_samples),
         }
@@ -593,7 +593,7 @@ class TensorBoardWriterManager:
             used_rate = float(curriculum_used.float().mean().detach().cpu().item())
             actor_mask = (curriculum_used == 0).reshape(-1).nonzero(as_tuple=True)[0]
 
-        self.writer.add_scalar(f"{phase}/curriculum/usage_rate", used_rate, iteration)
+        self.writer.add_scalar(f"curriculum/{phase}/usage_rate", used_rate, iteration)
 
         if used_rate < 1.0:
             batch = batch[actor_mask]

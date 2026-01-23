@@ -2,109 +2,127 @@
 
 ## Context
 
-These notes summarize observations from the reward experiments run so far (2 epochs, ~3000 iterations/epoch) and serve as a running log to guide the next round of sweeps.
+These notes summarize observations from recent reward sweeps and serve as a running log to guide the next round of experiments.
 
-## Reward experiments: First iteration
+## Latest sweep summary
 
-- **no_submit_penalty**
-  - **Entropy**: varies and remains relatively low (reported ~0.2 to ~0.8) throughout training.
-  - **Gradients**: remain active (reported actor/critic gradient norms varying roughly 0 to 4).
-  - **Reward**: continues to vary; training does not immediately collapse.
+- **Submission success rate:** `0` across the sweep (no successful submissions observed).
+- **Grid perfect rate:** never reaches a perfect grid state.
+- **Episode length:** episodes consistently run until `max_steps_per_episode`.
+- **Curriculum usage in training batches:** decays to ~0 after a few hundred steps when curriculum is warmup-only.
 
-- **added_submit_penalty**
-  - **Entropy**: settles early (reported ~4000 iterations).
-  - **Gradients**: settle / die early (reported ~4000 iterations).
-  - **Reward**: mostly ~0 with very small variations (~1e-3), suggesting the agent may not perceive a strong learning signal.
+Interpretation:
 
-- **added_improvement_penalty**
-  - **Behavior**: very similar to `added_submit_penalty`.
-  - **Entropy/gradients**: settle / die early.
-  - **Reward**: mostly ~0 with very small variations (~1e-3).
+- With warmup-only curriculum, oracle transitions become a shrinking fraction of the replay buffer as new policy transitions are added, so `curriculum_used` in sampled batches naturally trends toward 0.
+- Given `submit_success_rate == 0` and no perfect grids, reward shaping alone is currently not producing a solvable learning signal within the training budget.
 
-- **all_penalties**
-  - **Entropy**: grows high (reported ~5 by end of training).
-  - **Actor gradients**: die early (reported ~2000 iterations).
-  - **Critic gradients**: remain active (reported ~0.3 to 1).
-  - **Reward**: cyclical; overall mostly negative.
+## Reward config observations (high level)
 
-## Reward experiments: Second iteration
+- **Actor entropy (averaged over heads):**
+  - `no_submit_penalty` produced the highest actor entropy throughout the run.
+    - Interpretation: removing the perfect-no-submit penalty reduces pressure to commit to a deterministic submit policy, so the learned policy remains more stochastic for longer.
+  - `all_penalties_low_both` was consistently the next-highest.
+    - Interpretation: lower penalties (especially the lower perfect-no-submit penalty) appear to preserve exploration relative to the higher-penalty regimes.
+  - Most other reward configurations fell below ~`0.5` by ~iteration `2800` (total training horizon was `6000` iterations).
+    - Interpretation: these configurations tend to converge toward more deterministic behavior by mid-training, which can reflect either stable learning or early convergence to a suboptimal attractor (given zero success, the latter is plausible).
 
-Second iteration variants were created to reduce constant negative drift (lower `zero_improvement_penalty`) and reduce the perfect-no-submit penalty.
+- **Critic distribution entropy (per head):**
+  - **Pixel-wise head:**
+    - `no_submit_penalty` and `added_submit_penalty` were the highest and stabilized around ~`0.9`.
+      - Interpretation: the pixel-wise value distribution remains broad/uncertain, suggesting the critic does not collapse to a narrow confident prediction for pixel edits under these reward regimes.
+    - `all_penalties_low_both` and `all_penalties_low_improvement_penalty` were typically around ~`0.8` with visibly higher variance.
+      - Interpretation: these regimes show similar uncertainty but with more non-stationarity, consistent with ongoing changes in the policy’s edit distribution.
+  - **Binary head:**
+    - `all_penalties` and `all_penalties_medium_improvement_penalty` were low (around ~`0.1`).
+      - Interpretation: the critic becomes highly confident for the binary outcome under these penalties; without any observed submit success, this likely reflects confident prediction of failure/negative outcomes.
+    - `all_penalties_low_perfect_no_submit_penalty` was intermediate (around ~`0.5`).
+      - Interpretation: reducing perfect-no-submit penalty appears to increase uncertainty in the binary outcome, consistent with more varied submission behavior.
+    - All other reward configurations were high (around ~`0.9`).
+      - Interpretation: the binary outcome remains diffuse/uncertain, suggesting the agent does not settle into a consistent submit/no-submit regime that yields predictable outcomes.
 
-- **all_penalties_low_improvement_penalty** (`perfect_no_submit_penalty_coef=0.75`, `zero_improvement_penalty=0.05`)
-  - **Outcome**: similar to first iteration overall.
-  - **Entropy**: grows high (reported ~5 by end of training).
-  - **Gradients**: actor gradients die after ~1000 steps.
-  - **Critic gradients**: settle around ~0.2 to ~0.4, but with more scale variation than actor.
-  - **Loss**:
-    - Actor loss shows cyclic variation with a slow downward trend; lowest observed ~-0.8 (slightly stronger trend than `all_penalties_low_perfect_no_submit_penalty`).
-    - Critic loss oscillates ~1.0 to ~1.5.
-  - **Reward dynamics**:
-    - Cyclic / noisy cosine-like pattern.
-    - Binary reward roughly ~-0.25 to ~-0.6.
-    - Pixel-wise reward roughly ~-0.8 to ~-1.25.
+- **Gradient norms (actor and critic):**
+  - Gradients remained non-zero to the end of training.
+    - Interpretation: optimization did not fully stagnate; learning signals persisted even late in training.
+  - Magnitude was generally low-to-moderate (reported overall range ~`0.1` to `2`).
+    - Interpretation: updates are present but small, consistent with incremental policy changes rather than abrupt shifts.
+  - Several configurations showed persistent late-stage variability (reported fluctuations >~`0.1` continuing through the end), consistent with non-stationary learning dynamics rather than a flatline collapse.
+    - Interpretation: the system continues to explore or oscillate among behaviors, which matches the observed non-stationary rewards and lack of convergence to success.
 
-- **all_penalties_low_perfect_no_submit_penalty** (`perfect_no_submit_penalty_coef=0.25`, `zero_improvement_penalty=0.25`)
-  - **Outcome**: similar to first iteration overall.
-  - **Entropy**: grows high (reported ~5 by end of training).
-  - **Gradients**: actor gradients die after ~1000 steps.
-  - **Critic gradients**: settle around ~0.2 to ~0.4, but with more scale variation than actor.
-  - **Loss**:
-    - Actor loss shows cyclic variation with a slow downward trend; lowest observed ~-0.8.
-    - Critic loss oscillates ~1.0 to ~1.5.
-  - **Reward dynamics**:
-    - Cyclic / noisy cosine-like pattern.
-    - Binary reward roughly ~-0.25 to ~-0.6.
-    - Pixel-wise reward roughly ~-0.8 to ~-1.25.
+- **Rewards (component vs total):**
+  - Per-component reward curves (when separated by shaping components) generally converged toward the expected penalty-dominated regimes.
+    - Interpretation: the shaping terms dominate the reward landscape, and the agent’s behavior does not escape the regime where penalties determine the mean return.
+  - In contrast, the **total reward** and **binary reward** curves for:
+    - `all_penalties_low_both`
+    - `added_improvement_penalty`
+    - `all_penalties_low_improvement_penalty`
+    remained visibly non-stationary (did not settle by the end of the `6000` iterations).
+    - Interpretation: these configurations maintain ongoing behavioral change (or oscillation) in aspects that affect end-of-episode outcomes (binary rewards), even though this does not translate into successful submissions.
 
-- **all_penalties_low_both** (`perfect_no_submit_penalty_coef=0.25`, `zero_improvement_penalty=0.05`)
-  - **Outcome**: the only second-iteration variant with sustained movement.
-  - **Entropy**: shows drastic variation until the end.
-  - **Gradients**:
-    - More variation (reported ~0 to ~2) than the other two second-iteration variants.
-    - Both actor and critic show periods close to zero and periods with clear movement (intermittent learning).
-  - **Loss**:
-    - Actor loss shows erratic changes; lowest observed ~-2.
-    - Critic loss shows erratic changes; lowest observed ~0.08.
-  - **Reward dynamics**:
-    - Long plateaus with abrupt/erratic changes.
-    - Plateaus often occur at values ending in ~.05.
-    - Both binary and pixel-wise rewards remain mostly negative, varying roughly ~0.05 to ~-1.05.
+- **Losses:**
+  - `all_penalties` and `all_penalties_medium_improvement_penalty` became nearly stationary after ~iteration `3000`.
+    - Interpretation: these regimes converge to a stable critic/policy update pattern relatively early; given zero success, this stability may correspond to convergence to a failure mode.
+  - `added_submit_penalty` showed a critic loss that decreased smoothly (described as logarithmically approaching 0) through the end.
+    - Interpretation: this reward regime may produce a more consistent TD target distribution (easier to fit), but reduced critic loss alone does not imply improved task performance.
+  - Several other configurations remained erratic, with critic loss varying roughly between `0.04` and `0.6` through late training.
+    - Interpretation: these regimes maintain non-stationary TD targets and/or unstable value estimates, consistent with ongoing exploration or policy oscillation.
+  - Actor loss:
+    - `all_penalties_low_perfect_no_submit_penalty` and `all_penalties_medium_improvement_penalty` were closest to `0` compared to other configs.
+      - Interpretation: the policy gradient signal becomes small under these reward settings, which can indicate either near-convergence or weak advantage estimates; given zero success, weak/degenerate learning is plausible.
+    - `no_submit_penalty` and `added_submit_penalty` plateaued around the `-1.5` to `-2` range for most of training.
+      - Interpretation: these configurations reach a stable policy gradient regime that does not further improve; combined with zero success, this suggests convergence to a non-solving behavior.
 
-## Global observations so far
+## Action metrics that matter most right now
 
-- **Rewards are mostly negative**, with positive rewards being rare.
-- For multiple penalty configurations, training tends to fall into regimes where:
-  - **Actor gradients die early** while the critic keeps moving (or entropy increases sharply).
-  - **Rewards hover near 0** or are cyclical, suggesting weak/ambiguous policy gradient signal.
-- **Replay / behavior confound (important for curriculum runs)**: outcome metrics reflect the behavior policy. When curriculum is enabled, compare metrics split by `curriculum/used` (actor-only vs curriculum-driven) rather than comparing raw reward curves across runs.
-- **Gradient collapse signature**: repeated pattern is critic continues fitting while actor gradients collapse (often coincident with high entropy or flat rewards). This is the primary failure mode observed so far.
-- **Plateau / quantization in rewards**: long plateaus at discrete reward values suggest the reward is effectively piecewise-constant for most transitions (sparse improvement). This motivates curriculum as a way to increase the frequency of informative transitions early.
+- Because submit success is 0 and perfect grids are never reached, the priority for the next iteration is to increase the frequency of *informative* transitions rather than fine-tuning penalty magnitudes.
 
-## Hypotheses / next actions
+- Configs with **non-trivial submit-rate dynamics** (submit rate not stuck at exactly 0 or 1):
+  - `all_penalties_low_both`
+  - `all_penalties_low_improvement_penalty`
 
-- **Signal-to-noise**: penalties may dominate shaping early, producing a “do-nothing / don’t-submit” attractor or a noisy high-entropy regime.
-- **Next candidate base reward config** (from reward sweeps only):
-  - `all_penalties_low_both` is currently the best candidate for continued experimentation because it avoids early actor gradient death.
-- **Next sweeps to consider on top of `all_penalties_low_both`**:
-  - Entropy regime selection (entropy_coef / floor / decay) and then submit-head entropy scaling.
-  - A small LR sanity sweep if gradients are still unstable.
+## Next iteration recommendation
 
-- **Reward configs selected for curriculum tests (next iteration)**:
-  - Keep `all_penalties_low_both`:
-    - Only second-iteration reward variant with sustained/intermittent actor+critic gradient movement.
-    - Best candidate for curriculum to improve data distribution and potentially turn intermittent learning into consistent progress.
-  - Keep `all_penalties_low_improvement_penalty`:
-    - Serves as a stress-test reward configuration where the actor tends to die early without curriculum.
-    - Useful to test whether curriculum can prevent early collapse by providing better early replay signal.
-  - Discard for now: `all_penalties_low_perfect_no_submit_penalty`:
-    - Behaves very similarly to `all_penalties_low_improvement_penalty` (early actor gradient death + cyclic rewards).
-    - Running both under curriculum is likely redundant; keep one “dying gradient” config as a stress test.
+Given the above, prefer **ongoing curriculum influence (B)** rather than warmup-only.
 
-- **Curriculum motivation**:
-  - None of the above reward-only runs produced success or even near-success behavior.
-  - Next experiments should compare reward settings under curriculum schedules.
+Suggested levers:
 
-- **Curriculum comparisons to run**:
-  - Warm-start schedule (oracle-heavy at episode start) to reduce early signal starvation.
-  - Ongoing-assist schedule (small `on_train` probability) to prevent collapse/stagnation.
+- Increase replay buffer capacity so early oracle transitions persist longer.
+- Add a small `on_train` curriculum rate (e.g. 1-5%) so the replay distribution continues to include solvable/improving trajectories.
+- Keep episode-start curriculum off (avoid permanently masking the learned policy and avoid the "always curriculum" trap when episodes reset frequently).
+
+## Decision-making: minimal next experiments
+
+Goal: determine whether curriculum can produce any non-zero success signal (submission success or perfect grids) with the smallest possible experiment set.
+
+### Reward configurations to carry forward (2)
+
+- `all_penalties_low_both` (`perfect_no_submit_penalty_coef=0.25`, `zero_improvement_penalty=0.05`)
+  - Interpretation: chosen because it exhibited non-trivial submission-rate dynamics and sustained non-stationary learning signals.
+
+- `all_penalties_low_improvement_penalty` (`perfect_no_submit_penalty_coef=0.75`, `zero_improvement_penalty=0.05`)
+  - Interpretation: chosen as a contrasting penalty regime that still showed non-trivial submission-rate dynamics.
+
+### Curriculum schedules to compare (2)
+
+- **Ongoing-only** (`on_warmup=1.0`, `on_episode_start=0.0`, `on_train=0.02`, `episode_start_steps=0`)
+  - Interpretation: isolates whether a small continual trickle of curriculum transitions is enough to shape the replay distribution without masking episode-start behavior.
+
+- **Episode-start + ongoing** (`on_warmup=1.0`, `on_episode_start=0.5`, `episode_start_steps=50`, `on_train=0.02`)
+  - Interpretation: provides stronger guidance early in each episode. If this still yields zero success, the bottleneck is likely not simply exploration/signal starvation.
+
+This yields **4 total runs** (2 reward configs × 2 curriculum schedules).
+
+### Stop criteria / decision rules
+
+Evaluate after ~`1000` to `2000` iterations (no need to wait to `6000` for a go/no-go decision):
+
+- **Breakthrough condition:** any of the following becomes non-zero:
+  - submission success rate
+  - perfect grid rate
+  - improvement rate (if tracked) trending upward in actor-only samples
+  - Interpretation: proceed to longer runs and only then consider additional sweeps (entropy, LR, etc.).
+
+- **Failure condition:** if all 4 runs keep:
+  - submission success rate == 0
+  - perfect grid rate == 0
+  - episodes always terminate at max steps
+  - Interpretation: deprioritize further reward-coefficient sweeps and focus instead on action-space / submit mechanics / curriculum strength or training objective changes.

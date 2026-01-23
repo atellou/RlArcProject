@@ -90,7 +90,7 @@ Run curriculum with the selected reward settings and compare warm-start-only vs 
   --samples-path-list "${SAMPLES_PATH_LIST}" \
   --seed "${SEED}" \
   --epochs "${EPOCHS}" \
-  --experiments low_penalties_base_curriculum,low_improvement_penalty_base_curriculum,low_penalties_on_train_curriculum,low_improvement_penalty_on_train_curriculum
+  --experiments low_both_curriculum_ongoing,low_both_curriculum_episode_start_ongoing,low_improvement_penalty_curriculum_ongoing,low_improvement_penalty_curriculum_episode_start_ongoing
 ```
 
 Decision after this stage:

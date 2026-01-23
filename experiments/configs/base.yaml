@@ -66,10 +66,10 @@ distributional:
     binary: 1
 
 replay_buffer:
-  size: 10000
+  size: 50000
   alpha: 0.2
   beta: 0.2
-  warmup_ratio: 0.1
+  warmup_ratio: 0.2
 
 training:
   max_steps_per_epoch: 3000
@@ -83,9 +83,9 @@ training:
   enable_curriculum: true
   curriculum_replace_probabilities:
     on_warmup: 1.0
-    on_episode_start: 0.0
-    on_train: 0.0
-    episode_start_steps: 0
+    on_episode_start: 0.5
+    on_train: 0.02
+    episode_start_steps: 50
   curriculum_pixel_location_strategy: random
 
 world_model:
