@@ -37,6 +37,12 @@ all_penalties_low_improvement_penalty:
     perfect_no_submit_penalty_coef: 0.75
     zero_improvement_penalty: 0.05
 
+all_penalties_medium_improvement_penalty:
+  description: "All penalties but medium zero-improvement penalty"
+  env:
+    perfect_no_submit_penalty_coef: 0.75
+    zero_improvement_penalty: 0.10
+
 all_penalties_low_perfect_no_submit_penalty:
   description: "All penalties but lower perfect-no-submit penalty"
   env:

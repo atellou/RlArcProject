@@ -26,7 +26,7 @@ network:
   use_index_grid: true
   use_temporal: true
   use_examples: true
-  example_compression_tokens: 32
+  example_compression_tokens: 64
   grid_compression_tokens: 64
   compression_method: "learned"
   max_learnable_examples: 1
@@ -43,11 +43,11 @@ d4pg:
     n_steps: 1
   compute_td_error: true
   carsm: false
-  entropy_coef: 0.05
+  entropy_coef: 0.01
   entropy_coef_decay: 1.0
-  entropy_floor_coef: 0.05
-  min_entropy: 0.5
-  submit_entropy_scale: 1.0
+  entropy_floor_coef: 0.0
+  min_entropy: 0.2
+  submit_entropy_scale: 0.25
   target_update_frequency: 10
   model_update_frequency: 1
   cache_enabled: true
@@ -59,8 +59,8 @@ distributional:
     pixel_wise: 21
     binary: 21
   v_min:
-    pixel_wise: -1
-    binary: -1
+    pixel_wise: -2
+    binary: -2
   v_max:
     pixel_wise: 1
     binary: 1
@@ -80,12 +80,12 @@ training:
   validation_steps_frequency: 300
   min_train_batch_size: 8
   augmentation_enabled: false
-  enable_curriculum: false
+  enable_curriculum: true
   curriculum_replace_probabilities:
     on_warmup: 1.0
-    on_episode_start: 1.0
+    on_episode_start: 0.0
     on_train: 0.0
-    episode_start_steps: 50
+    episode_start_steps: 0
   curriculum_pixel_location_strategy: random
 
 world_model:
@@ -114,7 +114,7 @@ system:
   device: null
 
 reproducibility:
-  global_seed: null
-  dataset_seed: null
-  augmentation_seed: null
+  global_seed: 42
+  dataset_seed: 42
+  augmentation_seed: 42
   torch_deterministic: true

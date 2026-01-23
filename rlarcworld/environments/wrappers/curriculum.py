@@ -79,11 +79,11 @@ class ActionStrategy:
 
     """
 
-    no_change: float = 0.2
-    no_change_submit: float = 0.1
-    improve: float = 0.4
-    degrade: float = 0.2
-    degrade_submit: float = 0.1
+    no_change: float = 0.1
+    no_change_submit: float = 0.05
+    improve: float = 0.7
+    degrade: float = 0.1
+    degrade_submit: float = 0.05
     on_perfect_match_submit: float = 0.9
 
     def __post_init__(self) -> None:

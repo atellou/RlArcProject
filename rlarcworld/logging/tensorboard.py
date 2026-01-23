@@ -149,8 +149,10 @@ class TensorBoardWriterManager:
             ),
             "total_samples": float(self.total_samples),
         }
+        denom_curriculum = max(1.0, totals["curriculum_generated"])
+        denom_samples = max(1.0, totals["total_samples"])
         counts = {
-            k: float(v) / totals["curriculum_generated"]
+            k: float(v) / denom_curriculum
             for k, v in curriculum_action_stats.items()
             if k
             not in {
@@ -158,7 +160,7 @@ class TensorBoardWriterManager:
                 "samples_total",
             }
         }
-        used_for_training = totals["training_usage"] / totals["total_samples"]
+        used_for_training = totals["training_usage"] / denom_samples
         if counts:
             keys = sorted(counts.keys())
             vals = [counts[k] for k in keys]

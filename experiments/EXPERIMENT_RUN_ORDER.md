@@ -2,6 +2,26 @@
 
 This file documents a **budget-friendly order** for running ARC RL experiments and provides **copy/paste commands** using `experiments/run_experiments.sh`.
 
+## Notes on sample count and replay buffer sizing
+
+Start with a smaller sample list (e.g. **100 tasks**) for early sweeps because it:
+
+- reduces iteration time (more configs tested per hour)
+- makes regressions and instability easier to reproduce/debug
+- keeps the replay buffer from being dominated by a very wide task distribution before the policy is functional
+
+Once defaults are stable, scale to larger lists to validate generalization:
+
+- **100 tasks**: fast dynamics debugging and hyperparameter triage
+- **300-500 tasks**: more representative stability check before committing to full runs
+- **1400 tasks**: full dataset validation
+
+Replay buffer sizing should scale with dataset breadth to avoid excessive recency bias:
+
+- **100 tasks**: `replay_buffer.size=10_000` is a good default
+- **300-500 tasks**: consider `replay_buffer.size=50_000`
+- **1400 tasks**: consider `replay_buffer.size=100_000+` (if memory/time allow)
+
 ## 0) One-time setup
 
 - Make sure your environment variables are loaded (if you use a `.env`):
@@ -45,7 +65,7 @@ Run these first because they directly change whether submitting is net-negative 
   --samples-path-list "${SAMPLES_PATH_LIST}" \
   --seed "${SEED}" \
   --epochs "${EPOCHS}" \
-  --experiments no_submit_penalty,added_submit_penalty,added_improvement_penalty,all_penalties
+  --experiments no_submit_penalty,added_submit_penalty,added_improvement_penalty,all_penalties,all_penalties_low_improvement_penalty,all_penalties_medium_improvement_penalty,all_penalties_low_perfect_no_submit_penalty,all_penalties_low_both
 ```
 
 Decision after this stage:
@@ -54,20 +74,6 @@ Decision after this stage:
   - `train/reward/*` trend (less cyclic, less negative drift)
   - submission success/failure rates
   - `grid_perfect_rate` and `improvement_rate`
-
-## 2.5) Reward shaping sweep (second iteration: all_penalties_low_*)
-
-Run these after stage 2 to test reduced penalties variants.
-
-```bash
-./experiments/run_experiments.sh \
-  --config ./experiments/configs/reward_exp.yaml \
-  --base "${BASE_CONFIG}" \
-  --samples-path-list "${SAMPLES_PATH_LIST}" \
-  --seed "${SEED}" \
-  --epochs "${EPOCHS}" \
-  --experiments all_penalties_low_improvement_penalty,all_penalties_low_perfect_no_submit_penalty,all_penalties_low_both
-```
 
 Decision after this stage:
 
