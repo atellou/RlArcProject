@@ -1,11 +1,28 @@
 """CUDA/AMP device configuration helpers."""
 
+import functools
 import logging
+import os
 from typing import TypedDict
 
 import torch
 
 logger = logging.getLogger(__name__)
+
+
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+
+
+def debug_only(method):
+    """Decorator to conditionally enable a method in debug mode."""
+
+    @functools.wraps(method)
+    def _wrapped(self, *args, **kwargs):
+        if not DEBUG:
+            return None  # no-op in non-debug runs
+        return method(self, *args, **kwargs)
+
+    return _wrapped
 
 
 class CudaConfig(TypedDict):

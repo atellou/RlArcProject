@@ -35,7 +35,7 @@ network:
 d4pg:
   share_network: true
   policy_lr: 3.0e-4
-  critic_lr: 3.0e-3
+  critic_lr: 3.0e-4
   gamma: 0.99
   tau: 0.01
   lr_scheduler_kwargs: null
@@ -109,7 +109,7 @@ logging:
   tb_medium_frequency: 100
 
 system:
-  amp_enabled: true
+  amp_enabled: false
   use_checkpointing: false
   device: null
 

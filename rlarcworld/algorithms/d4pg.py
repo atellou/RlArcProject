@@ -23,7 +23,7 @@ from rlarcworld.utils.checkpointing import (
     resolve_load_path,
     resolve_save_path,
 )
-from rlarcworld.utils.device import AmpScaler, CudaConfig, enable_cuda
+from rlarcworld.utils.device import AmpScaler, CudaConfig, debug_only, enable_cuda
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,13 @@ class D4PGCore:
         self.critic_target.to(self.device).eval()
 
         # Optimizers and schedulers
-        self.shared_params = shared_params
+        # IMPORTANT: Materialize once; avoid iterator exhaustion bugs when filtering.
+        self.shared_params = list(shared_params) if shared_params is not None else None
+        self._shared_param_ids = (
+            {id(p) for p in self.shared_params}
+            if self.shared_params is not None
+            else set()
+        )
         self.actor_optimizer = self._build_actor_optimizer(policy_lr)
         self.critic_optimizer = optim.AdamW(self.critic.parameters(), lr=critic_lr)
 
@@ -188,8 +194,156 @@ class D4PGCore:
     def _build_actor_optimizer(self, lr: float) -> optim.AdamW:
         if self.shared_params is None:
             return optim.AdamW(self.actor.parameters(), lr=lr)
-        actor_head = [p for p in self.actor.parameters() if p not in self.shared_params]
+        actor_head = [
+            p for p in self.actor.parameters() if id(p) not in self._shared_param_ids
+        ]
         return optim.AdamW(actor_head, lr=lr)
+
+    # ----------- Diagnosis methods -----------
+
+    def _log_nonfinite_params(self, module: torch.nn.Module, *, name: str) -> bool:
+        """Log non-finite parameter stats. Returns True if any were found."""
+        found = False
+        for p_name, p in module.named_parameters():
+            if not torch.isfinite(p).all():
+                found = True
+                safe_p = torch.nan_to_num(
+                    p.detach().float(), nan=0.0, posinf=0.0, neginf=0.0
+                )
+                logger.error(
+                    "Non-finite parameter detected after optimizer step. "
+                    "module=%s param=%s shape=%s min=%s max=%s",
+                    name,
+                    p_name,
+                    tuple(p.shape),
+                    float(safe_p.min().item()),
+                    float(safe_p.max().item()),
+                )
+        return found
+
+    def _log_nonfinite_grads(self, module: torch.nn.Module, *, name: str) -> bool:
+        """Log non-finite gradient stats. Returns True if any were found."""
+        found = False
+        for p_name, p in module.named_parameters():
+            if p.grad is None:
+                continue
+            if not torch.isfinite(p.grad).all():
+                found = True
+                g = p.grad.detach().float()
+                safe_g = torch.nan_to_num(g, nan=0.0, posinf=0.0, neginf=0.0)
+                logger.error(
+                    "Non-finite gradient detected before optimizer step. "
+                    "module=%s param=%s shape=%s min=%s max=%s",
+                    name,
+                    p_name,
+                    tuple(p.grad.shape),
+                    float(safe_g.min().item()),
+                    float(safe_g.max().item()),
+                )
+        return found
+
+    def _assert_finite_grads_before_step(self) -> None:
+        nonfinite_actor = self._log_nonfinite_grads(self.actor, name="actor")
+        nonfinite_critic = self._log_nonfinite_grads(self.critic, name="critic")
+        if nonfinite_actor or nonfinite_critic:
+            raise RuntimeError(
+                "Non-finite gradients detected before optimizer step "
+                "(see logs for details)."
+            )
+
+    def _assert_finite_params_after_step(self) -> None:
+        nonfinite_actor = self._log_nonfinite_params(self.actor, name="actor")
+        nonfinite_critic = self._log_nonfinite_params(self.critic, name="critic")
+        if nonfinite_actor or nonfinite_critic:
+            raise RuntimeError(
+                "Non-finite parameters detected after optimizer step "
+                "(see logs for details)."
+            )
+
+    @debug_only
+    def _assert_finite_critic_heads(
+        self, target_dist: torch.Tensor, log_q: torch.Tensor, key: str
+    ):
+        if not torch.isfinite(target_dist).all():
+            safe_t = torch.nan_to_num(
+                target_dist.detach().float(),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            logger.error(
+                "Non-finite target_dist in critic loss. head=%s min=%s max=%s",
+                key,
+                float(safe_t.min().item()),
+                float(safe_t.max().item()),
+            )
+            raise RuntimeError(
+                f"Non-finite target_dist detected for critic head '{key}'."
+            )
+        if not torch.isfinite(log_q).all():
+            safe_lq = torch.nan_to_num(
+                log_q.detach().float(),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            logger.error(
+                "Non-finite log_q in critic loss. head=%s min=%s max=%s",
+                key,
+                float(safe_lq.min().item()),
+                float(safe_lq.max().item()),
+            )
+            raise RuntimeError(f"Non-finite log_q detected for critic head '{key}'.")
+
+    @debug_only
+    def _assert_critic_finit_loss(self, loss: torch.Tensor, key: str):
+        if not torch.isfinite(loss).all():
+            logger.error(
+                "Non-finite critic loss scalar. head=%s value=%s",
+                key,
+                float(torch.nan_to_num(loss.detach().float(), nan=0.0).item()),
+            )
+            raise RuntimeError(f"Non-finite critic loss detected for head '{key}'.")
+
+    @debug_only
+    def _assert_finite_action_probs(self, action_probs: TensorDict):
+        for _k, _v in action_probs.items():
+            if not torch.isfinite(_v).all():
+                try:
+                    finite_mask = torch.isfinite(_v)
+                    bad_rows = (~finite_mask).any(dim=-1)
+                    bad_idx = bad_rows.nonzero(as_tuple=False).squeeze(-1)
+                    row_sum = _v.float().sum(dim=-1)
+                    safe_v = torch.nan_to_num(
+                        _v.float(), nan=0.0, posinf=0.0, neginf=0.0
+                    )
+                    safe_row_sum = torch.nan_to_num(
+                        row_sum, nan=0.0, posinf=0.0, neginf=0.0
+                    )
+                    logger.error(
+                        "Non-finite action probabilities detected. "
+                        "head=%s bad_rows=%d/%d "
+                        "prob_min=%s prob_max=%s "
+                        "row_sum_min=%s row_sum_max=%s "
+                        "bad_idx(sample)=%s",
+                        _k,
+                        int(bad_rows.sum().item()),
+                        int(_v.shape[0]),
+                        float(safe_v.min().item()),
+                        float(safe_v.max().item()),
+                        float(safe_row_sum.min().item()),
+                        float(safe_row_sum.max().item()),
+                        bad_idx[:10].detach().cpu().tolist(),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to compute diagnostics for non-finite action "
+                        "probabilities (head=%s)",
+                        _k,
+                    )
+                raise RuntimeError(
+                    f"Non-finite action probabilities detected for head '{_k}'."
+                )
 
     # ---------- Core computations ----------
     def compute_target_distribution(
@@ -272,6 +426,7 @@ class D4PGCore:
         td_error = TensorDict({}).to(self.device)
         log_q = q_response.q_log_dist
         for key in log_q.keys():
+            self._assert_finite_critic_heads(target_dist[key], log_q[key], key)
             if compute_td_error:
                 td_error[key] = (
                     F.kl_div(log_q[key], target_dist[key], reduction="none")
@@ -279,6 +434,7 @@ class D4PGCore:
                     .detach()
                 )
             loss[key] = self.critic_criterion(log_q[key], target_dist[key])
+            self._assert_critic_finit_loss(loss[key], key)
         return loss, td_error, q_response
 
     def _categorize_actions(
@@ -337,11 +493,7 @@ class D4PGCore:
             else:
                 action_probs = self.actor(state)
 
-        for _k, _v in action_probs.items():
-            if not torch.isfinite(_v).all():
-                raise RuntimeError(
-                    f"Non-finite action probabilities detected for head '{_k}'."
-                )
+        self._assert_finite_action_probs(action_probs)
 
         # Critic distribution for those actions
         if critic_probs is None:
@@ -509,25 +661,18 @@ class D4PGCore:
 
                 # Step optimizer only after accumulating N gradients
                 if should_step:
-                    # Compute gradient norms for logging/clipping
-                    grad_norm_critic = None
-                    grad_norm_actor = None
-
                     # Clip gradients if needed
+                    self.amp_scaler.unscale(self.critic_optimizer)
+                    self.amp_scaler.unscale(self.actor_optimizer)
                     if self.max_grad_norm and self.max_grad_norm > 0:
-                        self.amp_scaler.unscale(self.critic_optimizer)
-                        self.amp_scaler.unscale(self.actor_optimizer)
                         grad_norm_critic = torch.nn.utils.clip_grad_norm_(
                             self.critic.parameters(), self.max_grad_norm, norm_type=2.0
                         )
                         grad_norm_actor = torch.nn.utils.clip_grad_norm_(
                             self.actor.parameters(), self.max_grad_norm, norm_type=2.0
                         )
-                    elif (
-                        hasattr(self, "tb_writer")
-                        and self.tb_writer is not None
-                        and self._update_counter % self.tb_writer_frequency == 0
-                    ):
+                        self._assert_finite_grads_before_step()
+                    else:
                         # Compute norms without clipping for logging
                         grad_norm_critic = torch.nn.utils.clip_grad_norm_(
                             self.critic.parameters(),
@@ -540,13 +685,13 @@ class D4PGCore:
                             norm_type=2.0,
                         )
 
+                    self._assert_finite_grads_before_step()
+
                     # Log gradient norms to TensorBoard
                     if (
                         hasattr(self, "tb_writer")
                         and self.tb_writer is not None
                         and self._update_counter % self.tb_writer_frequency == 0
-                        and grad_norm_actor is not None
-                        and grad_norm_critic is not None
                     ):
                         self.tb_writer.add_scalar(
                             "grad_l2_norm/actor", grad_norm_actor, self._update_counter
@@ -560,6 +705,8 @@ class D4PGCore:
                     self.amp_scaler.step(self.critic_optimizer)
                     self.amp_scaler.step(self.actor_optimizer)
                     self.amp_scaler.update()
+
+                    self._assert_finite_params_after_step()
 
                     if self.cache_enabled:
                         logger.debug(
