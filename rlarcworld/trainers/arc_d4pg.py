@@ -470,7 +470,11 @@ class ArcD4PG:
             alpha=alpha,
             beta=beta,
         )
-        storage = LazyMemmapStorage(replay_buffer_size)
+        replay_memmap_dir = self.checkpoint_dir / "replay_buffer"
+        replay_memmap_dir.mkdir(parents=True, exist_ok=True)
+        storage = LazyMemmapStorage(
+            replay_buffer_size, scratch_dir=str(replay_memmap_dir)
+        )
         self.replay_buffer = TensorDictReplayBuffer(
             storage=storage,
             sampler=sampler,

@@ -10,7 +10,7 @@ export CUBLAS_WORKSPACE_CONFIG=":4096:8"
 export PYTORCH_ALLOC_CONF="expandable_segments:True"
 
 print_usage() {
-  echo "Usage: $0 [--config PATH] [--base PATH] [--samples-path-list PATH] [--seed INT] [--epochs INT] [--experiments NAME1,NAME2,...] [--experiment NAME]... [NAME ...]" >&2
+  echo "Usage: $0 [--config PATH] [--base PATH] [--samples-path-list PATH] [--seed INT] [--epochs INT] [--experiment-folder-location PATH] [--experiments NAME1,NAME2,...] [--experiment NAME]... [NAME ...]" >&2
 }
 
 experiments=()
@@ -35,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --epochs)
       EPOCHS="$2"
+      shift 2
+      ;;
+    --experiment-folder-location)
+      EXPERIMENT_FOLDER_LOCATION="$2"
       shift 2
       ;;
     --experiments)
@@ -100,6 +104,9 @@ echo "  BASE_PATH=${BASE_PATH}"
 echo "  SAMPLE_PATH_LIST=${SAMPLE_PATH_LIST}"
 echo "  SEED=${SEED}"
 echo "  EPOCHS=${EPOCHS}"
+if [[ -n "${EXPERIMENT_FOLDER_LOCATION:-}" ]]; then
+  echo "  EXPERIMENT_FOLDER_LOCATION=${EXPERIMENT_FOLDER_LOCATION}"
+fi
 echo "  experiments=${experiments[@]}"
 
 for exp_name in "${experiments[@]}"; do
@@ -107,13 +114,19 @@ for exp_name in "${experiments[@]}"; do
   echo "Starting experiment: ${exp_name}"
   echo "------------------------------------------------------------"
 
+  extra_args=()
+  if [[ -n "${EXPERIMENT_FOLDER_LOCATION:-}" ]]; then
+    extra_args+=("--experiment-folder-location" "${EXPERIMENT_FOLDER_LOCATION}")
+  fi
+
   uv run torchrun --standalone --nproc_per_node "${NPROC_PER_NODE}" experiments/run_experiment.py \
     --experiment "${exp_name}" \
     --config "${CONFIG_PATH}" \
     --base "${BASE_PATH}" \
     --samples-path-list "${SAMPLE_PATH_LIST}" \
     --epochs "${EPOCHS}" \
-    --seed "${SEED}"
+    --seed "${SEED}" \
+    "${extra_args[@]}"
 done
 
 echo "All experiments completed."

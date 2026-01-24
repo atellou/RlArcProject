@@ -321,6 +321,18 @@ def main() -> None:
         default=None,
         help="Override reproducibility.global_seed in the config",
     )
+    parser.add_argument(
+        "--experiment-folder-location",
+        type=str,
+        default=None,
+        help="Overwrite checkpoint folder location to save components",
+    )
+    parser.add_argument(
+        "--checkpoint-path",
+        type=str,
+        default=None,
+        help="Path to checkpoint to load",
+    )
 
     args = parser.parse_args()
 
@@ -357,6 +369,8 @@ def main() -> None:
     config = load_experiment(args.experiment, args.config, args.base)
 
     base_checkpoint_dir = config.checkpoint.checkpoint_dir or "checkpoints"
+    if args.experiment_folder_location:
+        base_checkpoint_dir = args.experiment_folder_location
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     config.checkpoint.checkpoint_dir = os.path.join(
         base_checkpoint_dir, args.experiment, timestamp
@@ -409,6 +423,13 @@ def main() -> None:
         experiment_name=args.experiment,
         experiment_description=exp_description,
     )
+
+    if args.checkpoint_path:
+        logger.info(
+            "Resuming from checkpoint: %s",
+            os.path.abspath(args.checkpoint_path),
+        )
+        experiment.load_checkpoint(args.checkpoint_path, load_replay_buffer=True)
 
     logger.info(f"Starting training for {args.epochs} epochs...")
     experiment.train(epochs=args.epochs)

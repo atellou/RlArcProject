@@ -69,7 +69,7 @@ replay_buffer:
   size: 50000
   alpha: 0.2
   beta: 0.2
-  warmup_ratio: 0.2
+  warmup_ratio: 0.02
 
 training:
   max_steps_per_epoch: 3000
