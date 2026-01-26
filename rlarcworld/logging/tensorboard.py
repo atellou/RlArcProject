@@ -279,6 +279,7 @@ class TensorBoardWriterManager:
                         if v.numel() == 0:
                             continue
                         scalars[f"{canonical}_mean"] = float(v.mean().cpu().item())
+                        scalars[f"{canonical}_max"] = float(v.max().cpu().item())
                         break
             if scalars:
                 self.writer.add_scalars(

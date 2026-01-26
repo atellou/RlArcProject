@@ -422,6 +422,10 @@ class ArcBatchGridEnv(gym.Env):
         state[StateKeys.EXAMPLES.value] = self.information[StateKeys.EXAMPLES.value]
         return state
 
+    def get_last_grid(self) -> torch.Tensor:
+        """Return the last grid."""
+        return self.last_grid
+
     def get_target(self) -> torch.Tensor:
         """Return the target grid."""
         if not self.mode.is_train():

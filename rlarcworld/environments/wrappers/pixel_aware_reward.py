@@ -265,10 +265,13 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         # Dense shaping: positive when we reduce diff, negative when we make it worse.
         shaping = (last_diff - grid_diff).clamp(-1.0, 1.0)
         if self.zero_improvement_penalty != 0.0:
-            shaping = torch.where(
-                shaping == 0,
-                shaping - float(self.zero_improvement_penalty),
-                shaping,
+            no_op = (self.env.get_last_grid() == self.env.get_current_grid()).all(
+                dim=(1, 2)
+            )
+            shaping = shaping + torch.where(
+                no_op,
+                -float(self.zero_improvement_penalty) * torch.ones_like(last_diff),
+                torch.zeros_like(last_diff),
             )
 
         # Submit grading term: +1 if perfect, else -max_penalty.
@@ -317,7 +320,9 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         obs, _, terminated, truncated, info = self.env.step(actions)
         self.grid_diffs = self.get_difference()
         reward, reward_info = self.reward(
-            self.last_diffs, self.grid_diffs, actions[ActionKeys.SUBMIT.value]
+            self.last_diffs,
+            self.grid_diffs,
+            actions[ActionKeys.SUBMIT.value],
         )
         if isinstance(info, TensorDict):
             info.update(reward_info)
