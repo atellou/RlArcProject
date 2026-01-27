@@ -35,7 +35,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
     def __init__(
         self,
         env: ArcBatchGridEnv,
-        max_penalty: float = 1.0,
+        wrong_submit_penalty: float = 1.0,
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
         shaping_clamp_min: float = 0.0,
@@ -47,7 +47,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
         Args:
             env (gym.Env): Environment to wrap.
-            max_penalty (float, optional): Maximum penalty for the reward.
+            wrong_submit_penalty (float, optional): Maximum penalty for the reward.
                 Defaults to 1.0.
             perfect_no_submit_penalty_coef (float, optional): Coefficient for
                 perfect no-submit penalty. Defaults to 1.0.
@@ -63,7 +63,9 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 computation. Defaults to 0.99.
         """
         super().__init__(env)
-        assert isinstance(max_penalty, float), "max_penalty must be a float"
+        assert isinstance(
+            wrong_submit_penalty, float
+        ), "wrong_submit_penalty must be a float"
         assert (
             isinstance(n_steps, int) and n_steps > 0
         ), "n_steps must be a positive int"
@@ -72,8 +74,10 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         ), "gamma must be a positive float lower or equal than 1.0"
 
         assert (
-            isinstance(max_penalty, float) and max_penalty > 0
-        ), "max_penalty must be a float greater than 0, got {}".format(max_penalty)
+            isinstance(wrong_submit_penalty, float) and wrong_submit_penalty > 0
+        ), "wrong_submit_penalty must be a float greater than 0, got {}".format(
+            wrong_submit_penalty
+        )
         assert (
             isinstance(perfect_no_submit_penalty_coef, float)
             and perfect_no_submit_penalty_coef >= 0
@@ -89,7 +93,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         assert (
             shaping_clamp_min_tau_steps >= 0
         ), "shaping_clamp_min_tau_steps must be >= 0"
-        self.__max_penalty = max_penalty
+        self.__wrong_submit_penalty = wrong_submit_penalty
         self.perfect_no_submit_penalty_coef = perfect_no_submit_penalty_coef
         self.zero_improvement_penalty = zero_improvement_penalty
         self.shaping_clamp_min = shaping_clamp_min
@@ -206,9 +210,9 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         return len(self.env)
 
     @property
-    def max_penalty(self):
+    def wrong_submit_penalty(self):
         """Maximum penalty for the current grid."""
-        return self.__max_penalty
+        return self.__wrong_submit_penalty
 
     @property
     def reward_storage(self):
@@ -259,7 +263,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             6. If the improvement is negative, the reward is -2.
             7. The penalization is proportional to the difference between the
                current and the target grid.
-            8. In a 10x10 grid with all grids different and a max_penalty of
+            8. In a 10x10 grid with all grids different and a wrong_submit_penalty of
                -1, the penalization would be -100.
             9. If the agent has submitted and there exists a difference
                between the current and the target grid, the reward is the
@@ -304,17 +308,17 @@ class PixelAwareRewardWrapper(gym.Wrapper):
 
         self._shaping_step_count += 1
 
-        # Submit grading term: +1 if perfect, else -max_penalty.
+        # Submit grading term: +1 if perfect, else -wrong_submit_penalty.
         perfect = (grid_diff == 0).float()
         submit_term = submission.float() * (
-            perfect * 1.0 + (1.0 - perfect) * (-float(self.max_penalty))
+            perfect * 1.0 + (1.0 - perfect) * (-float(self.wrong_submit_penalty))
         )
         # If the grid is already perfect but the agent doesn't submit, apply a small
         # penalty to avoid the "stall at 0 reward" local optimum.
         not_submit_term = (
             (1.0 - submission.float())
             * perfect
-            * (-float(self.max_penalty))
+            * (-float(self.wrong_submit_penalty))
             * float(self.perfect_no_submit_penalty_coef)
         )
 
@@ -374,7 +378,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             wrapper_payload = {
                 "reward_storage": self.reward_storage,
                 "last_reward": self.last_reward,
-                "max_penalty": self.max_penalty,
+                "wrong_submit_penalty": self.wrong_submit_penalty,
                 "batch_size": self.batch_size,
                 "n_steps": self.n_steps,
                 "gamma": self.gamma,
@@ -445,7 +449,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self.last_reward = meta["last_reward"]
         self.batch_size = meta["batch_size"]
 
-        assert self.max_penalty == meta["max_penalty"]
+        assert self.wrong_submit_penalty == meta["wrong_submit_penalty"]
         assert self.n_steps == meta["n_steps"]
         assert self.gamma == meta["gamma"]
 

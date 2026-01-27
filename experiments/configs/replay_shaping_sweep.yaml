@@ -26,6 +26,7 @@
 
 # ----------------------------
 # Low improvement penalty setting (comparable baseline)
+# Experiment: ns075_imp005_replay_off_curr_mild,ns075_imp005_replay_off_curr_aggressive,ns075_imp005_replay_on_curr_mild,ns075_imp005_replay_on_curr_aggressive
 # ----------------------------
 ns075_imp005_replay_on_curr_mild:
   description: "No-submit=0.75, improvement=0.05, replay ON, curriculum mild, shaping clamp schedule"

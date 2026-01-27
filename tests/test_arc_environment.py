@@ -267,7 +267,9 @@ def test_arc_batch_grid_env_checkpoint_roundtrip(
 def test_reward_wrapper_checkpoint_roundtrip(tmp_path: Path, as_dir: bool):
     grid, colors, batch_size = 5, 6, 2
     base = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=4, gamma=0.95)
-    env1 = PixelAwareRewardWrapper(base, max_penalty=1.0, n_steps=4, gamma=0.95)
+    env1 = PixelAwareRewardWrapper(
+        base, wrong_submit_penalty=1.0, n_steps=4, gamma=0.95
+    )
 
     batch = make_batch(batch_size, grid, colors)
     obs1, info1 = env1.reset(
@@ -285,13 +287,15 @@ def test_reward_wrapper_checkpoint_roundtrip(tmp_path: Path, as_dir: bool):
 
     # Load into fresh wrapped env
     base2 = ArcBatchGridEnv(grid_size=grid, color_values=colors, n_steps=4, gamma=0.95)
-    env2 = PixelAwareRewardWrapper(base2, max_penalty=1.0, n_steps=4, gamma=0.95)
+    env2 = PixelAwareRewardWrapper(
+        base2, wrong_submit_penalty=1.0, n_steps=4, gamma=0.95
+    )
     env2.load(target_path)
 
     # Compare wrapper fields
     torch.testing.assert_close(env2.reward_storage, env1.reward_storage)
     assert env2.batch_size == env1.batch_size
-    assert env2.max_penalty == env1.max_penalty
+    assert env2.wrong_submit_penalty == env1.wrong_submit_penalty
     assert env2.n_steps == env1.n_steps
     assert env2.gamma == env1.gamma
 
@@ -670,7 +674,7 @@ def test_reward_world_model_wrapper_caching():
     batch_size = 2
 
     env = ArcBatchGridEnv(grid_size=grid_size, color_values=color_values)
-    env2 = PixelAwareRewardWrapper(env, max_penalty=1.0, n_steps=4, gamma=0.95)
+    env2 = PixelAwareRewardWrapper(env, wrong_submit_penalty=1.0, n_steps=4, gamma=0.95)
     reward_config = RlArcWorldViTARCConfig(
         grid_size=grid_size,
         d_model=64,

@@ -24,7 +24,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
     - Uses the binary reward head as the scalar per-step reward for the agent,
       applying submit-based logic:
         - submitted AND good: +1
-        - submitted AND bad: -env.max_penalty
+        - submitted AND bad: -env.wrong_submit_penalty
         - not submitted: 0
     - Maintains a TorchQueue of recent binary rewards and computes n-step
       discounted returns, with optional clamping via v_min/v_max.
@@ -42,7 +42,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
         grid_diff_epsilon: float = 0.01,
         smooth_transition: bool = True,
         transition_steepness: float = 100.0,
-        max_penalty: float = 1.0,
+        wrong_submit_penalty: float = 1.0,
         step_cost: float = 0.0,
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
@@ -65,7 +65,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
                 instead of hard threshold. Defaults to True.
             transition_steepness (float, optional): Controls sharpness of smooth
                 transition. Higher values make transition sharper. Defaults to 100.0.
-            max_penalty (float, optional): Maximum penalty for submitted bad grids.
+            wrong_submit_penalty (float, optional): Maximum penalty for wrong submission
                 Defaults to 1.0.
             step_cost (float, optional): Cost for each step taken. Defaults to 0.0.
             perfect_no_submit_penalty_coef (float, optional): Coefficient for perfect
@@ -120,10 +120,10 @@ class RewardWorldModelWrapper(gym.Wrapper):
         self.grid_diff_epsilon = grid_diff_epsilon
         self.smooth_transition = smooth_transition
         self.transition_steepness = transition_steepness
-        self.max_penalty = (
-            max_penalty
-            if max_penalty is not None
-            else self.get_wrapper_attr("max_penalty")
+        self.wrong_submit_penalty = (
+            wrong_submit_penalty
+            if wrong_submit_penalty is not None
+            else self.get_wrapper_attr("wrong_submit_penalty")
         )
         self.step_cost = step_cost if step_cost is not None else 0.0
         self.perfect_no_submit_penalty_coef = perfect_no_submit_penalty_coef
@@ -283,7 +283,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
 
         # Reward logic:
         # - If submitted AND good: +1
-        # - If submitted AND bad: -max_penalty
+        # - If submitted AND bad: -wrong_submit_penalty
         # - If not submitted: 0
         # Using probability directly for smooth planning gradients
         """
@@ -291,7 +291,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
         improvement = self.__model_reward[RewardKeys.BINARY.value][..., 1]
 
         reward = self.__submission * (
-            improvement - self.max_penalty * (1 - improvement)
+            improvement - self.wrong_submit_penalty * (1 - improvement)
         )
         if self.step_cost != 0.0:
             reward = reward - float(self.step_cost)
@@ -309,7 +309,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
         This reward is shaped to match PixelAwareRewardWrapper:
         - Dense shaping is the *change* in number of wrong pixels (prev - current),
           clamped to [-1, 1] (one pixel per step).
-        - Submit grading term is +1 if perfect else -max_penalty (only when submit).
+        - Submit grading term is +1 if perfect else -wrong_submit_penalty (on submitted)
         """
         submission = self.__submission
         improvement_logits = self.__model_reward[RewardKeys.PIXEL_WISE.value].float()
@@ -335,23 +335,24 @@ class RewardWorldModelWrapper(gym.Wrapper):
             smooth_is_perfect = is_perfect_prob
             submit_term = submission.float() * (
                 smooth_is_perfect * 1.0
-                + (1.0 - smooth_is_perfect) * (-float(self.max_penalty))
+                + (1.0 - smooth_is_perfect) * (-float(self.wrong_submit_penalty))
             )
             not_submit_term = (
                 (1.0 - submission.float())
                 * smooth_is_perfect
-                * (-float(self.max_penalty))
+                * (-float(self.wrong_submit_penalty))
                 * float(self.perfect_no_submit_penalty_coef)
             )
         else:
             is_perfect = (is_perfect_prob > 0.5).float()
             submit_term = submission.float() * (
-                is_perfect * 1.0 + (1.0 - is_perfect) * (-float(self.max_penalty))
+                is_perfect * 1.0
+                + (1.0 - is_perfect) * (-float(self.wrong_submit_penalty))
             )
             not_submit_term = (
                 (1.0 - submission.float())
                 * is_perfect
-                * (-float(self.max_penalty))
+                * (-float(self.wrong_submit_penalty))
                 * float(self.perfect_no_submit_penalty_coef)
             )
 

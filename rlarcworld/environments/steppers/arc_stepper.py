@@ -63,7 +63,7 @@ class PixelWiseArcStepper:
         max_examples: int = 10,
         dataset_shuffle_seed: int | None = None,
         augmentation_generator: torch.Generator | None = None,
-        max_penalty: float = 1.0,
+        wrong_submit_penalty: float = 1.0,
         step_cost: float = 0.0,
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
@@ -88,7 +88,7 @@ class PixelWiseArcStepper:
                 Seed for shuffling the dataset.
             augmentation_generator (torch.Generator | None):
                 Generator for deterministic randomness.
-            max_penalty (float): Maximum penalty for the environment reward.
+            wrong_submit_penalty (float): Maximum penalty for the environment reward.
             step_cost (float): Per-step time cost applied in train mode.
             perfect_no_submit_penalty_coef (float):
                 Coefficient for perfect no-submit penalty.
@@ -158,12 +158,12 @@ class PixelWiseArcStepper:
             grid_size=grid_size,
             color_values=color_values,
             device=env_device,
-            max_penalty=max_penalty,
+            wrong_submit_penalty=wrong_submit_penalty,
             step_cost=step_cost,
         )
         # Wrap with pixel-aware rewards to expose get_source_env_reward and n-step API
         pixel_aware_env_args = {
-            "max_penalty": max_penalty,
+            "wrong_submit_penalty": wrong_submit_penalty,
             "perfect_no_submit_penalty_coef": perfect_no_submit_penalty_coef,
             "zero_improvement_penalty": zero_improvement_penalty,
             "shaping_clamp_min": shaping_clamp_min,
@@ -182,7 +182,7 @@ class PixelWiseArcStepper:
         else:
             self.environment = PixelAwareRewardWrapper(
                 base_env,
-                max_penalty=max_penalty,
+                wrong_submit_penalty=wrong_submit_penalty,
                 perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
                 zero_improvement_penalty=zero_improvement_penalty,
                 shaping_clamp_min=shaping_clamp_min,

@@ -34,7 +34,7 @@ Controls the ARC environment parameters.
 |-----------|------|---------|--------|
 | `grid_size` | int | 30 | Size of the input/output grid (height = width). Larger grids increase computational complexity and memory usage. |
 | `color_values` | int | 10 | Number of distinct color values in the ARC dataset (0-9). Must match the dataset. Affects network output dimensions. |
-| `max_penalty` | float | 1.0 | Maximum penalty for incorrect submissions. Scales the reward range and distributional RL support bounds. Higher penalties expand the reward support to [-penalty, penalty]. |
+| `wrong_submit_penalty` | float | 1.0 | Maximum penalty for incorrect submissions. Scales the reward range and distributional RL support bounds. Higher penalties expand the reward support to [-penalty, penalty]. |
 | `batch_size` | int | 32 | Number of samples processed per training step. Larger batches improve gradient stability but increase memory usage. Smaller batches add more noise but may improve generalization. |
 
 ---
@@ -129,8 +129,8 @@ Configures the distributional critic for learning value distributions instead of
 The ARC environment produces two reward signals:
 
 1. **Pixel-wise reward** [-1, 0]:
-   - Computed as: `(improvement - 1) * (grid_diff != 0) + (grid_diff / grid_size²) * submission * (-max_penalty) + (grid_diff == 0) * submission`
-   - With default `max_penalty=0.0`: worst case is -1 (no improvement on wrong grid)
+   - Computed as: `(improvement - 1) * (grid_diff != 0) + (grid_diff / grid_size²) * submission * (-wrong_submit_penalty) + (grid_diff == 0) * submission`
+   - With default `wrong_submit_penalty=0.0`: worst case is -1 (no improvement on wrong grid)
    - Best case is 1 (correct submission) or 0 (perfect match without submission)
    - Actual range: [-1, 1] for most episodes
    - **Why v_min=-1, v_max=1**: Tight bounds match actual reward range without clipping

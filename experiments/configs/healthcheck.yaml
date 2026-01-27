@@ -9,7 +9,7 @@ healthcheck:
   env:
     grid_size: 30
     color_values: 11
-    max_penalty: 1.0
+    wrong_submit_penalty: 1.0
     step_cost: 0.01
     perfect_no_submit_penalty_coef: 0.75
     zero_improvement_penalty: 0.25

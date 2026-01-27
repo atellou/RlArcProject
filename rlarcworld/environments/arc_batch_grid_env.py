@@ -76,7 +76,7 @@ class ArcBatchGridEnv(gym.Env):
         grid_size: int,
         color_values: int,
         *,
-        max_penalty: float = 1.0,
+        wrong_submit_penalty: float = 1.0,
         step_cost: float = 0.0,
         n_steps: int = 1,
         gamma: float = 0.99,
@@ -87,7 +87,7 @@ class ArcBatchGridEnv(gym.Env):
         Args:
             grid_size (int): The size of the grid.
             color_values (int): Number of color values in the grid (upper bound).
-            max_penalty (float, optional): Maximum penalty for the reward.
+            wrong_submit_penalty (float, optional): Maximum penalty for the reward.
                 Defaults to 0.
             step_cost (float, optional): Per-step time cost applied in train mode.
                 This creates urgency even when intermediate rewards are 0.
@@ -113,12 +113,14 @@ class ArcBatchGridEnv(gym.Env):
 
         # N-step attributes
         assert (
-            isinstance(max_penalty, float) and max_penalty > 0
-        ), "max_penalty must be a float greater than 0, got {}".format(max_penalty)
+            isinstance(wrong_submit_penalty, float) and wrong_submit_penalty > 0
+        ), "wrong_submit_penalty must be a float greater than 0, got {}".format(
+            wrong_submit_penalty
+        )
         assert (
             isinstance(step_cost, float) and step_cost >= 0
         ), "step_cost must be a float greater or equal than 0, got {}".format(step_cost)
-        self.__max_penalty = max_penalty
+        self.__wrong_submit_penalty = wrong_submit_penalty
         self.step_cost = step_cost
         self.n_steps = n_steps
         self.gamma = gamma
@@ -160,9 +162,9 @@ class ArcBatchGridEnv(gym.Env):
         return len(self.observations["grid"])
 
     @property
-    def max_penalty(self) -> float:
+    def wrong_submit_penalty(self) -> float:
         """Return the maximum penalty."""
-        return self.__max_penalty
+        return self.__wrong_submit_penalty
 
     def random_location_generator(self) -> np.ndarray:
         """Generate a random location in the grid.
@@ -359,7 +361,7 @@ class ArcBatchGridEnv(gym.Env):
         Reward structure:
         - No submission: 0
         - Successful submission (perfect match): +1
-        - Failed submission (any mismatch): -max_penalty
+        - Failed submission (any mismatch): -wrong_submit_penalty
 
         Args:
             grid_diffs (torch.Tensor): Batch of grids representing the
@@ -381,10 +383,10 @@ class ArcBatchGridEnv(gym.Env):
 
         # Reward logic:
         # - If submitted AND perfect: +1
-        # - If submitted AND not perfect: -max_penalty
+        # - If submitted AND not perfect: -wrong_submit_penalty
         # - If not submitted: 0
         reward = submission_tensor * (
-            perfect_match - self.__max_penalty * (1 - perfect_match)
+            perfect_match - self.__wrong_submit_penalty * (1 - perfect_match)
         )
 
         return reward

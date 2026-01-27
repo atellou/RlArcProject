@@ -52,13 +52,13 @@ class EnvConfig:
     Attributes:
         grid_size (int): Size of the grid.
         color_values (int): Number of color values.
-        max_penalty (float): Maximum penalty for the environment reward.
+        wrong_submit_penalty (float): Maximum penalty for the environment reward.
         batch_size (int): Batch size.
     """
 
     grid_size: int = 30
     color_values: int = 11
-    max_penalty: float = 1.0
+    wrong_submit_penalty: float = 1.0
     step_cost: float = 0.0
     perfect_no_submit_penalty_coef: float = 1.0
     zero_improvement_penalty: float = 0.0
@@ -259,8 +259,8 @@ class DistributionalConfig:
         """Scale v_min, v_max, and num_atoms by the given penalty factor.
 
         Args:
-            penalty (float): Penalty scaling factor (typically max_penalty value).
-                When max_penalty > 0, scales the support range and atom count
+            penalty (float): Penalty scaling factor,typically wrong_submit_penalty value
+                When wrong_submit_penalty > 0, scales the support range and atom count
                 accordingly.
 
         Returns:
@@ -485,7 +485,9 @@ class ArcD4PGConfig:
     def __post_init__(self):
         """Get a validated version of the configuration."""
         self.network.grid_size = self.env.grid_size
-        self.distributional = self.distributional.scale_by_penalty(self.env.max_penalty)
+        self.distributional = self.distributional.scale_by_penalty(
+            self.env.wrong_submit_penalty
+        )
         self.training.curriculum_replace_probabilities = (
             CurriculumReplaceProbabilitiesConfig(
                 **self.training.curriculum_replace_probabilities
