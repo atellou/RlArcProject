@@ -38,6 +38,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         max_penalty: float = 1.0,
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
+        shaping_clamp_min: float = 0.0,
+        shaping_clamp_min_tau_steps: int = 0,
         n_steps: int = 1,
         gamma: float = 0.99,
     ):
@@ -51,6 +53,10 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 perfect no-submit penalty. Defaults to 1.0.
             zero_improvement_penalty (float, optional): Penalty for zero
                 improvement. Defaults to 0.0.
+            shaping_clamp_min (float, optional): Minimum value for shaping
+                reward clamping. Defaults to 0.0.
+            shaping_clamp_min_tau_steps (int, optional): Number of steps for
+                shaping clamp min tau. Defaults to 0.
             n_steps (int, optional): Number of steps in the reward computation.
                 Defaults to 1.
             gamma (float, optional): Discount factor in the reward
@@ -76,14 +82,34 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             isinstance(zero_improvement_penalty, float)
             and zero_improvement_penalty >= 0
         ), "zero_improvement_penalty must be a float >= 0"
+        assert isinstance(shaping_clamp_min, float), "shaping_clamp_min must be a float"
+        assert isinstance(
+            shaping_clamp_min_tau_steps, int
+        ), "shaping_clamp_min_tau_steps must be an int"
+        assert (
+            shaping_clamp_min_tau_steps >= 0
+        ), "shaping_clamp_min_tau_steps must be >= 0"
         self.__max_penalty = max_penalty
         self.perfect_no_submit_penalty_coef = perfect_no_submit_penalty_coef
         self.zero_improvement_penalty = zero_improvement_penalty
+        self.shaping_clamp_min = shaping_clamp_min
+        self.shaping_clamp_min_tau_steps = shaping_clamp_min_tau_steps
+        self._shaping_step_count = 0
         self.n_steps = n_steps
         self.gamma = gamma
         self.device = self.get_wrapper_attr("device")
         self.grid_size = self.get_wrapper_attr("grid_size")
         self.color_values = self.get_wrapper_attr("color_values")
+
+    def _get_shaping_clamp_min(self) -> float:
+        target = float(self.shaping_clamp_min)
+        if target >= 0.0:
+            return target
+        tau = int(self.shaping_clamp_min_tau_steps)
+        if tau <= 0:
+            return target
+        t = float(self._shaping_step_count)
+        return target * (1.0 - float(torch.exp(torch.tensor(-t / float(tau))).item()))
 
     def get_discount_factor(self) -> torch.Tensor:
         """Return the per-step discount factors tensor of shape (B, n_steps)."""
@@ -110,6 +136,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         """
         options["mode"] = ArcEnvRunningMode.TRAIN
         reset = super().reset(seed=seed, options=options)
+        self._shaping_step_count = 0
         self.batch_size: int = options["batch"]["input"].shape[0]
         # Reward attributes - pixel-wise rewards
         self._reward_storage = TorchQueue(
@@ -217,7 +244,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         last_diffs: torch.Tensor,
         grid_diffs: torch.Tensor,
         submission: list[int] | torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Return reward based on actions and grids.
 
         Notes:
@@ -263,7 +290,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         grid_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2)).float()
 
         # Dense shaping: positive when we reduce diff, negative when we make it worse.
-        shaping = (last_diff - grid_diff).clamp(-1.0, 1.0)
+        shaping_clamp_min = float(self._get_shaping_clamp_min())
+        shaping = (last_diff - grid_diff).clamp(shaping_clamp_min, 1.0)
         if self.zero_improvement_penalty != 0.0:
             no_op = (self.env.get_last_grid() == self.env.get_current_grid()).all(
                 dim=(1, 2)
@@ -273,6 +301,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
                 -float(self.zero_improvement_penalty) * torch.ones_like(last_diff),
                 torch.zeros_like(last_diff),
             )
+
+        self._shaping_step_count += 1
 
         # Submit grading term: +1 if perfect, else -max_penalty.
         perfect = (grid_diff == 0).float()

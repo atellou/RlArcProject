@@ -46,6 +46,8 @@ class RewardWorldModelWrapper(gym.Wrapper):
         step_cost: float = 0.0,
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
+        shaping_clamp_min: float = 0.0,
+        shaping_clamp_min_tau_steps: int = 0,
     ):
         """Initialize the RewardWorldModelWrapper.
 
@@ -70,6 +72,9 @@ class RewardWorldModelWrapper(gym.Wrapper):
                 no-submit penalty. Defaults to 1.0.
             zero_improvement_penalty (float, optional): Coefficient for zero improvement
                 penalty. Defaults to 0.0.
+            shaping_clamp_min (float, optional): Minimum value for shaping. Defaults 0.
+            shaping_clamp_min_tau_steps (int, optional): Number of steps to reach
+                shaping_clamp_min. Defaults 0.
         """
         super().__init__(env)
         assert (
@@ -97,6 +102,13 @@ class RewardWorldModelWrapper(gym.Wrapper):
             isinstance(zero_improvement_penalty, float)
             and zero_improvement_penalty >= 0
         ), "zero_improvement_penalty must be a float >= 0"
+        assert isinstance(shaping_clamp_min, float), "shaping_clamp_min must be a float"
+        assert isinstance(
+            shaping_clamp_min_tau_steps, int
+        ), "shaping_clamp_min_tau_steps must be an int"
+        assert (
+            shaping_clamp_min_tau_steps >= 0
+        ), "shaping_clamp_min_tau_steps must be >= 0"
 
         self.step_horizon = step_horizon
         self.n_steps = n_steps
@@ -116,6 +128,19 @@ class RewardWorldModelWrapper(gym.Wrapper):
         self.step_cost = step_cost if step_cost is not None else 0.0
         self.perfect_no_submit_penalty_coef = perfect_no_submit_penalty_coef
         self.zero_improvement_penalty = zero_improvement_penalty
+        self.shaping_clamp_min = shaping_clamp_min
+        self.shaping_clamp_min_tau_steps = shaping_clamp_min_tau_steps
+        self._shaping_step_count = 0
+
+    def _get_shaping_clamp_min(self) -> float:
+        target = float(self.shaping_clamp_min)
+        if target >= 0.0:
+            return target
+        tau = int(self.shaping_clamp_min_tau_steps)
+        if tau <= 0:
+            return target
+        t = float(self._shaping_step_count)
+        return target * (1.0 - float(torch.exp(torch.tensor(-t / float(tau))).item()))
 
     def get_discount_factor(self) -> torch.Tensor:
         """Return the per-step discount factors tensor of shape (B, n_steps)."""
@@ -143,6 +168,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
         reset = super().reset(seed=seed, options=options)
         self.batch_size: int = options["batch"]["input"].shape[0]
         self._remaining_horizon = self.step_horizon
+        self._shaping_step_count = 0
 
         # Reward attributes - store both reward types for multi-head n-step returns
         self._reward_storage = TensorDict(
@@ -293,8 +319,9 @@ class RewardWorldModelWrapper(gym.Wrapper):
             device=improvement_probs.device,
             dtype=improvement_probs.dtype,
         )
+        shaping_clamp_min = float(self._get_shaping_clamp_min())
         shaping = torch.sum(improvement_probs * improvement_values, dim=-1).clamp(
-            -1.0, 1.0
+            shaping_clamp_min, 1.0
         )
         if self.zero_improvement_penalty != 0.0:
             shaping = torch.where(
@@ -405,6 +432,8 @@ class RewardWorldModelWrapper(gym.Wrapper):
         self._reward_storage[RewardKeys.PIXEL_WISE.value] = self._reward_storage[
             RewardKeys.PIXEL_WISE.value
         ].push(self.pixel_wise_model_reward.unsqueeze(-1))
+
+        self._shaping_step_count += 1
 
         # Update previous pixel-diff estimate after computing/pushing rewards.
         if self.__cur_grid_diff_est is not None:

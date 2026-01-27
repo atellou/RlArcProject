@@ -660,14 +660,35 @@ class TensorBoardWriterManager:
         # Policy entropy across action heads
         entropy = 0.0
         n_heads = 0
+        per_head_entropy: dict[str, float] = {}
+        per_head_max_prob: dict[str, float] = {}
         for probs in action_probs.values():
             p = probs.clamp(min=1e-10)
             entropy_t = -torch.sum(p * torch.log(p + 1e-10), dim=-1).mean()
             entropy += float(entropy_t.detach().cpu())
             n_heads += 1
+        for head_name, probs in action_probs.items():
+            p = probs.clamp(min=1e-10)
+            entropy_t = -torch.sum(p * torch.log(p + 1e-10), dim=-1).mean()
+            per_head_entropy[head_name] = float(entropy_t.detach().cpu())
+            per_head_max_prob[head_name] = float(
+                probs.max(dim=-1).values.mean().detach().cpu()
+            )
         if n_heads > 0:
             entropy /= n_heads
             self.writer.add_scalar(f"{phase}/policy/actor_entropy", entropy, iteration)
+        if per_head_entropy:
+            self.writer.add_scalars(
+                main_tag=f"{phase}/policy/entropy",
+                tag_scalar_dict=per_head_entropy,
+                global_step=iteration,
+            )
+        if per_head_max_prob:
+            self.writer.add_scalars(
+                main_tag=f"{phase}/policy/max_prob",
+                tag_scalar_dict=per_head_max_prob,
+                global_step=iteration,
+            )
 
         # TD-error metrics
         td_error = getattr(ctx, "td_error", None)

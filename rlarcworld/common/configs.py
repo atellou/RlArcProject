@@ -62,6 +62,8 @@ class EnvConfig:
     step_cost: float = 0.0
     perfect_no_submit_penalty_coef: float = 1.0
     zero_improvement_penalty: float = 0.0
+    shaping_clamp_min: float = 0.0
+    shaping_clamp_min_tau_steps: int = 0
     batch_size: int = 32
 
 

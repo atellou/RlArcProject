@@ -303,6 +303,8 @@ class ArcD4PG:
             step_cost=config.env.step_cost,
             perfect_no_submit_penalty_coef=config.env.perfect_no_submit_penalty_coef,
             zero_improvement_penalty=config.env.zero_improvement_penalty,
+            shaping_clamp_min=config.env.shaping_clamp_min,
+            shaping_clamp_min_tau_steps=config.env.shaping_clamp_min_tau_steps,
             n_step_config=config.d4pg.n_step_config,
             curriculum=curriculum_config,
         )
@@ -326,6 +328,8 @@ class ArcD4PG:
             step_cost=config.env.step_cost,
             perfect_no_submit_penalty_coef=config.env.perfect_no_submit_penalty_coef,
             zero_improvement_penalty=config.env.zero_improvement_penalty,
+            shaping_clamp_min=config.env.shaping_clamp_min,
+            shaping_clamp_min_tau_steps=config.env.shaping_clamp_min_tau_steps,
             n_step_config=config.d4pg.n_step_config,
         )
         logger.info("Validation stepper created successfully")
@@ -354,6 +358,8 @@ class ArcD4PG:
                 step_cost=config.env.step_cost,
                 perfect_no_submit_penalty_coef=config.env.perfect_no_submit_penalty_coef,
                 zero_improvement_penalty=config.env.zero_improvement_penalty,
+                shaping_clamp_min=config.env.shaping_clamp_min,
+                shaping_clamp_min_tau_steps=config.env.shaping_clamp_min_tau_steps,
                 model_update_frequency=config.world_model.model_update_frequency,
                 imagination_ratio=config.world_model.imagination_ratio,
                 imagination_frequency=config.world_model.imagination_frequency,

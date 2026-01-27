@@ -58,6 +58,8 @@ class ArcWorldModelStepper:
         step_cost: float = 0.0,
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
+        shaping_clamp_min: float = 0.0,
+        shaping_clamp_min_tau_steps: int = 0,
         grid_diff_epsilon: float = 0.01,
         smooth_transition: bool = True,
         transition_steepness: float = 100.0,
@@ -83,6 +85,8 @@ class ArcWorldModelStepper:
             step_cost: Cost for each step taken.
             perfect_no_submit_penalty_coef: Coefficient for perfect no-submit penalty.
             zero_improvement_penalty: Coefficient for zero improvement penalty.
+            shaping_clamp_min: Minimum value for shaping.
+            shaping_clamp_min_tau_steps: Number of steps to reach shaping_clamp_min.
             grid_diff_epsilon: Threshold for "perfect" grid detection.
             smooth_transition: Use smooth sigmoid transition.
             transition_steepness: Steepness of smooth transition.
@@ -140,6 +144,8 @@ class ArcWorldModelStepper:
             step_cost=self.step_cost,
             perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
             zero_improvement_penalty=zero_improvement_penalty,
+            shaping_clamp_min=shaping_clamp_min,
+            shaping_clamp_min_tau_steps=shaping_clamp_min_tau_steps,
         )
 
         self.stepper = EnvStepper(

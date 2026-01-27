@@ -67,6 +67,8 @@ class PixelWiseArcStepper:
         step_cost: float = 0.0,
         perfect_no_submit_penalty_coef: float = 1.0,
         zero_improvement_penalty: float = 0.0,
+        shaping_clamp_min: float = 0.0,
+        shaping_clamp_min_tau_steps: int = 0,
         n_step_config: NStepMinVMaxConfig | None = None,
         curriculum: ArcActionCurriculumConfig | None = None,
     ) -> None:
@@ -91,6 +93,8 @@ class PixelWiseArcStepper:
             perfect_no_submit_penalty_coef (float):
                 Coefficient for perfect no-submit penalty.
             zero_improvement_penalty (float): Coefficient for zero improvement penalty.
+            shaping_clamp_min (float): Minimum value for shaping reward clamping.
+            shaping_clamp_min_tau_steps (int): Number of steps for shaping clamp min tau
             n_step_config (NStepMinVMaxConfig | None):
                 Minimum value for n-step returns.
             curriculum (ArcActionCurriculumConfig | None):
@@ -162,6 +166,8 @@ class PixelWiseArcStepper:
             "max_penalty": max_penalty,
             "perfect_no_submit_penalty_coef": perfect_no_submit_penalty_coef,
             "zero_improvement_penalty": zero_improvement_penalty,
+            "shaping_clamp_min": shaping_clamp_min,
+            "shaping_clamp_min_tau_steps": shaping_clamp_min_tau_steps,
             "n_steps": self.n_step_config.n_steps,
             "gamma": base_env.gamma,
         }
@@ -179,6 +185,8 @@ class PixelWiseArcStepper:
                 max_penalty=max_penalty,
                 perfect_no_submit_penalty_coef=perfect_no_submit_penalty_coef,
                 zero_improvement_penalty=zero_improvement_penalty,
+                shaping_clamp_min=shaping_clamp_min,
+                shaping_clamp_min_tau_steps=shaping_clamp_min_tau_steps,
                 n_steps=self.n_step_config.n_steps,
                 gamma=base_env.gamma,
             )
