@@ -469,23 +469,34 @@ class ArcD4PG:
             self._on_train_callbacks()
         )
 
-        # Set up replay buffer
-        self.replay_buffer_priority_key = "td_error"
-        sampler = PrioritizedSampler(
-            replay_buffer_size,
-            alpha=alpha,
-            beta=beta,
-        )
-        replay_memmap_dir = self.checkpoint_dir / "replay_buffer"
-        replay_memmap_dir.mkdir(parents=True, exist_ok=True)
-        storage = LazyMemmapStorage(
-            replay_buffer_size, scratch_dir=str(replay_memmap_dir)
-        )
-        self.replay_buffer = TensorDictReplayBuffer(
-            storage=storage,
-            sampler=sampler,
-            priority_key=self.replay_buffer_priority_key,
-        )
+        # Set up replay buffer (optional)
+        if int(replay_buffer_size) <= 0:
+            logger.warning(
+                "Replay buffer size is 0 or less, skipping replay buffer setup"
+            )
+            self.replay_buffer_priority_key = None
+            self.replay_buffer = None
+            replay_buffer_update_priority = None
+            warmup_buffer_ratio = 0.0
+        else:
+            logger.info("Setting up replay buffer...")
+            self.replay_buffer_priority_key = "td_error"
+            sampler = PrioritizedSampler(
+                replay_buffer_size,
+                alpha=alpha,
+                beta=beta,
+            )
+            replay_memmap_dir = self.checkpoint_dir / "replay_buffer"
+            replay_memmap_dir.mkdir(parents=True, exist_ok=True)
+            storage = LazyMemmapStorage(
+                replay_buffer_size, scratch_dir=str(replay_memmap_dir), existsok=True
+            )
+            self.replay_buffer = TensorDictReplayBuffer(
+                storage=storage,
+                sampler=sampler,
+                priority_key=self.replay_buffer_priority_key,
+            )
+            replay_buffer_update_priority = self._replay_buffer_update_priority
 
         self.trainer = Trainer(
             core=self.d4pg_core,
@@ -493,7 +504,7 @@ class ArcD4PG:
             train_step_stream_factory=self.training_stepper.create_step_stream_from_samples,
             validation_step_stream_factory=self.validation_stepper.create_step_stream_from_samples,
             replay_buffer=self.replay_buffer,
-            replay_buffer_update_priority=self._replay_buffer_update_priority,
+            replay_buffer_update_priority=replay_buffer_update_priority,
             warmup_buffer_ratio=warmup_buffer_ratio,
             on_train_step=on_step_callbacks,
             on_validation_step=self._on_validation_callbacks(),

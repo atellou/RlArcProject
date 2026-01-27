@@ -1,0 +1,116 @@
+# =============================================================================
+# REPLAY + SHAPING CLAMP + CURRICULUM SWEEP
+#
+# Goal:
+# - Compare replay buffer ON vs OFF (ordered/no-replay updates)
+# - Compare curriculum intensity: mild vs aggressive
+# - Test shaping clamp min schedule: start at 0, ramp toward negative target
+#
+# Fixed choices in this sweep:
+# - perfect_no_submit_penalty_coef: 0.75
+# - zero_improvement_penalty: 0.05 ("low improvement penalty")
+# - shaping_clamp_min: -0.25
+# - shaping_clamp_min_tau_steps: 800 (episode max ~1000 steps)
+# - entropy regularization: lighter than base.yaml to avoid forcing high entropy
+# =============================================================================
+
+# ----------------------------
+# Entropy defaults for sweep
+# ----------------------------
+# Base.yaml currently uses fairly strong entropy pressure:
+#   entropy_coef=0.05, entropy_floor_coef=0.1, min_entropy=0.5
+# For these runs we use a lighter, more conservative setting:
+#   entropy_coef=0.01, entropy_floor_coef=0.0, min_entropy=0.2
+# so the policy can become confident when it finds signal, but still has some
+# regularization against total collapse.
+
+# ----------------------------
+# Low improvement penalty setting (comparable baseline)
+# ----------------------------
+ns075_imp005_replay_on_curr_mild:
+  description: "No-submit=0.75, improvement=0.05, replay ON, curriculum mild, shaping clamp schedule"
+  env:
+    perfect_no_submit_penalty_coef: 0.75
+    zero_improvement_penalty: 0.05
+    shaping_clamp_min: -0.25
+    shaping_clamp_min_tau_steps: 800
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 0.5
+      on_train: 0.02
+      episode_start_steps: 50
+  replay_buffer:
+    size: 50000
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
+
+ns075_imp005_replay_on_curr_aggressive:
+  description: "No-submit=0.75, improvement=0.05, replay ON, curriculum aggressive, shaping clamp schedule"
+  env:
+    perfect_no_submit_penalty_coef: 0.75
+    zero_improvement_penalty: 0.05
+    shaping_clamp_min: -0.25
+    shaping_clamp_min_tau_steps: 800
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 1.0
+      on_train: 0.05
+      episode_start_steps: 100
+  replay_buffer:
+    size: 50000
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
+
+ns075_imp005_replay_off_curr_mild:
+  description: "No-submit=0.75, improvement=0.05, replay OFF, curriculum mild, shaping clamp schedule"
+  env:
+    perfect_no_submit_penalty_coef: 0.75
+    zero_improvement_penalty: 0.05
+    shaping_clamp_min: -0.25
+    shaping_clamp_min_tau_steps: 800
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 0.5
+      on_train: 0.02
+      episode_start_steps: 50
+  replay_buffer:
+    size: 0
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
+
+ns075_imp005_replay_off_curr_aggressive:
+  description: "No-submit=0.75, improvement=0.05, replay OFF, curriculum aggressive, shaping clamp schedule"
+  env:
+    perfect_no_submit_penalty_coef: 0.75
+    zero_improvement_penalty: 0.05
+    shaping_clamp_min: -0.25
+    shaping_clamp_min_tau_steps: 800
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 1.0
+      on_train: 0.05
+      episode_start_steps: 100
+  replay_buffer:
+    size: 0
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2

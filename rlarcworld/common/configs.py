@@ -492,6 +492,13 @@ class ArcD4PGConfig:
             )
         )
 
+        if self.replay_buffer.size <= 0:
+            logger.warning(
+                "Replay buffer size is less than or equal to 0.\n"
+                "Setting compute_td_error to False."
+            )
+            self.d4pg.compute_td_error = False
+
         if self.d4pg.model_update_frequency == 0:
             self.d4pg.model_update_frequency = 1
 

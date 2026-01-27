@@ -16,6 +16,13 @@ healthcheck:
     shaping_clamp_min: -0.5
     shaping_clamp_min_tau_steps: 100
     batch_size: 32
+
+  replay_buffer:
+    size: 0
+    alpha: 0.2
+    beta: 0.2
+    warmup_ratio: 0.02
+
   distributional:
     v_min:
       pixel_wise_n_reward: -10
@@ -60,7 +67,8 @@ healthcheck:
     enable_curriculum: true
     curriculum_replace_probabilities:
       on_warmup: 1.0
-      on_episode_start: 1.0
-      on_train: 0.05
+      on_episode_start: 0.0
+      on_train: 0.0
       episode_start_steps: 100
     curriculum_pixel_location_strategy: random
+    min_train_batch_size: 0

@@ -8,23 +8,44 @@ no_submit_penalty:
     perfect_no_submit_penalty_coef: 0.0
     zero_improvement_penalty: 0.0
 
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
+
 added_submit_penalty:
   description: "Added submit penalty experiment, no improvement penalty"
   env:
     perfect_no_submit_penalty_coef: 0.75
     zero_improvement_penalty: 0.0
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
 
 added_improvement_penalty:
   description: "Added improvement penalty experiment, no submit penalty"
   env:
     perfect_no_submit_penalty_coef: 0.0
     zero_improvement_penalty: 0.25
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
 
 all_penalties:
   description: "All penalties experiment"
   env:
     perfect_no_submit_penalty_coef: 0.75
     zero_improvement_penalty: 0.25
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
 
 
 # =============================================================================
@@ -36,21 +57,41 @@ all_penalties_low_improvement_penalty:
   env:
     perfect_no_submit_penalty_coef: 0.75
     zero_improvement_penalty: 0.05
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
 
 all_penalties_medium_improvement_penalty:
   description: "All penalties but medium zero-improvement penalty"
   env:
     perfect_no_submit_penalty_coef: 0.75
     zero_improvement_penalty: 0.10
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
 
 all_penalties_low_perfect_no_submit_penalty:
   description: "All penalties but lower perfect-no-submit penalty"
   env:
     perfect_no_submit_penalty_coef: 0.25
     zero_improvement_penalty: 0.25
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2
 
 all_penalties_low_both:
   description: "All penalties but lower perfect-no-submit and lower zero-improvement penalty"
   env:
     perfect_no_submit_penalty_coef: 0.25
     zero_improvement_penalty: 0.05
+  d4pg:
+    entropy_coef: 0.01
+    entropy_coef_decay: 1.0
+    entropy_floor_coef: 0.0
+    min_entropy: 0.2

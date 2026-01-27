@@ -117,7 +117,7 @@ def run_healthcheck(config_path: str, base_path: str) -> None:
         # Override for minimal healthcheck run
         config.training.max_steps_per_epoch = 10
         config.training.validation_steps_per_epoch = 5
-        config.replay_buffer.size = 100
+        config.replay_buffer.size = min(100, config.replay_buffer.size)
         config.replay_buffer.warmup_ratio = 0.1
         config.checkpoint.checkpoint_dir = tmp_dir
         config.checkpoint.save_frequency = -1  # Disable periodic saves
