@@ -126,21 +126,33 @@ class EnvStepper:
                 self.actor.train(True)
 
             # Convert to discrete actions for environment (ensure 1D per batch)
-            actions = TensorDict(
-                {
-                    key: torch.argmax(x, dim=-1).to(self.device)
-                    for key, x in action_probs.items()
-                }
-            ).to(self.device)
+            actions = (
+                TensorDict(
+                    {
+                        key: torch.argmax(x, dim=-1).long().to(self.device)
+                        for key, x in action_probs.items()
+                    }
+                )
+                .to(self.device)
+                .auto_batch_size_()
+            )
 
             # Step environment
             observation, reward, terminated, truncated, info = env.step(actions)
-            curriculum_action = info.get("curriculum_action", None)
-            if curriculum_action is not None:
-                if isinstance(curriculum_action, TensorDict):
-                    curriculum_action = curriculum_action.to(self.device)
-                else:
-                    curriculum_action = TensorDict(curriculum_action).to(self.device)
+
+            if (
+                isinstance(info.get("curriculum_used", None), torch.Tensor)
+                and info["curriculum_used"].any()
+            ):
+                curriculum_action = info["curriculum_action"]
+                if not isinstance(curriculum_action, TensorDict):
+                    raise ValueError(
+                        "Curriculum action must be a TensorDict, got {}".format(
+                            type(curriculum_action)
+                        )
+                    )
+
+                curriculum_action = curriculum_action.to(self.device)
 
                 one_hot_probs = {}
                 for key, probs in action_probs.items():
@@ -149,6 +161,7 @@ class EnvStepper:
                     oh.scatter_(-1, idx.unsqueeze(-1), 1.0)
                     one_hot_probs[key] = oh
                 action_probs = TensorDict(one_hot_probs).to(self.device)
+                actions = curriculum_action
 
             if self.on_step:
                 on_step_args = OnEnvStepArgs(
@@ -238,6 +251,7 @@ class EnvStepper:
                     "state": state.auto_batch_size_(),
                     "reward": reward_td,
                     "actions": action_probs.auto_batch_size_(),
+                    "actions_executed": actions.auto_batch_size_(),
                     "next_state": next_state.auto_batch_size_(),
                     "terminated": terminated_tensor,
                     "truncated": truncated_tensor,

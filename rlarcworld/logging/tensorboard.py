@@ -337,17 +337,27 @@ class TensorBoardWriterManager:
         not_mask = ~submitted_mask
         for key, val in reward_td.items():
             # Compute mean across all dimensions
+            val = val.view(-1)
             mean_val = torch.mean(val).detach().cpu().item()
-            submitted_mean = torch.mean(val[submitted_mask]).detach().cpu().item()
-            not_submitted_mean = torch.mean(val[not_mask]).detach().cpu().item()
+            submitted_flag = int(submitted_mask.sum().item()) > 0
+            not_submitted_flag = int(not_mask.sum().item()) > 0
+            if submitted_flag:
+                submitted_mean = torch.mean(val[submitted_mask]).detach().cpu().item()
+            if not_submitted_flag:
+                not_submitted_mean = torch.mean(val[not_mask]).detach().cpu().item()
+
             if key in pixel_keys:
                 pixel_rewards[key] = mean_val
-                pixel_rewards_sub[key] = submitted_mean
-                pixel_rewards_not_sub[key] = not_submitted_mean
+                if submitted_flag:
+                    pixel_rewards_sub[key] = submitted_mean
+                if not_submitted_flag:
+                    pixel_rewards_not_sub[key] = not_submitted_mean
             elif key in binary_keys:
                 binary_rewards[key] = mean_val
-                binary_rewards_sub[key] = submitted_mean
-                binary_rewards_not_sub[key] = not_submitted_mean
+                if submitted_flag:
+                    binary_rewards_sub[key] = submitted_mean
+                if not_submitted_flag:
+                    binary_rewards_not_sub[key] = not_submitted_mean
 
         if pixel_rewards:
             self.writer.add_scalars(
@@ -563,7 +573,7 @@ class TensorBoardWriterManager:
         curriculum_used = batch["info"].get("curriculum_used", None)
         actor_mask = torch.ones(batch.shape[0], dtype=torch.bool)
         used_rate = 0.0
-        if isinstance(curriculum_used, torch.Tensor):
+        if isinstance(curriculum_used, torch.Tensor) and curriculum_used.any():
             self.curriculum_actual_usage += int(
                 curriculum_used.sum().detach().cpu().item()
             )
@@ -574,16 +584,7 @@ class TensorBoardWriterManager:
 
         if used_rate < 1.0:
             batch = batch[actor_mask]
-            # Reward heads: log per-batch average for each reward key
-            # Submission stats (rate, success, failure)
-            submit_raw: torch.Tensor = batch["actions"]["submit"]
-            if submit_raw.ndim >= 2:
-                # action probabilities -> discrete submit decision
-                submit = torch.argmax(submit_raw, dim=-1)
-            else:
-                # already discrete
-                submit = submit_raw
-            submit = submit.reshape(-1).to(dtype=torch.long)
+            submit = batch["actions_executed"]["submit"].view(-1).to(dtype=torch.long)
 
             reward_td = batch["reward"]
             self._add_reward_metrics(

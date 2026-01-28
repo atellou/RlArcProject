@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -51,21 +51,50 @@ class ArcActionSpace:
                 ),
             }
         )
-        self.plain_space = torch.arange(
-            self.grid_size * self.grid_size * self.color_values * 2
-        )
-        self.multi_sequence_space = self.plain_space.reshape(
-            self.grid_size, self.grid_size, self.color_values, 2
-        )
-        self.possible_combinations = np.stack(
-            np.meshgrid(
-                np.arange(self.grid_size),
-                np.arange(self.grid_size),
-                np.arange(self.color_values),
-                np.arange(2),
-            ),
-            -1,
-        ).reshape(-1, 4)
+
+    def validate(self, actions: TensorDict):
+        """Check if the actions are valid."""
+        required_keys = {
+            ActionKeys.X_LOCATION.value,
+            ActionKeys.Y_LOCATION.value,
+            ActionKeys.COLOR_VALUES.value,
+            ActionKeys.SUBMIT.value,
+        }
+
+        if not set(actions.keys()).issubset(required_keys):
+            raise ValueError("Actions must contain all required keys")
+
+        shape = actions[ActionKeys.SUBMIT.value].shape
+        for key, action in actions.items():
+            if action.shape != shape:
+                raise ValueError(
+                    "Actions must have the same shape, "
+                    "got {} for '{}' and {} for '{}'".format(
+                        action.shape, key, shape, ActionKeys.SUBMIT.value
+                    )
+                )
+
+            if key == ActionKeys.SUBMIT.value:
+                if not ((action == 0) | (action == 1)).all():
+                    raise ValueError("SUBMIT values must be 0 or 1")
+            elif key == ActionKeys.COLOR_VALUES.value:
+                if not ((action >= 0) & (action < self.color_values)).all():
+                    raise ValueError(
+                        "COLOR_VALUES values must be in [0, {})".format(
+                            self.color_values
+                        )
+                    )
+            elif (
+                key == ActionKeys.X_LOCATION.value or key == ActionKeys.Y_LOCATION.value
+            ):
+                if not ((action >= 0) & (action < self.grid_size)).all():
+                    raise ValueError(
+                        "{} values must be in [0, {})".format(key, self.grid_size)
+                    )
+            else:
+                raise ValueError("Unknown key: {}".format(key))
+
+        return True
 
 
 class ArcBatchGridEnv(gym.Env):
@@ -476,67 +505,36 @@ class ArcBatchGridEnv(gym.Env):
         return self.state.to(self.device)
 
     def step(
-        self, actions: Union[TensorDict, dict[str, torch.Tensor]]
+        self, actions: TensorDict
     ) -> tuple[TensorDict, torch.Tensor, bool, bool, dict]:
         """Take a step and return observation, reward, done flags, and info.
 
         Args:
-            actions (dict): Actions to perform.
+            actions (TensorDict): Actions to perform.
 
         Returns:
             tuple: (observation, reward, terminated, truncated, info).
         """
-        # Validate action using gym's space, allowing TensorDict inputs
-        try:
-            actions_cpu = (
-                {k: v.detach().cpu().numpy() for k, v in actions.items()}
-                if isinstance(actions, TensorDict)
-                else actions
-            )
-        except Exception:
-            actions_cpu = actions
-
-        if self.action_space.contains(actions_cpu):
-            self.last_grid = self.observations[StateKeys.GRID.value].clone()
-            logger.debug("Actions are valid")
-            # Update the grid with the action.
-            self.time_step += 1
-            logger.debug(
-                "Action performed shapes: Y={}, X={}, Color={}, Submission={}".format(
-                    actions[ActionKeys.Y_LOCATION.value].shape,
-                    actions[ActionKeys.X_LOCATION.value].shape,
-                    actions[ActionKeys.COLOR_VALUES.value].shape,
-                    actions[ActionKeys.SUBMIT.value].shape,
-                )
-            )
-            # Ensure assigned color values live on the same device as observations
-            _grid = self.observations[StateKeys.GRID.value]
-            _colors = actions[ActionKeys.COLOR_VALUES.value].to(_grid.device)
-            self.observations[StateKeys.GRID.value][
-                list(range(self.batch_size)),
-                actions[ActionKeys.Y_LOCATION.value],
-                actions[ActionKeys.X_LOCATION.value],
-            ] = _colors
-            self.information[StateKeys.INDEX.value][
-                list(range(self.batch_size)),
-                actions[ActionKeys.Y_LOCATION.value],
-                actions[ActionKeys.X_LOCATION.value],
-            ] = self.time_step
-        else:
-            logger.error(
-                (
-                    "No action performed due to invalid action; valid ranges: %s; "
-                    "given: %s"
-                ),
-                self.action_space.keys(),
-                actions,
-            )
+        if actions.batch_size != self.observations.batch_size:
             raise ValueError(
-                "The specified action does not comply with the action space "
-                "constraints. Valid ranges: {}. Given: {}.".format(
-                    self.action_space.keys(), actions
-                )
+                "Batch size of actions does not match batch size of environment."
+                f"Expected Grids BS: {self.observations.batch_size}"
+                f", Actions BS: {actions.batch_size}"
             )
+        self.arc_action_space.validate(actions)
+        self.last_grid = self.observations[StateKeys.GRID.value].long().clone()
+        self.time_step += 1
+        colors = actions[ActionKeys.COLOR_VALUES.value].long().to(self.device)
+        self.observations[StateKeys.GRID.value][
+            list(range(self.batch_size)),
+            actions[ActionKeys.Y_LOCATION.value],
+            actions[ActionKeys.X_LOCATION.value],
+        ] = colors
+        self.information[StateKeys.INDEX.value][
+            list(range(self.batch_size)),
+            actions[ActionKeys.Y_LOCATION.value],
+            actions[ActionKeys.X_LOCATION.value],
+        ] = self.time_step
 
         if self.mode.is_train():
             reward = torch.as_tensor(
@@ -566,10 +564,9 @@ class ArcBatchGridEnv(gym.Env):
 
             target = self.observations[StateKeys.TARGET.value]
             cur_grid = self.observations[StateKeys.GRID.value]
-            last_grid = self.last_grid
 
             cur_wrong = (cur_grid.long() != target.long()).flatten(1).sum(dim=1)
-            last_wrong = (last_grid.long() != target.long()).flatten(1).sum(dim=1)
+            last_wrong = (self.last_grid.long() != target.long()).flatten(1).sum(dim=1)
 
             self.information["grid_perfect"] = cur_wrong == 0
             self.information["improvement"] = (
