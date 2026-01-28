@@ -333,6 +333,12 @@ def main() -> None:
         default=None,
         help="Path to checkpoint to load",
     )
+    parser.add_argument(
+        "--timestamp",
+        type=bool,
+        default=False,
+        help="Use timestamp in checkpoint folder name",
+    )
 
     args = parser.parse_args()
 
@@ -371,10 +377,15 @@ def main() -> None:
     base_checkpoint_dir = config.checkpoint.checkpoint_dir or "checkpoints"
     if args.experiment_folder_location:
         base_checkpoint_dir = args.experiment_folder_location
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     config.checkpoint.checkpoint_dir = os.path.join(
-        base_checkpoint_dir, args.experiment, timestamp
+        base_checkpoint_dir, args.experiment
     )
+    if args.timestamp:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        config.checkpoint.checkpoint_dir = os.path.join(
+            config.checkpoint.checkpoint_dir, timestamp
+        )
+
     os.makedirs(config.checkpoint.checkpoint_dir, exist_ok=True)
     logger.info(
         "Checkpoint directory set to: %s",

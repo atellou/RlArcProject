@@ -517,6 +517,6 @@ class ArcActionCurriculum(PixelAwareRewardWrapper):
             observation, reward, terminated, truncated, info = super().step(action)
             bsz = _infer_batch_size(action)
             info["curriculum_used"] = torch.zeros((bsz,), dtype=torch.long)
-            info["curriculum_action"] = None
+            info.pop("curriculum_action", None)
 
         return observation, reward, terminated, truncated, info

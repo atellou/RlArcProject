@@ -201,11 +201,21 @@ class Trainer:
             Optional batch of transitions if buffer is warmed up, else None
         """
         # Single-step batch mode (no replay): keep (B, ...) shape without extra time dim
-        if self.replay_buffer is None:
-            return step_state.to(self.device), None
-
         if len(step_state.batch_size) == 0:
             step_state = step_state.auto_batch_size_()
+        term = step_state["terminated"].long().view(-1)
+        selected_indices = (term == 0).nonzero(as_tuple=True)[0]
+
+        if selected_indices.numel() == 0:
+            logger.warning(
+                "Failed to select non-terminal indices; "
+                "Stepper should move to next episode"
+            )
+            return None, None
+
+        step_state = step_state[selected_indices].auto_batch_size_().to(self.device)
+        if self.replay_buffer is None:
+            return step_state, None
 
         # Add to replay buffer without introducing an extra leading time dimension.
         step_state_for_storage = step_state.to("cpu")
@@ -216,12 +226,12 @@ class Trainer:
 
         if storage_len <= storage_cap * self.warmup_buffer_ratio:
             priority = torch.full(
-                (self.batch_size,), self.priority_init_value, device=self.device
+                (len(indices),), self.priority_init_value, device=self.device
             )
             try:
                 self.replay_buffer.update_priority(indices, priority)
-            except Exception:
-                # allow non-PER buffers
+            except Exception as e:
+                logger.debug(f"Replay buffer update priority failed: {e}")
                 pass
 
         # Check if we've collected enough samples to start training
