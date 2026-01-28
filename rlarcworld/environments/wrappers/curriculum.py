@@ -165,8 +165,8 @@ class ArcActions:
         bsz, height, width = current.shape
         device = current.device
 
-        mismatch = current != target
-        on_pixel_diff = torch.sum(mismatch, dim=(1, 2)) <= 1
+        mismatch = current.long() != target.long()
+        on_pixel_diff = torch.sum(mismatch, dim=(1, 2)).long() <= 1
         if to_improve:
             all_mismatch = torch.nonzero(mismatch, as_tuple=False)
         else:
@@ -297,7 +297,7 @@ class ArcActions:
         self._strategy_counts["oracle_calls"] += 1
         self._strategy_counts["samples_total"] += int(bsz)
 
-        perfect = (current == target).view(bsz, -1).all(dim=-1)
+        perfect = (current.long() == target.long()).all(dim=(1, 2))
 
         probs = torch.tensor(
             [

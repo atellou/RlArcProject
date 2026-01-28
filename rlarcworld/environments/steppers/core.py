@@ -137,15 +137,11 @@ class EnvStepper:
             observation, reward, terminated, truncated, info = env.step(actions)
             curriculum_action = info.get("curriculum_action", None)
             if curriculum_action is not None:
-                # If a wrapper overrides the executed action, ensure the transition
-                # stores action probabilities consistent with the executed action.
                 if isinstance(curriculum_action, TensorDict):
                     curriculum_action = curriculum_action.to(self.device)
                 else:
                     curriculum_action = TensorDict(curriculum_action).to(self.device)
 
-                # Convert executed discrete actions into one-hot distributions that
-                # match the actor head shapes.
                 one_hot_probs = {}
                 for key, probs in action_probs.items():
                     idx = curriculum_action[key].long().to(self.device)

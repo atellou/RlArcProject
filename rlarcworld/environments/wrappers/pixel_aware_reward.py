@@ -74,8 +74,8 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         ), "gamma must be a positive float lower or equal than 1.0"
 
         assert (
-            isinstance(wrong_submit_penalty, float) and wrong_submit_penalty > 0
-        ), "wrong_submit_penalty must be a float greater than 0, got {}".format(
+            isinstance(wrong_submit_penalty, float) and wrong_submit_penalty >= 0
+        ), "wrong_submit_penalty must be a float >= 0, got {}".format(
             wrong_submit_penalty
         )
         assert (
@@ -201,7 +201,11 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         grid_grids = obs[StateKeys.GRID.value]
         target_grids = obs[StateKeys.TARGET.value]
         if binary:
-            return ((grid_grids - target_grids) != 0).long()
+            return (
+                ~torch.isclose(
+                    (grid_grids - target_grids), torch.zeros_like(grid_grids)
+                )
+            ).long()
         else:
             return grid_grids - target_grids
 
@@ -296,10 +300,10 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         # Dense shaping: positive when we reduce diff, negative when we make it worse.
         shaping_clamp_min = float(self._get_shaping_clamp_min())
         shaping = (last_diff - grid_diff).clamp(shaping_clamp_min, 1.0)
+        last_grid = self.env.get_last_grid().long()
+        current_grid = self.env.get_current_grid().long()
+        no_op = (last_grid == current_grid).all(dim=(1, 2))
         if self.zero_improvement_penalty != 0.0:
-            no_op = (self.env.get_last_grid() == self.env.get_current_grid()).all(
-                dim=(1, 2)
-            )
             shaping = shaping + torch.where(
                 no_op,
                 -float(self.zero_improvement_penalty) * torch.ones_like(last_diff),
@@ -309,7 +313,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         self._shaping_step_count += 1
 
         # Submit grading term: +1 if perfect, else -wrong_submit_penalty.
-        perfect = (grid_diff == 0).float()
+        perfect = torch.isclose(grid_diff, torch.zeros_like(grid_diff)).float()
         submit_term = submission.float() * (
             perfect * 1.0 + (1.0 - perfect) * (-float(self.wrong_submit_penalty))
         )
@@ -326,6 +330,7 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             "shaping": shaping,
             "submit_term": submit_term,
             "not_submit_term": not_submit_term,
+            "no_op": no_op,
         }
 
     def step(

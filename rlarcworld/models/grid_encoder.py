@@ -85,17 +85,18 @@ class ObjectIndexExtractor:
             background_id = background_id.argmax().item()
 
         # Process each non-background color separately
-        unique_colors = torch.unique(grid)
+        unique_colors = torch.unique(grid.long())
         current_obj_id = 0
 
         for color in unique_colors:
-            if color.item() in (background_id, self.padding_id):  # Skip background
+            color_item = color.item()
+            if color_item in (background_id, self.padding_id):  # Skip background
                 continue
 
             # Create binary mask for this color (use CPU tensor)
-            mask = np.where(grid.detach().cpu().numpy() == color.item(), 1, 0).astype(
-                np.uint8
-            )
+            mask = np.where(
+                grid.detach().cpu().long().numpy() == color_item, 1, 0
+            ).astype(np.uint8)
 
             # Find contours (connected components of this color)
             contours, _ = cv2.findContours(
@@ -285,7 +286,7 @@ class GridEncoder:
 
         # Concatenate: <s> [grid] </s>
         input_ids = torch.cat([bos, grid_tokens, eos], dim=1)
-        attention_mask = (input_ids != self.encoder_ids.PAD_ID).long()
+        attention_mask = (input_ids.long() != self.encoder_ids.PAD_ID).long()
 
         # Extract object indices if extractor is available
         object_idx = None
@@ -410,7 +411,7 @@ class GridEncoder:
 
         input_ids = torch.cat(tokens_list, dim=1)
         temporal_ids = torch.cat(temporal_list, dim=1)
-        attention_mask = (input_ids != self.encoder_ids.PAD_ID).long()
+        attention_mask = (input_ids.long() != self.encoder_ids.PAD_ID).long()
         object_idx = torch.cat(object_list, dim=1) if object_list is not None else None
 
         return input_ids, attention_mask, temporal_ids, object_idx
@@ -455,7 +456,9 @@ class GridEncoder:
         input_ids: torch.Tensor = torch.cat(
             [bos, input_tokens, sep, output_tokens, eos], dim=1
         )
-        attention_mask: torch.Tensor = (input_ids != self.encoder_ids.PAD_ID).long()
+        attention_mask: torch.Tensor = (
+            input_ids.long() != self.encoder_ids.PAD_ID
+        ).long()
 
         if self.use_ope:
             input_object_idx = self._get_object_idx(input_grid, input_tokens)

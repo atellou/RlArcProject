@@ -559,7 +559,8 @@ class ArcD4PG:
         """
         # These checks should not be needed since caller validates, but kept for safety
         if ctx.td_error is None or info is None:
-            raise ValueError("Skipping priority update: missing td_error or info")
+            logger.warning("Skipping priority update: missing td_error or info")
+            return
 
         td_error = ctx.td_error
 

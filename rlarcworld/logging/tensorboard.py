@@ -224,12 +224,12 @@ class TensorBoardWriterManager:
 
         if isinstance(binary_reward, torch.Tensor):
             binary_reward = binary_reward.reshape(-1)
-            submitted_mask = submit == 1
+            submitted_mask = torch.isclose(submit, torch.ones_like(submit))
             n_submitted = int(submitted_mask.sum().detach().cpu().item())
             if n_submitted > 0:
-                submitted_reward = binary_reward[submitted_mask]
+                submitted_reward = binary_reward[submitted_mask].long()
                 success_count = int((submitted_reward > 0).sum().detach().cpu().item())
-                failure_count = int((submitted_reward < 0).sum().detach().cpu().item())
+                failure_count = int((submitted_reward <= 0).sum().detach().cpu().item())
 
                 scalars["success_rate"] = float(success_count) / float(n_submitted)
                 scalars["failure_rate"] = float(failure_count) / float(n_submitted)
@@ -252,7 +252,7 @@ class TensorBoardWriterManager:
                 perfect_rate = float(grid_perfect.mean().cpu().item())
                 scalars["grid_perfect_rate"] = perfect_rate
             if "improvement" in info.keys():
-                improvement = info["improvement"].detach().float().reshape(-1)
+                improvement = info["improvement"].detach().reshape(-1)
                 improvement_rate = float((improvement > 0).float().mean().cpu().item())
                 scalars["improvement_rate"] = improvement_rate
 
@@ -264,23 +264,13 @@ class TensorBoardWriterManager:
                 )
 
             scalars = {}
-            key_aliases = {
-                "reward_shaping": ["reward_shaping", "shaping"],
-                "reward_submit_term": ["reward_submit_term", "submit_term"],
-                "reward_not_submit_term": [
-                    "reward_not_submit_term",
-                    "not_submit_term",
-                ],
-            }
-            for canonical, aliases in key_aliases.items():
-                for k in aliases:
-                    if k in info.keys():
-                        v = info[k].detach().float().reshape(-1)
-                        if v.numel() == 0:
-                            continue
-                        scalars[f"{canonical}_mean"] = float(v.mean().cpu().item())
-                        scalars[f"{canonical}_max"] = float(v.max().cpu().item())
-                        break
+            key_aliases = {"shaping", "submit_term", "not_submit_term", "no_op"}
+            for canonical in key_aliases:
+                if canonical in info.keys():
+                    v = info[canonical].detach().float().reshape(-1)
+                    if v.numel() == 0:
+                        continue
+                    scalars[f"{canonical}_mean"] = float(v.mean().cpu().item())
             if scalars:
                 self.writer.add_scalars(
                     main_tag="{phase}/env/pixel_reward".format(phase=phase),
@@ -343,27 +333,13 @@ class TensorBoardWriterManager:
         binary_rewards_not_sub = {}
         pixel_keys = [k.value for k in RewardKeys.get_pixel_wise_keys()]
         binary_keys = [k.value for k in RewardKeys.get_binary_keys()]
-        submitted_mask = submit == 1
+        submitted_mask = torch.isclose(submit, torch.ones_like(submit))
         not_mask = ~submitted_mask
         for key, val in reward_td.items():
             # Compute mean across all dimensions
-            mean_val = float(val.float().mean().detach().cpu().item())
-
-            submitted_mean: float
-            not_submitted_mean: float
-            if bool(submitted_mask.any().detach().cpu().item()):
-                submitted_mean = float(
-                    val[submitted_mask].float().mean().detach().cpu().item()
-                )
-            else:
-                submitted_mean = float("nan")
-
-            if bool(not_mask.any().detach().cpu().item()):
-                not_submitted_mean = float(
-                    val[not_mask].float().mean().detach().cpu().item()
-                )
-            else:
-                not_submitted_mean = float("nan")
+            mean_val = torch.mean(val).detach().cpu().item()
+            submitted_mean = torch.mean(val[submitted_mask]).detach().cpu().item()
+            not_submitted_mean = torch.mean(val[not_mask]).detach().cpu().item()
             if key in pixel_keys:
                 pixel_rewards[key] = mean_val
                 pixel_rewards_sub[key] = submitted_mean

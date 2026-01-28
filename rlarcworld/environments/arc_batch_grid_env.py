@@ -113,8 +113,8 @@ class ArcBatchGridEnv(gym.Env):
 
         # N-step attributes
         assert (
-            isinstance(wrong_submit_penalty, float) and wrong_submit_penalty > 0
-        ), "wrong_submit_penalty must be a float greater than 0, got {}".format(
+            isinstance(wrong_submit_penalty, float) and wrong_submit_penalty >= 0
+        ), "wrong_submit_penalty must be a float >= 0, got {}".format(
             wrong_submit_penalty
         )
         assert (
@@ -348,8 +348,9 @@ class ArcBatchGridEnv(gym.Env):
         if not self.mode.is_train():
             raise ValueError("episode_terminated called outside of training mode")
 
-        diff = self.get_difference()
-        return (torch.sum(torch.abs(diff), dim=(1, 2)) == 0) * submission
+        return (
+            torch.sum(torch.abs(self.get_difference()), dim=(1, 2)).long() == 0
+        ).long() * submission
 
     def reward(
         self,
@@ -378,8 +379,9 @@ class ArcBatchGridEnv(gym.Env):
             dtype=grid_diffs.dtype,
         )
 
+        total_diff = torch.sum(torch.abs(grid_diffs), dim=(1, 2)).long()
         # Check if grid perfectly matches target
-        perfect_match = (torch.sum(torch.abs(grid_diffs), dim=(1, 2)) == 0).long()
+        perfect_match = (total_diff == 0).long()
 
         # Reward logic:
         # - If submitted AND perfect: +1
@@ -554,7 +556,9 @@ class ArcBatchGridEnv(gym.Env):
 
         # TODO: No truncate version, evaluate time constraints
         submit = torch.as_tensor(actions[ActionKeys.SUBMIT.value]).to(self.device)
-        truncated = False if self.mode.is_train() else torch.sum(submit) == len(self)
+        truncated = (
+            False if self.mode.is_train() else (submit.sum().long() == submit.numel())
+        )
         if self.mode.is_train():
             self.information[StateKeys.TERMINATED.value] = self.episode_terminated(
                 submit
@@ -564,8 +568,8 @@ class ArcBatchGridEnv(gym.Env):
             cur_grid = self.observations[StateKeys.GRID.value]
             last_grid = self.last_grid
 
-            cur_wrong = (cur_grid != target).flatten(1).sum(dim=1)
-            last_wrong = (last_grid != target).flatten(1).sum(dim=1)
+            cur_wrong = (cur_grid.long() != target.long()).flatten(1).sum(dim=1)
+            last_wrong = (last_grid.long() != target.long()).flatten(1).sum(dim=1)
 
             self.information["grid_perfect"] = cur_wrong == 0
             self.information["improvement"] = (
@@ -576,7 +580,7 @@ class ArcBatchGridEnv(gym.Env):
         return (
             self.observations,
             reward,
-            torch.sum(self.information[StateKeys.TERMINATED.value]) == len(self),
+            torch.sum(self.information[StateKeys.TERMINATED.value]).long() == len(self),
             truncated,
             self.information,
         )

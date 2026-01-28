@@ -117,7 +117,7 @@ class LearnedCompression(nn.Module):
         if mask is not None:
             # mask is 1 for valid positions, 0 for padding
             # key_padding_mask needs True for padding
-            key_padding_mask = mask == 0
+            key_padding_mask = torch.isclose(mask, torch.zeros_like(mask)).bool()
 
         compressed, _ = self.cross_attention(
             query=queries,

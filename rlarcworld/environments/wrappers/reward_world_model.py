@@ -325,7 +325,7 @@ class RewardWorldModelWrapper(gym.Wrapper):
         )
         if self.zero_improvement_penalty != 0.0:
             shaping = torch.where(
-                shaping == 0,
+                torch.isclose(shaping, torch.zeros_like(shaping)),
                 shaping - float(self.zero_improvement_penalty),
                 shaping,
             )

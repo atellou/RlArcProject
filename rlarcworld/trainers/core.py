@@ -266,7 +266,7 @@ class Trainer:
     ]:
         bz = batch.batch_size
         selected_indices = (
-            (batch["state"]["terminated"] == 0)
+            (batch["state"]["terminated"].long() == 0)
             .nonzero(as_tuple=True)[0]
             .to(self.device)
         )
@@ -280,8 +280,9 @@ class Trainer:
         # Enforce minimum batch size for stable updates
         effective_bs = selected_indices.shape[0]
 
-        if training and effective_bs < self.min_train_batch_size:
-            # Skip remaining steps in this epoch due to small batch size
+        if effective_bs == 0 or (
+            training and effective_bs < int(self.min_train_batch_size)
+        ):
             return (None, None, None), (batch, info)
 
         return self.core.compute_loss(batch.to(self.core.device), training=training), (
@@ -377,6 +378,11 @@ class Trainer:
                         )
                     else:
                         batch, info = step_state.to(self.device), None
+                    if batch is not None and batch.shape[0] == 0:
+                        raise ValueError(
+                            f"Batch size {batch.shape[0]} == 0,"
+                            + f" skipping rest of epoch {current_epoch}"
+                        )
 
                     # Update networks if we have a batch
                     if batch is not None:
@@ -439,6 +445,7 @@ class Trainer:
                         self.validation_step_stream_factory is not None
                         and validation_steps_frequency > 0
                         and iteration % validation_steps_frequency == 0
+                        and iteration > 0
                         and not warmup
                         and training
                     ):
