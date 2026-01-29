@@ -394,6 +394,7 @@ class ArcD4PG:
             entropy_floor_coef=config.d4pg.entropy_floor_coef,
             min_entropy=config.d4pg.min_entropy,
             submit_entropy_scale=config.d4pg.submit_entropy_scale,
+            color_entropy_scale=config.d4pg.color_entropy_scale,
             target_update_frequency=config.d4pg.target_update_frequency,
             model_update_frequency=config.d4pg.model_update_frequency,
             cache_enabled=config.d4pg.cache_enabled,

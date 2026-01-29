@@ -525,6 +525,15 @@ class ArcBatchGridEnv(gym.Env):
         self.last_grid = self.observations[StateKeys.GRID.value].long().clone()
         self.time_step += 1
         colors = actions[ActionKeys.COLOR_VALUES.value].long().to(self.device)
+
+        self.information["no_op"] = (
+            self.observations[StateKeys.GRID.value][
+                list(range(self.batch_size)),
+                actions[ActionKeys.Y_LOCATION.value],
+                actions[ActionKeys.X_LOCATION.value],
+            ]
+            == colors
+        )
         self.observations[StateKeys.GRID.value][
             list(range(self.batch_size)),
             actions[ActionKeys.Y_LOCATION.value],

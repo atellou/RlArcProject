@@ -2,96 +2,263 @@
 # REWARD EXPERIMENTS: First Iteration
 # =============================================================================
 
-no_submit_penalty:
-  description: "No submit penalty experiment, no improvement penalty"
+ex1_no_penalty:
+  description: "No penalties,lowest reward is 0 and highest is 2 (Improvement Or Submit)"
   env:
+    wrong_submit_penalty: 0.0
+    step_cost: 0.0
     perfect_no_submit_penalty_coef: 0.0
     zero_improvement_penalty: 0.0
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
 
-  d4pg:
-    entropy_coef: 0.01
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.0
-    min_entropy: 0.2
-
-added_submit_penalty:
-  description: "Added submit penalty experiment, no improvement penalty"
+ex2_wrong_submit_only:
+  description: "Wrong-submit penalty only"
   env:
-    perfect_no_submit_penalty_coef: 0.75
+    wrong_submit_penalty: 1.0
+    step_cost: 0.0
+    perfect_no_submit_penalty_coef: 0.0
     zero_improvement_penalty: 0.0
-  d4pg:
-    entropy_coef: 0.01
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.0
-    min_entropy: 0.2
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
 
-added_improvement_penalty:
-  description: "Added improvement penalty experiment, no submit penalty"
+ex3_no_op_only:
+  description: "No-op penalty only (zero_improvement_penalty=0.25)"
   env:
+    wrong_submit_penalty: 0.0
+    step_cost: 0.0
     perfect_no_submit_penalty_coef: 0.0
     zero_improvement_penalty: 0.25
-  d4pg:
-    entropy_coef: 0.01
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.0
-    min_entropy: 0.2
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
 
-all_penalties:
-  description: "All penalties experiment"
+ex4_step_cost_only:
+  description: "Step cost only (step_cost=0.01)"
   env:
-    perfect_no_submit_penalty_coef: 0.75
+    wrong_submit_penalty: 0.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.0
+    zero_improvement_penalty: 0.0
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
+
+ex5_wrong_submit_plus_no_op:
+  description: "Wrong-submit + no-op penalty"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.0
+    perfect_no_submit_penalty_coef: 0.0
     zero_improvement_penalty: 0.25
-  d4pg:
-    entropy_coef: 0.01
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.0
-    min_entropy: 0.2
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
 
-
-# =============================================================================
-# REWARD EXPERIMENTS: Second Iteration
-# =============================================================================
-
-all_penalties_low_improvement_penalty:
-  description: "All penalties but lower zero-improvement penalty"
+ex6_wrong_submit_plus_step_cost:
+  description: "Wrong-submit + step cost"
   env:
-    perfect_no_submit_penalty_coef: 0.75
-    zero_improvement_penalty: 0.05
-  d4pg:
-    entropy_coef: 0.01
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.0
-    min_entropy: 0.2
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.0
+    zero_improvement_penalty: 0.0
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
 
-all_penalties_medium_improvement_penalty:
-  description: "All penalties but medium zero-improvement penalty"
+ex7_perfect_no_submit_only:
+  description: "Perfect-no-submit penalty only (coef=0.50)"
   env:
-    perfect_no_submit_penalty_coef: 0.75
-    zero_improvement_penalty: 0.10
-  d4pg:
-    entropy_coef: 0.01
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.0
-    min_entropy: 0.2
+    wrong_submit_penalty: 0.0
+    step_cost: 0.0
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.0
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
 
-all_penalties_low_perfect_no_submit_penalty:
-  description: "All penalties but lower perfect-no-submit penalty"
+ex8_wrong_submit_plus_no_op_plus_step_cost:
+  description: "Wrong-submit + no-op penalty + step cost"
   env:
-    perfect_no_submit_penalty_coef: 0.25
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.0
     zero_improvement_penalty: 0.25
-  d4pg:
-    entropy_coef: 0.01
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.0
-    min_entropy: 0.2
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
 
-all_penalties_low_both:
-  description: "All penalties but lower perfect-no-submit and lower zero-improvement penalty"
+ex9_wrong_submit_plus_no_op_plus_perfect_no_submit:
+  description: "Wrong-submit + no-op penalty + perfect-no-submit (coef=0.50)"
   env:
-    perfect_no_submit_penalty_coef: 0.25
-    zero_improvement_penalty: 0.05
-  d4pg:
-    entropy_coef: 0.01
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.0
-    min_entropy: 0.2
+    wrong_submit_penalty: 1.0
+    step_cost: 0.0
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.25
+    shaping_clamp_min: 0.0
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
+
+ex10_all_penalties_plus_negative_shaping:
+  description: "All penalties + allow negative shaping (shaping_clamp_min=-0.25)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.25
+    shaping_clamp_min: -0.25
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
+
+
+ex11_all_penalties_plus_positive_shaping:
+  description: "All penalties + allow positive shaping (shaping_clamp_min=0.25)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.25
+    shaping_clamp_min: 0.25
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
+
+ex12_all_penalties_plus_positive_shaping:
+  description: "All penalties (zero imp coef=0.75) + allow positive shaping (shaping_clamp_min=0.25)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.75
+    shaping_clamp_min: 0.25
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1
+
+ex13_all_penalties_plus_positive_shaping:
+  description: "All penalties (zero imp coef=0.1) + allow positive shaping (shaping_clamp_min=0.5)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
+  distributional:
+    num_atoms:
+      pixel_wise: 41
+      binary: 21
+    v_min:
+      pixel_wise: -2
+      binary: -1
+    v_max:
+      pixel_wise: 2
+      binary: 1

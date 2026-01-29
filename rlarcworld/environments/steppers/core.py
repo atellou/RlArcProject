@@ -68,6 +68,7 @@ class EnvStepper:
         env_sample_reset: Callable[..., None] | None = None,
         amp_enabled: bool = True,
         on_step: Callable[[OnEnvStepArgs], OnEnvStepArgs] | None = None,
+        sample_actions: bool | None = None,
     ):
         """Initialize the environment stepper.
 
@@ -82,6 +83,9 @@ class EnvStepper:
                 Callable to reset the environment with a batch of objects and kwargs.
             amp_enabled: Whether to use automatic mixed precision
             on_step: Optional callback function to be called after each step
+            sample_actions: If True, sample each action head from its categorical
+                distribution. If False, use argmax (greedy). If None (default),
+                sample when the actor is in training mode and use argmax otherwise.
         """
         self.actor = actor
         self.device = device
@@ -91,6 +95,16 @@ class EnvStepper:
         self.env_sample_reset = env_sample_reset
         self.amp_enabled = amp_enabled
         self.on_step = on_step
+        self.sample_actions = sample_actions
+        if sample_actions is True:
+            logger.info("Actor will sample actions from categorical distribution")
+        elif sample_actions is False:
+            logger.info("Actor will use greedy (argmax) actions")
+        else:
+            logger.info(
+                "Actor will sample actions during training and "
+                "use greedy during evaluation"
+            )
         self.loaded_checkpoint = False
         # Shared AMP ctx manager (no-op on CPU or when disabled)
         self.amp_cm = AmpScaler(amp_enabled=self.amp_enabled, device=self.device)
@@ -126,10 +140,21 @@ class EnvStepper:
                 self.actor.train(True)
 
             # Convert to discrete actions for environment (ensure 1D per batch)
+            sample_actions = (
+                prev_training
+                if self.sample_actions is None
+                else bool(self.sample_actions)
+            )
             actions = (
                 TensorDict(
                     {
-                        key: torch.argmax(x, dim=-1).long().to(self.device)
+                        key: (
+                            torch.distributions.Categorical(probs=x).sample()
+                            if sample_actions
+                            else torch.argmax(x, dim=-1)
+                        )
+                        .long()
+                        .to(self.device)
                         for key, x in action_probs.items()
                     }
                 )

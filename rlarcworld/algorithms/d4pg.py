@@ -62,6 +62,7 @@ class D4PGCore:
         entropy_floor_coef: float = 0.0,
         min_entropy: float = 0.0,
         submit_entropy_scale: float = 1.0,
+        color_entropy_scale: float = 1.0,
         target_update_frequency: int = 10,
         model_update_frequency: int = 1,
         cache_enabled: bool = False,
@@ -98,6 +99,9 @@ class D4PGCore:
             submit_entropy_scale (float, optional): Scale factor applied only to
                 the submit head contribution when computing the entropy
                 regularization term. Defaults to 1.0.
+            color_entropy_scale (float, optional): Scale factor applied only to
+                the color_values head contribution when computing the entropy
+                regularization term. Defaults to 1.0.
             device_config (Optional[CudaConfig], optional): Device configuration
                 dictionary. Defaults to None.
             max_grad_norm (float, optional): Maximum gradient norm. Defaults to
@@ -117,6 +121,7 @@ class D4PGCore:
         assert entropy_floor_coef >= 0, "Entropy floor coefficient must be non-negative"
         assert min_entropy >= 0, "Minimum entropy must be non-negative"
         assert submit_entropy_scale >= 0, "Submit entropy scale must be non-negative"
+        assert color_entropy_scale >= 0, "Color entropy scale must be non-negative"
 
         # Config/device/AMP
         self.device_config = (
@@ -138,6 +143,7 @@ class D4PGCore:
         self.entropy_floor_coef = entropy_floor_coef
         self.min_entropy = min_entropy
         self.submit_entropy_scale = submit_entropy_scale
+        self.color_entropy_scale = color_entropy_scale
         self.max_grad_norm = max_grad_norm
         self.target_update_frequency = target_update_frequency
         self.model_update_frequency = model_update_frequency
@@ -526,6 +532,8 @@ class D4PGCore:
                     head_weight = 1.0
                     if key == ActionKeys.SUBMIT.value:
                         head_weight = float(self.submit_entropy_scale)
+                    elif key == ActionKeys.COLOR_VALUES.value:
+                        head_weight = float(self.color_entropy_scale)
                     entropy = entropy + head_entropy * head_weight
                     entropy_weight_sum = entropy_weight_sum + head_weight
 
@@ -716,12 +724,13 @@ class D4PGCore:
                         # Window averages for logging
                         self._loss_actor_window_sum += float(loss_actor.detach())
                         self._loss_critic_window_sum += float(loss_critic.detach())
-                        self.loss_actor_window_avg = (
-                            self._loss_actor_window_sum / self._accumulated_steps
-                        )
-                        self.loss_critic_window_avg = (
-                            self._loss_critic_window_sum / self._accumulated_steps
-                        )
+                        if self._accumulated_steps > 1:
+                            self.loss_actor_window_avg = (
+                                self._loss_actor_window_sum / self._accumulated_steps
+                            )
+                            self.loss_critic_window_avg = (
+                                self._loss_critic_window_sum / self._accumulated_steps
+                            )
                         self.actor.clear_example_cache()
                         self.critic.clear_example_cache()
                         self.actor.enable_example_cache()

@@ -45,11 +45,12 @@ d4pg:
     n_steps: 1
   compute_td_error: true
   carsm: false
-  entropy_coef: 0.05
+  entropy_coef: 0.01
   entropy_coef_decay: 1.0
-  entropy_floor_coef: 0.1
-  min_entropy: 0.5
-  submit_entropy_scale: 0.25
+  entropy_floor_coef: 0.0
+  min_entropy: 0.2
+  submit_entropy_scale: 1.0
+  color_entropy_scale: 1.0
   target_update_frequency: 10
   model_update_frequency: 1
   cache_enabled: true
@@ -58,13 +59,13 @@ d4pg:
 # sum_{i=0}^{n-1} gamma^i * (-1) = -sum_{i=0}^{n-1} 0.99^i
 distributional:
   num_atoms:
-    pixel_wise: 21
+    pixel_wise: 41
     binary: 21
   v_min:
     pixel_wise: -2
-    binary: -2
+    binary: -1
   v_max:
-    pixel_wise: 1
+    pixel_wise: 2
     binary: 1
 
 replay_buffer:
@@ -74,8 +75,8 @@ replay_buffer:
   warmup_ratio: 0.02
 
 training:
-  max_steps_per_epoch: 3000
-  max_steps_per_episode: 1000 # Max possible steps and a little more
+  max_steps_per_epoch: 800
+  max_steps_per_episode: 200
   validation_epochs: 1
   validation_steps_per_epoch: 100
   validation_steps_per_episode: 100

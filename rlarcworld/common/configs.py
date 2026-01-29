@@ -229,6 +229,7 @@ class D4PGConfig:
     entropy_floor_coef: float = 0.0
     min_entropy: float = 0.01
     submit_entropy_scale: float = 1.0
+    color_entropy_scale: float = 1.0
     target_update_frequency: int = 10
     model_update_frequency: int = 1
     cache_enabled: bool = False

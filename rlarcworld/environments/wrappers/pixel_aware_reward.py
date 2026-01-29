@@ -300,10 +300,10 @@ class PixelAwareRewardWrapper(gym.Wrapper):
         # Dense shaping: positive when we reduce diff, negative when we make it worse.
         shaping_clamp_min = float(self._get_shaping_clamp_min())
         shaping = (last_diff - grid_diff).clamp(shaping_clamp_min, 1.0)
-        last_grid = self.env.get_last_grid().long()
-        current_grid = self.env.get_current_grid().long()
-        no_op = (last_grid == current_grid).all(dim=(1, 2))
         if self.zero_improvement_penalty != 0.0:
+            last_grid = self.env.get_last_grid().long()
+            current_grid = self.env.get_current_grid().long()
+            no_op = (last_grid == current_grid).all(dim=(1, 2))
             shaping = shaping + torch.where(
                 no_op,
                 -float(self.zero_improvement_penalty) * torch.ones_like(last_diff),
@@ -330,7 +330,6 @@ class PixelAwareRewardWrapper(gym.Wrapper):
             "shaping": shaping,
             "submit_term": submit_term,
             "not_submit_term": not_submit_term,
-            "no_op": no_op,
         }
 
     def step(
