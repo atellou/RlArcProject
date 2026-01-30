@@ -5,35 +5,40 @@
 
 # TODO: Add hyperparameter sweep from reward experiments selection
 no_entropy_regularization:
-  description: "No entropy regularization experiment"
+  description: "Control: no entropy regularization (no coef, no floor)"
   d4pg:
     entropy_coef: 0.0
     entropy_floor_coef: 0.0
     min_entropy: 0.0
 
-small_entropy_regularization:
-  description: "Small entropy regularization experiment"
+entropy_floor_weak:
+  description: "Entropy floor (weak): delay collapse with minimal regularization"
+  d4pg:
+    entropy_coef: 0.0
+    entropy_floor_coef: 0.01
+    min_entropy: 0.1
+
+entropy_floor_base:
+  description: "Entropy floor (base): current best performer (delays no-op collapse)"
+  d4pg:
+    entropy_coef: 0.0
+    entropy_floor_coef: 0.02
+    min_entropy: 0.2
+
+entropy_floor_strong:
+  description: "Entropy floor (strong): test if stronger floor further delays collapse"
+  d4pg:
+    entropy_coef: 0.0
+    entropy_floor_coef: 0.05
+    min_entropy: 0.3
+
+entropy_floor_base_plus_small_entropy_coef:
+  description: "Entropy floor (base) + small entropy_coef (adds gentle exploration pressure)"
   d4pg:
     entropy_coef: 0.01
     entropy_coef_decay: 0.99
-    entropy_floor_coef: 0.01
-    min_entropy: 0.01
-
-strong_entropy_regularization:
-  description: "Strong entropy regularization experiment"
-  d4pg:
-    entropy_coef: 0.5
-    entropy_coef_decay: 0.99999999
-    entropy_floor_coef: 0.05
-    min_entropy: 0.3
-
-perpetual_entropy_regularization:
-  description: "Perpetual entropy regularization experiment"
-  d4pg:
-    entropy_coef: 0.5
-    entropy_coef_decay: 1.0
-    entropy_floor_coef: 0.05
-    min_entropy: 0.3
+    entropy_floor_coef: 0.02
+    min_entropy: 0.2
 
 
 # =============================================================================

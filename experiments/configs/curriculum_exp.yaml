@@ -2,86 +2,147 @@
 # CURRICULUM EXPERIMENTS
 # =============================================================================
 
-low_both_curriculum_ongoing:
-  description: "Low-both penalties with ongoing-only curriculum (warmup=1.0, episode_start=0.0, on_train=0.02)"
+ex13_base_no_curriculum:
+  description: "ex13 reward base, no curriculum (control)"
   env:
-    perfect_no_submit_penalty_coef: 0.25
-    zero_improvement_penalty: 0.05
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
   training:
-    enable_curriculum: true
-    curriculum_replace_probabilities:
-      on_warmup: 1.0
-      on_episode_start: 0.0
-      on_train: 0.02
-      episode_start_steps: 0
-    curriculum_pixel_location_strategy: random
+    enable_curriculum: false
 
-low_both_curriculum_episode_start_ongoing:
-  description: "Low-both penalties with episode-start + ongoing curriculum (warmup=1.0, episode_start=0.5 for first 50 steps, on_train=0.02)"
+ex13_curriculum_mild:
+  description: "ex13 reward base + mild curriculum (warmup=1.0, episode_start=0.25 for first 50 steps, on_train=0.05)"
   env:
-    perfect_no_submit_penalty_coef: 0.25
-    zero_improvement_penalty: 0.05
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
   training:
     enable_curriculum: true
     curriculum_replace_probabilities:
       on_warmup: 1.0
-      on_episode_start: 0.5
-      on_train: 0.02
+      on_episode_start: 0.25
+      on_train: 0.05
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
-low_improvement_penalty_curriculum_ongoing:
-  description: "Low improvement penalty with ongoing-only curriculum (warmup=1.0, episode_start=0.0, on_train=0.02)"
+ex13_curriculum_medium:
+  description: "ex13 reward base + medium curriculum (warmup=1.0, episode_start=0.50 for first 50 steps, on_train=0.10)"
   env:
-    perfect_no_submit_penalty_coef: 0.75
-    zero_improvement_penalty: 0.05
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
   training:
     enable_curriculum: true
     curriculum_replace_probabilities:
       on_warmup: 1.0
-      on_episode_start: 0.0
-      on_train: 0.02
-      episode_start_steps: 0
-    curriculum_pixel_location_strategy: random
-
-low_improvement_penalty_curriculum_episode_start_ongoing:
-  description: "Low improvement penalty with episode-start + ongoing curriculum (warmup=1.0, episode_start=0.5 for first 50 steps, on_train=0.02)"
-  env:
-    perfect_no_submit_penalty_coef: 0.75
-    zero_improvement_penalty: 0.05
-  training:
-    enable_curriculum: true
-    curriculum_replace_probabilities:
-      on_warmup: 1.0
-      on_episode_start: 0.5
-      on_train: 0.02
+      on_episode_start: 0.50
+      on_train: 0.10
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
-low_both_curriculum_permanent:
-  description: "Low improvement penalty with permanent curriculum (warmup=1.0, episode_start=1.0, on_train=0.5)"
+ex13_curriculum_aggressive:
+  description: "ex13 reward base + aggressive curriculum (warmup=1.0, episode_start=1.0 for first 50 steps, on_train=0.25)"
   env:
-    perfect_no_submit_penalty_coef: 0.25
-    zero_improvement_penalty: 0.05
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
   training:
     enable_curriculum: true
     curriculum_replace_probabilities:
       on_warmup: 1.0
       on_episode_start: 1.0
-      on_train: 0.5
+      on_train: 0.25
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
-low_improvement_penalty_curriculum_permanent:
-  description: "Low improvement penalty with permanent curriculum (warmup=1.0, episode_start=1.0, on_train=0.5)"
+ex13_curriculum_mild_entropy_floor:
+  description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
   env:
-    perfect_no_submit_penalty_coef: 0.75
-    zero_improvement_penalty: 0.05
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
+  d4pg:
+    entropy_floor_coef: 0.02
+    min_entropy: 0.2
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 0.25
+      on_train: 0.05
+      episode_start_steps: 50
+    curriculum_pixel_location_strategy: random
+
+# Used curriculum with 90% improve probability, 10% degrade probability, 100% degrade submit on prefect probability
+ex14_curriculum_only_start_up:
+  description: "ex13 reward base + aggressive curriculum (warmup=1.0, episode_start=1.0 for first 50 steps, on_train=0.0)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
   training:
     enable_curriculum: true
     curriculum_replace_probabilities:
       on_warmup: 1.0
       on_episode_start: 1.0
-      on_train: 0.5
+      on_train: 0.0
+      episode_start_steps: 50
+    curriculum_pixel_location_strategy: random
+
+# Used curriculum with 50% improve probability, 50% degrade probability, 90% degrade submit on prefect probability
+ex15_curriculum_medium_50_50:
+  description: "ex13 reward base + aggressive curriculum (warmup=1.0, episode_start=1.0 for first 50 steps, on_train=0.0)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 1.0
+      on_train: 0.1
+      episode_start_steps: 50
+    curriculum_pixel_location_strategy: random
+
+
+# Used curriculum with 100% improve probability, 0% degrade probability, 90% degrade submit on prefect probability
+ex16_curriculum_only_improve:
+  description: "ex13 reward base + aggressive curriculum (warmup=1.0, episode_start=1.0 for first 50 steps, on_train=0.0)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 1.0
+      on_train: 0.0
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
