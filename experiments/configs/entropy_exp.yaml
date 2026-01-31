@@ -40,39 +40,63 @@ entropy_floor_base_plus_small_entropy_coef:
     entropy_floor_coef: 0.02
     min_entropy: 0.2
 
-
-# =============================================================================
-# SUBMIT-HEAD ENTROPY SCALE EXPERIMENTS: Run after selecting from above
-# =============================================================================
-
-# TODO: Add hyperparameter sweep from above selection
-submit_entropy_scale_1_0:
-  description: "Baseline (no submit-head entropy down-weighting)"
+ex16_entropy_floor_base_heads:
+  description: "Entropy floor (base) + small entropy_coef (adds gentle exploration pressure)"
   d4pg:
-    submit_entropy_scale: 1.0
-
-submit_entropy_scale_0_25:
-  description: "Reduce submit-head entropy contribution (0.25x)"
-  d4pg:
+    entropy_floor_coef: 0.02
+    entropy_coef_decay: 1.0
+    min_entropy: 0.2
     submit_entropy_scale: 0.25
+    color_entropy_scale: 1.25
 
-submit_entropy_scale_0_5:
-  description: "Reduce submit-head entropy contribution (0.5x)"
+# Base for the entropy experiments
+ex13_curriculum_mild_entropy_floor_with_heads_entropy:
+  description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
   d4pg:
-    submit_entropy_scale: 0.5
-
-submit_entropy_scale_0_0:
-  description: "Disable submit-head entropy contribution (0.0x)"
-  d4pg:
-    submit_entropy_scale: 0.0
-
-
+    entropy_floor_coef: 0.02
+    min_entropy: 0.2
+    submit_entropy_scale: 0.25
+    color_entropy_scale: 1.5
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 0.25
+      on_train: 0.05
+      episode_start_steps: 50
+    curriculum_pixel_location_strategy: random
 # =============================================================================
 # CARSM EXPERIMENTS: Run after selecting from above
 # =============================================================================
 
-# TODO: Add hyperparameter sweep from above and LR experiments selection
-enable_carsm:
-  description: "Enable CARSM experiment"
+# Base: ex13_curriculum_mild_entropy_floor_with_heads_entropy
+ex18_add_carsm:
+  description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
   d4pg:
     carsm: true
+    entropy_floor_coef: 0.02
+    min_entropy: 0.2
+    submit_entropy_scale: 0.25
+    color_entropy_scale: 1.5
+  training:
+    enable_curriculum: true
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 0.25
+      on_train: 0.05
+      episode_start_steps: 50
+    curriculum_pixel_location_strategy: random

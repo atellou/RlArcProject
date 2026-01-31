@@ -68,6 +68,7 @@ ex13_curriculum_aggressive:
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
+# Base for the entropy experiments
 ex13_curriculum_mild_entropy_floor:
   description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
   env:
