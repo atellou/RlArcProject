@@ -487,9 +487,9 @@ class D4PGCore:
         Returns:
             TensorDict: Actor loss.
         """
-        assert (
-            not self.carsm or target_q is not None
-        ), "target_q must be provided when using CARSM loss."
+        assert not self.carsm or target_q is not None, (
+            "target_q must be provided when using CARSM loss."
+        )
 
         # Action probabilities
         if action_probs is None:
@@ -561,7 +561,16 @@ class D4PGCore:
                 # Narrow type for mypy: target_q must be provided in CARSM branch
                 assert target_q is not None
                 tq = cast(TensorDict, target_q)
-                q_exp = (tq[key] - q_exp) * log_probs_tensor
+                tq_exp = torch.sum(
+                    tq[key].to(critic_probs[key].device).float() * z_atoms,
+                    dim=-1,
+                    keepdim=True,
+                )
+                if not torch.isfinite(tq_exp).all():
+                    raise RuntimeError(
+                        f"Non-finite target expected Q detected for head '{key}'."
+                    )
+                q_exp = q_exp + (tq_exp - q_exp).detach() * log_probs_tensor
             loss[key] = -torch.mean(q_exp)
             if not torch.isfinite(loss[key]).all():
                 raise RuntimeError(f"Non-finite actor loss detected for head '{key}'.")

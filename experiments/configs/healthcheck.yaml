@@ -45,6 +45,7 @@ healthcheck:
     n_step_config:
       n_steps: 5
     share_network: true
+    carsm: false
     model_update_frequency: 2
     cache_enabled: true
 
