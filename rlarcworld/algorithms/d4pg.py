@@ -487,9 +487,9 @@ class D4PGCore:
         Returns:
             TensorDict: Actor loss.
         """
-        assert not self.carsm or target_q is not None, (
-            "target_q must be provided when using CARSM loss."
-        )
+        assert (
+            not self.carsm or target_q is not None
+        ), "target_q must be provided when using CARSM loss."
 
         # Action probabilities
         if action_probs is None:

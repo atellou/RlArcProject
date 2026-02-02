@@ -16,294 +16,12 @@
 #   - 30: One row/column worth of changes
 #   - 50: Moderate lookahead for multi-step patterns
 #
-# Total: 4 LRs × 5 n_steps = 20 experiments
+# Total: 1 LR × 5 n_steps = 5 experiments
 
-# TODO: Add hyperparameter sweep from reward and entropy experiments selection
-
-# =============================================================================
-# LR = 1.0e-3 (Aggressive)
-# =============================================================================
-
-lr_1e3_nstep_1:
-  description: "LR=1.0e-3, n_steps=1 - Aggressive LR with standard TD"
-  d4pg:
-    policy_lr: 1.0e-3
-    critic_lr: 1.0e-2
-    n_step_config:
-      n_steps: 1
-
-
-lr_1e3_nstep_5:
-  description: "LR=1.0e-3, n_steps=5 - Aggressive LR with short horizon"
-  d4pg:
-    policy_lr: 1.0e-3
-    critic_lr: 1.0e-2
-    n_step_config:
-      n_steps: 5
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -20
-      binary_n_reward: -10
-    v_max:
-      pixel_wise_n_reward: 5
-      binary_n_reward: 5
-    num_atoms:
-      pixel_wise_n_reward: 51
-      binary_n_reward: 31
-
-
-lr_1e3_nstep_15:
-  description: "LR=1.0e-3, n_steps=15 - Aggressive LR with medium horizon"
-  d4pg:
-    policy_lr: 1.0e-3
-    critic_lr: 1.0e-2
-    n_step_config:
-      n_steps: 15
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -40
-      binary_n_reward: -25
-    v_max:
-      pixel_wise_n_reward: 10
-      binary_n_reward: 10
-    num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 71
-
-
-lr_1e3_nstep_30:
-  description: "LR=1.0e-3, n_steps=30 - Aggressive LR with row-sized horizon"
-  d4pg:
-    policy_lr: 1.0e-3
-    critic_lr: 1.0e-2
-    n_step_config:
-      n_steps: 30
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -80
-      binary_n_reward: -50
-    v_max:
-      pixel_wise_n_reward: 20
-      binary_n_reward: 20
-    num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 71
-
-
-lr_1e3_nstep_50:
-  description: "LR=1.0e-3, n_steps=50 - Aggressive LR with moderate lookahead"
-  d4pg:
-    policy_lr: 1.0e-3
-    critic_lr: 1.0e-2
-    n_step_config:
-      n_steps: 50
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -120
-      binary_n_reward: -80
-    v_max:
-      pixel_wise_n_reward: 30
-      binary_n_reward: 30
-    num_atoms:
-      pixel_wise_n_reward: 151
-      binary_n_reward: 111
-
-
-# =============================================================================
-# LR = 3.0e-4 (Standard)
-# =============================================================================
-
-lr_3e4_nstep_1:
-  description: "LR=3.0e-4, n_steps=1 - Standard LR with standard TD"
+lr_base_nstep_5:
+  description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=5 - Short horizon"
   d4pg:
     policy_lr: 3.0e-4
-    critic_lr: 3.0e-3
-    n_step_config:
-      n_steps: 1
-
-
-lr_3e4_nstep_5:
-  description: "LR=3.0e-4, n_steps=5 - Standard LR with short horizon"
-  d4pg:
-    policy_lr: 3.0e-4
-    critic_lr: 3.0e-3
-    n_step_config:
-      n_steps: 5
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -20
-      binary_n_reward: -10
-    v_max:
-      pixel_wise_n_reward: 5
-      binary_n_reward: 5
-    num_atoms:
-      pixel_wise_n_reward: 51
-      binary_n_reward: 31
-
-
-lr_3e4_nstep_15:
-  description: "LR=3.0e-4, n_steps=15 - Standard LR with medium horizon"
-  d4pg:
-    policy_lr: 3.0e-4
-    critic_lr: 3.0e-3
-    n_step_config:
-      n_steps: 15
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -40
-      binary_n_reward: -25
-    v_max:
-      pixel_wise_n_reward: 10
-      binary_n_reward: 10
-    num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 71
-
-
-lr_3e4_nstep_30:
-  description: "LR=3.0e-4, n_steps=30 - Standard LR with row-sized horizon"
-  d4pg:
-    policy_lr: 3.0e-4
-    critic_lr: 3.0e-3
-    n_step_config:
-      n_steps: 30
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -80
-      binary_n_reward: -50
-    v_max:
-      pixel_wise_n_reward: 20
-      binary_n_reward: 20
-    num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 71
-
-
-lr_3e4_nstep_50:
-  description: "LR=3.0e-4, n_steps=50 - Standard LR with moderate lookahead"
-  d4pg:
-    policy_lr: 3.0e-4
-    critic_lr: 3.0e-3
-    n_step_config:
-      n_steps: 50
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -120
-      binary_n_reward: -80
-    v_max:
-      pixel_wise_n_reward: 30
-      binary_n_reward: 30
-    num_atoms:
-      pixel_wise_n_reward: 151
-      binary_n_reward: 111
-
-
-# =============================================================================
-# LR = 1.0e-4 (Conservative)
-# =============================================================================
-
-lr_1e4_nstep_1:
-  description: "LR=1.0e-4, n_steps=1 - Conservative LR with standard TD"
-  d4pg:
-    policy_lr: 1.0e-4
-    critic_lr: 1.0e-3
-    n_step_config:
-      n_steps: 1
-
-
-lr_1e4_nstep_5:
-  description: "LR=1.0e-4, n_steps=5 - Conservative LR with short horizon"
-  d4pg:
-    policy_lr: 1.0e-4
-    critic_lr: 1.0e-3
-    n_step_config:
-      n_steps: 5
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -20
-      binary_n_reward: -10
-    v_max:
-      pixel_wise_n_reward: 5
-      binary_n_reward: 5
-    num_atoms:
-      pixel_wise_n_reward: 51
-      binary_n_reward: 31
-
-
-lr_1e4_nstep_15:
-  description: "LR=1.0e-4, n_steps=15 - Conservative LR with medium horizon"
-  d4pg:
-    policy_lr: 1.0e-4
-    critic_lr: 1.0e-3
-    n_step_config:
-      n_steps: 15
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -40
-      binary_n_reward: -25
-    v_max:
-      pixel_wise_n_reward: 10
-      binary_n_reward: 10
-    num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 71
-
-
-lr_1e4_nstep_30:
-  description: "LR=1.0e-4, n_steps=30 - Conservative LR with row-sized horizon"
-  d4pg:
-    policy_lr: 1.0e-4
-    critic_lr: 1.0e-3
-    n_step_config:
-      n_steps: 30
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -80
-      binary_n_reward: -50
-    v_max:
-      pixel_wise_n_reward: 20
-      binary_n_reward: 20
-    num_atoms:
-      pixel_wise_n_reward: 101
-      binary_n_reward: 71
-
-
-lr_1e4_nstep_50:
-  description: "LR=1.0e-4, n_steps=50 - Conservative LR with moderate lookahead"
-  d4pg:
-    policy_lr: 1.0e-4
-    critic_lr: 1.0e-3
-    n_step_config:
-      n_steps: 50
-  distributional:
-    v_min:
-      pixel_wise_n_reward: -120
-      binary_n_reward: -80
-    v_max:
-      pixel_wise_n_reward: 30
-      binary_n_reward: 30
-    num_atoms:
-      pixel_wise_n_reward: 151
-      binary_n_reward: 111
-
-
-# =============================================================================
-# LR = 3.0e-5 (Very Conservative)
-# =============================================================================
-
-lr_3e5_nstep_1:
-  description: "LR=3.0e-5, n_steps=1 - Very conservative LR with standard TD"
-  d4pg:
-    policy_lr: 3.0e-5
-    critic_lr: 3.0e-4
-    n_step_config:
-      n_steps: 1
-
-
-lr_3e5_nstep_5:
-  description: "LR=3.0e-5, n_steps=5 - Very conservative LR with short horizon"
-  d4pg:
-    policy_lr: 3.0e-5
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 5
@@ -319,10 +37,10 @@ lr_3e5_nstep_5:
       binary_n_reward: 31
 
 
-lr_3e5_nstep_15:
-  description: "LR=3.0e-5, n_steps=15 - Very conservative LR with medium horizon"
+lr_base_nstep_15:
+  description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=15 - Medium horizon"
   d4pg:
-    policy_lr: 3.0e-5
+    policy_lr: 3.0e-4
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 15
@@ -338,10 +56,10 @@ lr_3e5_nstep_15:
       binary_n_reward: 71
 
 
-lr_3e5_nstep_30:
-  description: "LR=3.0e-5, n_steps=30 - Very conservative LR with row-sized horizon"
+lr_base_nstep_30:
+  description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=30 - Row-sized horizon"
   d4pg:
-    policy_lr: 3.0e-5
+    policy_lr: 3.0e-4
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 30
@@ -357,13 +75,18 @@ lr_3e5_nstep_30:
       binary_n_reward: 71
 
 
-lr_3e5_nstep_50:
-  description: "LR=3.0e-5, n_steps=50 - Very conservative LR with moderate lookahead"
+lr_base_nstep_50:
+  description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=50 - Moderate lookahead"
   d4pg:
-    policy_lr: 3.0e-5
+    policy_lr: 3.0e-4
     critic_lr: 3.0e-4
     n_step_config:
       n_steps: 50
+  replay_buffer: # Required for 50 steps warm up
+    size: 50000
+    alpha: 0.2
+    beta: 0.2
+    warmup_ratio: 0.04
   distributional:
     v_min:
       pixel_wise_n_reward: -120

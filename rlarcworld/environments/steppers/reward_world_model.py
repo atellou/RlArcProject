@@ -121,6 +121,7 @@ class ArcWorldModelStepper:
             }
         )
         self._imagination_count: int = 0
+        self._last_grad_l2_norm: float | None = None
 
         # Env Definition
         base_env = ArcBatchGridEnv(
@@ -295,6 +296,13 @@ class ArcWorldModelStepper:
             Total loss and dict of component losses
         """
         # Binary classification loss
+        pred_device = pred[RewardKeys.BINARY.value].device
+
+        if isinstance(grid_perfect, torch.Tensor):
+            grid_perfect = grid_perfect.to(pred_device)
+        if isinstance(improvement, torch.Tensor):
+            improvement = improvement.to(pred_device)
+
         binary_target = grid_perfect.long()
         if binary_target.dim() > 1:
             binary_target = binary_target.squeeze(-1)
@@ -356,6 +364,13 @@ class ArcWorldModelStepper:
             improvement,
         )
         loss.backward()
+
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.model.parameters(),
+            max_norm=float("inf"),
+            norm_type=2.0,
+        )
+        self._last_grad_l2_norm = float(grad_norm.detach().cpu().item())
         self.model_optimizer.step()
 
         # Clear and re-enable cache after weight update (like D4PG does)
@@ -364,6 +379,11 @@ class ArcWorldModelStepper:
 
         self.push_model_losses(loss_dict)
         return loss_dict
+
+    @property
+    def last_grad_l2_norm(self) -> float | None:
+        """Get the last gradient L2 norm."""
+        return self._last_grad_l2_norm
 
     # ==================== Imagination Rollouts ====================
 

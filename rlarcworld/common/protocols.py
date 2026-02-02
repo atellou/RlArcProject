@@ -93,3 +93,7 @@ class RewardWorldModelProto(Protocol):
     def clear_example_cache(self) -> None:
         """Clear example cache."""
         ...
+
+    def __call__(self, *args: Any, **kwds: Any) -> Any:
+        """Call the for inference world model."""
+        ...

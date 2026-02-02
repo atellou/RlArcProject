@@ -347,7 +347,7 @@ class ArcD4PG:
                 grid_size=config.env.grid_size,
                 color_values=config.env.color_values,
                 actor=self.actor,
-                device_config=self.cpu_config,
+                device_config=self.cuda_config,
                 reward_model=reward_model,
                 reward_model_lr=config.world_model.learning_rate,
                 lr_scheduler_kwargs=config.world_model.lr_scheduler_kwargs,
@@ -750,8 +750,82 @@ class ArcD4PG:
         # Add world model callback if enabled
         if isinstance(self.world_model_stepper, ArcWorldModelStepper):
             callbacks["world_model"] = self.world_model_stepper.training_callback
+            callbacks["world_model_tb"] = self._world_model_tb_callback
 
         return callbacks
+
+    def _world_model_tb_callback(self, ctx: OnStepContext) -> None:
+        if not isinstance(self.world_model_stepper, ArcWorldModelStepper):
+            return
+        if not hasattr(self, "tb_manager") or self.tb_manager is None:
+            return
+        if self.exp_config is None or not self.exp_config.logging.tensorboard_enabled:
+            return
+
+        iteration = ctx.iteration
+
+        if iteration % self.tb_manager.minimal_frequency != 0 and not ctx.run_end:
+            return
+
+        wm_losses = self.world_model_stepper.get_average_model_losses(reset=False)
+        self.tb_manager.writer.add_scalars(
+            main_tag="world_model/loss",
+            tag_scalar_dict={k: float(v) for k, v in wm_losses.items()},
+            global_step=iteration,
+        )
+
+        wm_grad_norm = getattr(self.world_model_stepper, "last_grad_l2_norm", None)
+        if wm_grad_norm is not None:
+            self.tb_manager.writer.add_scalar(
+                "world_model/grad_l2_norm",
+                float(wm_grad_norm),
+                iteration,
+            )
+
+        if iteration % self.tb_manager.medium_frequency != 0 and not ctx.run_end:
+            return
+
+        batch = ctx.batch
+        if batch is not None:
+            state = batch.get("state", None)
+            if state is not None:
+                with torch.no_grad():
+                    pred = self.world_model_stepper.model(state)
+
+                entropy_scalars: dict[str, float] = {}
+
+                try:
+                    p_bin = pred["binary"].float().clamp(min=1e-10)
+                    ent_bin = (-torch.sum(p_bin * torch.log(p_bin), dim=-1)).mean()
+                    entropy_scalars["binary"] = float(ent_bin.detach().cpu().item())
+                except Exception:
+                    pass
+
+                try:
+                    logits_pix = pred["pixel_wise"].float()
+                    p_pix = torch.softmax(logits_pix, dim=-1).clamp(min=1e-10)
+                    ent_pix = (-torch.sum(p_pix * torch.log(p_pix), dim=-1)).mean()
+                    entropy_scalars["pixel_wise"] = float(ent_pix.detach().cpu().item())
+                except Exception:
+                    pass
+
+                if entropy_scalars:
+                    self.tb_manager.writer.add_scalars(
+                        main_tag="world_model/entropy",
+                        tag_scalar_dict=entropy_scalars,
+                        global_step=iteration,
+                    )
+                    self.tb_manager.writer.add_scalar(
+                        "world_model/entropy_mean",
+                        float(sum(entropy_scalars.values()) / len(entropy_scalars)),
+                        iteration,
+                    )
+
+        self.tb_manager.writer.add_scalar(
+            "world_model/imagination_count",
+            float(self.world_model_stepper.imagination_count),
+            iteration,
+        )
 
     def _log_step(self, ctx: OnStepContext):
         """Log training step information.
@@ -778,7 +852,9 @@ class ArcD4PG:
                 )
                 # Add world model metrics if enabled
                 if isinstance(self.world_model_stepper, ArcWorldModelStepper):
-                    wm_losses = self.world_model_stepper.get_average_model_losses()
+                    wm_losses = self.world_model_stepper.get_average_model_losses(
+                        reset=False
+                    )
                     if wm_losses:
                         wm_str = ", ".join(
                             f"{k}: {v:.4f}" for k, v in wm_losses.items()

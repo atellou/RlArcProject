@@ -100,3 +100,28 @@ ex18_add_carsm:
       on_train: 0.05
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
+
+# Base: ex13_curriculum_mild_entropy_floor_with_heads_entropy
+ex18_add_carsm_no_curriculum:
+  description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
+  env:
+    wrong_submit_penalty: 1.0
+    step_cost: 0.01
+    perfect_no_submit_penalty_coef: 0.50
+    zero_improvement_penalty: 0.1
+    shaping_clamp_min: 0.5
+    shaping_clamp_min_tau_steps: 0
+  d4pg:
+    carsm: true
+    entropy_floor_coef: 0.02
+    min_entropy: 0.2
+    submit_entropy_scale: 0.25
+    color_entropy_scale: 1.5
+  training:
+    enable_curriculum: false
+    curriculum_replace_probabilities:
+      on_warmup: 1.0
+      on_episode_start: 0.25
+      on_train: 0.05
+      episode_start_steps: 50
+    curriculum_pixel_location_strategy: random
