@@ -2,7 +2,7 @@
 # CURRICULUM EXPERIMENTS
 # =============================================================================
 
-ex13_base_no_curriculum:
+cu1_base_no_curriculum:
   description: "ex13 reward base, no curriculum (control)"
   env:
     wrong_submit_penalty: 1.0
@@ -14,7 +14,7 @@ ex13_base_no_curriculum:
   training:
     enable_curriculum: false
 
-ex13_curriculum_mild:
+cu2_curriculum_mild:
   description: "ex13 reward base + mild curriculum (warmup=1.0, episode_start=0.25 for first 50 steps, on_train=0.05)"
   env:
     wrong_submit_penalty: 1.0
@@ -32,7 +32,7 @@ ex13_curriculum_mild:
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
-ex13_curriculum_medium:
+cu3_curriculum_medium:
   description: "ex13 reward base + medium curriculum (warmup=1.0, episode_start=0.50 for first 50 steps, on_train=0.10)"
   env:
     wrong_submit_penalty: 1.0
@@ -50,7 +50,7 @@ ex13_curriculum_medium:
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
-ex13_curriculum_aggressive:
+cu4_curriculum_aggressive:
   description: "ex13 reward base + aggressive curriculum (warmup=1.0, episode_start=1.0 for first 50 steps, on_train=0.25)"
   env:
     wrong_submit_penalty: 1.0
@@ -69,7 +69,7 @@ ex13_curriculum_aggressive:
     curriculum_pixel_location_strategy: random
 
 # Base for the entropy experiments
-ex13_curriculum_mild_entropy_floor:
+cu5_curriculum_mild_entropy_floor:
   description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
   env:
     wrong_submit_penalty: 1.0
@@ -91,7 +91,7 @@ ex13_curriculum_mild_entropy_floor:
     curriculum_pixel_location_strategy: random
 
 # Used curriculum with 90% improve probability, 10% degrade probability, 100% degrade submit on prefect probability
-ex14_curriculum_only_start_up:
+cu6_curriculum_only_start_up:
   description: "ex13 reward base + aggressive curriculum (warmup=1.0, episode_start=1.0 for first 50 steps, on_train=0.0)"
   env:
     wrong_submit_penalty: 1.0
@@ -110,7 +110,7 @@ ex14_curriculum_only_start_up:
     curriculum_pixel_location_strategy: random
 
 # Used curriculum with 50% improve probability, 50% degrade probability, 90% degrade submit on prefect probability
-ex15_curriculum_medium_50_50:
+cu7_curriculum_medium_50_50:
   description: "ex13 reward base + aggressive curriculum (warmup=1.0, episode_start=1.0 for first 50 steps, on_train=0.0)"
   env:
     wrong_submit_penalty: 1.0
@@ -130,7 +130,7 @@ ex15_curriculum_medium_50_50:
 
 
 # Used curriculum with 100% improve probability, 0% degrade probability, 90% degrade submit on prefect probability
-ex16_curriculum_only_improve:
+cu8_curriculum_only_improve:
   description: "ex13 reward base + aggressive curriculum (warmup=1.0, episode_start=1.0 for first 50 steps, on_train=0.0)"
   env:
     wrong_submit_penalty: 1.0

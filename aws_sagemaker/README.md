@@ -1,5 +1,7 @@
 # AWS SageMaker Integration
 
+**WARNING**: This is a work in progress and have not been updated with the latest changes in the codebase.
+
 This directory contains the glue code that lets you launch **ArcD4PG** training jobs on Amazon SageMaker.
 
 ## Contents

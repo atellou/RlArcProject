@@ -4,23 +4,7 @@ This file documents a **budget-friendly order** for running ARC RL experiments a
 
 ## Notes on sample count and replay buffer sizing
 
-Start with a smaller sample list (e.g. **100 tasks**) for early sweeps because it:
-
-- reduces iteration time (more configs tested per hour)
-- makes regressions and instability easier to reproduce/debug
-- keeps the replay buffer from being dominated by a very wide task distribution before the policy is functional
-
-Once defaults are stable, scale to larger lists to validate generalization:
-
-- **100 tasks**: fast dynamics debugging and hyperparameter triage
-- **300-500 tasks**: more representative stability check before committing to full runs
-- **1400 tasks**: full dataset validation
-
-Replay buffer sizing should scale with dataset breadth to avoid excessive recency bias:
-
-- **100 tasks**: `replay_buffer.size=10_000` is a good default
-- **300-500 tasks**: consider `replay_buffer.size=50_000`
-- **1400 tasks**: consider `replay_buffer.size=100_000+` (if memory/time allow)
+Smaller sample lists (e.g. **100 tasks**) from `experiments/experiemnts_arc_sample.txt` for early sweeps, the sample was generated randomly, using `aws_sagemaker/lr_experiment/lr_experiments.ipynb` and should be modified to pint to the ARC dataset folders in the local filesystem.
 
 ## 0) One-time setup
 
@@ -35,9 +19,9 @@ set -o allexport; source .env; set +o allexport
 ```bash
 # Adjust to your paths
 BASE_CONFIG="./experiments/configs/base.yaml"
-SAMPLES_PATH_LIST="./experiments/arc_sample.txt"
+SAMPLES_PATH_LIST="./experiments/experiemnts_arc_sample.txt"
 
-# Suggested defaults
+# Example values for budget-friendly runs
 SEED=42
 EPOCHS=2
 ```
@@ -65,7 +49,7 @@ Run these first because they directly change whether submitting is net-negative 
   --samples-path-list "${SAMPLES_PATH_LIST}" \
   --seed "${SEED}" \
   --epochs "${EPOCHS}" \
-  --experiments no_submit_penalty,added_submit_penalty,added_improvement_penalty,all_penalties,all_penalties_low_improvement_penalty,all_penalties_medium_improvement_penalty,all_penalties_low_perfect_no_submit_penalty,all_penalties_low_both
+  --experiments re1_no_penalty,re2_wrong_submit_only,re3_no_op_only,re4_step_cost_only,re5_wrong_submit_plus_no_op,re6_wrong_submit_plus_step_cost,re7_perfect_no_submit_only,re8_wrong_submit_plus_no_op_plus_step_cost,re9_wrong_submit_plus_no_op_plus_perfect_no_submit,re10_all_penalties_plus_negative_shaping,re11_all_penalties_plus_positive_shaping,re12_all_penalties_plus_positive_shaping,re13_all_penalties_plus_positive_shaping
 ```
 
 Decision after this stage:
@@ -90,15 +74,8 @@ Run curriculum with the selected reward settings and compare warm-start-only vs 
   --samples-path-list "${SAMPLES_PATH_LIST}" \
   --seed "${SEED}" \
   --epochs "${EPOCHS}" \
-  --experiments low_both_curriculum_ongoing,low_both_curriculum_episode_start_ongoing,low_improvement_penalty_curriculum_ongoing,low_improvement_penalty_curriculum_episode_start_ongoing
+  --experiments cu1_base_no_curriculum,cu2_curriculum_mild,cu3_curriculum_medium,cu4_curriculum_aggressive,cu6_curriculum_only_start_up,cu7_curriculum_medium_50_50,cu8_curriculum_only_improve
 ```
-
-Decision after this stage:
-
-- Pick **one** entropy regime that:
-  - avoids entropy collapse
-  - avoids extreme oscillation
-  - yields the best reward/submission metrics under the best reward shaping
 
 ## 4) Entropy regularization sweep (pick stable exploration)
 
@@ -111,7 +88,7 @@ Run on top of the selected reward setting(s) from stage 2.
   --samples-path-list "${SAMPLES_PATH_LIST}" \
   --seed "${SEED}" \
   --epochs "${EPOCHS}" \
-  --experiments no_entropy_regularization,small_entropy_regularization,strong_entropy_regularization,perpetual_entropy_regularization
+  --experiments en1_no_entropy_regularization,en2_entropy_floor_weak,en3_entropy_floor_base,en4_entropy_floor_strong,en5_entropy_floor_base_plus_small_entropy_coef,en6_entropy_floor_base_heads,en7_curriculum_mild_entropy_floor_with_heads_entropy
 ```
 
 Decision after this stage:
@@ -121,13 +98,7 @@ Decision after this stage:
   - avoids extreme oscillation
   - yields the best reward/submission metrics under the best reward shaping
 
-## 5) Submit-head entropy scale sweep
-
-Run only after stage 3 (otherwise it’s too many degrees of freedom).
-
-Recommended first sweep values:
-
-- `submit_entropy_scale`: `0.0`, `0.25`, `0.5` (optionally include `1.0` as baseline)
+## 6) [CARSM](https://arxiv.org/abs/2002.03534v2)
 
 ```bash
 ./experiments/run_experiments.sh \
@@ -136,33 +107,32 @@ Recommended first sweep values:
   --samples-path-list "${SAMPLES_PATH_LIST}" \
   --seed "${SEED}" \
   --epochs "${EPOCHS}" \
-  --experiments submit_entropy_scale_0_0,submit_entropy_scale_0_25,submit_entropy_scale_0_5
+  --experiments ca1_add_carsm,ca2_add_carsm_no_curriculum
 ```
 
-## 6) Learning-rate sweep (run before CARSM)
+## 7) TD / n-step sweep (`td_exp.yaml`)
 
-Recommendation: run LR sweeps **before** CARSM. CARSM changes the actor objective and typically changes gradient scale, so doing LR after CARSM confounds attribution.
-
-Exception: if you see obvious instability (NaNs, exploding TD-error, rapidly growing weight norms), do a **tiny** LR sanity sweep earlier (2-3 runs) just to get a stable baseline.
-
-Example LR sweep command:
+Once you have a stable reward + exploration setup, sweep `n_steps` to test credit assignment horizon.
 
 ```bash
 ./experiments/run_experiments.sh \
-  --config ./experiments/configs/lr_exp.yaml \
+  --config ./experiments/configs/td_exp.yaml \
   --base "${BASE_CONFIG}" \
   --samples-path-list "${SAMPLES_PATH_LIST}" \
   --seed "${SEED}" \
   --epochs "${EPOCHS}" \
-  --experiments lr_1e3_nstep_1,lr_3e4_nstep_1,lr_1e4_nstep_1
+  --experiments ns_base_nstep_5,ns_base_nstep_15,ns_base_nstep_30,ns_base_nstep_50
 ```
 
-## Optional: CARSM
+## 8) World model sweep (`world_model_experiment.yaml`)
 
-Recommendation: run CARSM **after** you have selected:
+If you want model-based augmentation (Dyna-style imagination), test enabling the world model on top of the selected baseline.
 
-- one reward shaping config (stage 2)
-- one entropy regime (stage 3)
-- one `submit_entropy_scale` (stage 4)
-
-Then do a small A/B (CARSM off vs on) rather than adding it to the initial grid.
+```bash
+./experiments/run_experiments.sh \
+  --config ./experiments/configs/world_model_experiment.yaml \
+  --base "${BASE_CONFIG}" \
+  --samples-path-list "${SAMPLES_PATH_LIST}" \
+  --seed "${SEED}" \
+  --epochs "${EPOCHS}" \
+  --experiments base_wm,wm_ns_base_nstep_5,wm_ns_base_nstep_15,wm_ns_base_nstep_30,wm_ns_base_nstep_50

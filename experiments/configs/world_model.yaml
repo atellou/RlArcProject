@@ -11,7 +11,7 @@ base_wm:
     imagination_frequency: 10
     model_update_frequency: 10
 
-lr_base_nstep_5_wm:
+wm_ns_base_nstep_5:
   description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=5 - Short horizon + World Model"
   d4pg:
     policy_lr: 3.0e-4
@@ -37,7 +37,7 @@ lr_base_nstep_5_wm:
       binary_n_reward: 31
 
 
-lr_base_nstep_15_wm:
+wm_ns_base_nstep_15:
   description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=15 - Medium horizon + World Model"
   d4pg:
     policy_lr: 3.0e-4
@@ -63,7 +63,7 @@ lr_base_nstep_15_wm:
       binary_n_reward: 71
 
 
-lr_base_nstep_30_wm:
+wm_ns_base_nstep_30:
   description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=30 - Row-sized horizon + World Model"
   d4pg:
     policy_lr: 3.0e-4
@@ -89,7 +89,7 @@ lr_base_nstep_30_wm:
       binary_n_reward: 71
 
 
-lr_base_nstep_50_wm:
+wm_ns_base_nstep_50:
   description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=50 - Moderate lookahead + World Model"
   d4pg:
     policy_lr: 3.0e-4

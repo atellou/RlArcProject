@@ -1,263 +1,166 @@
-# Reinforcement Learning for ARC (Abstraction and Reasoning Corpus)
+# RlArcProject
 
-This project implements a Deep Reinforcement Learning (RL) approach to solve tasks from the Abstraction and Reasoning Corpus (ARC) challenge. It uses the Distributional Deep Deterministic Policy Gradient (D4PG) algorithm with specialized neural network architectures for the ARC environment.
+This repository is a **modularized implementation for applying Reinforcement Learning (RL) algorithms to the Abstraction and Reasoning Corpus (ARC)**. It provides **Gymnasium-based environments** with a **pixel-level action space** (choose an `(x, y)` location, a `color`, and optionally `submit`) so agents can iteratively edit an output grid. Because the environments follow Gymnasium conventions and the stepping logic is separated into composable components, the system is designed to be **extended through wrappers** (reward shaping, curricula, alternative termination rules, etc.) and reused with additional RL algorithms beyond what is currently implemented.
 
-## Quickstart
+## Why this repo
 
-### Local
+ARC is often approached as supervised program induction, but it can also be framed as **sequential decision-making**:
 
-1. Install (Python 3.12)
+- **State**: the current grid(s), task examples, and step context.
+- **Action**: a pixel-level edit (location + color) and a `submit` decision.
+- **Reward**: shaped signals (pixel-wise improvement, penalties, submit reward) to guide exploration.
 
-   ```bash
-   python -m pip install -e .
-   ```
+This repo focuses on making those pieces explicit and swappable.
 
-2. List available experiments
+## Key design
 
-   ```bash
-   python experiments/run_experiment.py --list
-   ```
+- **Environment is Gymnasium-first**
+  - `rlarcworld.environments.arc_batch_grid_env.ArcBatchGridEnv` is a batched `gym.Env` for grid editing.
+  - `rlarcworld.environments.arc_batch_grid_env.ArcActionSpace` defines a `gym.spaces.Dict` action space with:
+    - `x_location`: discrete index in `[0, grid_size)`
+    - `y_location`: discrete index in `[0, grid_size)`
+    - `color_values`: discrete index in `[0, color_values)`
+    - `submit`: discrete `{0, 1}`
 
-3. Run an experiment
+- **Steppers separate “how to roll out episodes” from the algorithm**
+  - `rlarcworld.environments.steppers.arc_stepper.PixelWiseArcStepper` ties together:
+    - ARC dataset loading (`rlarcworld.arc_dataset`)
+    - environment stepping (`ArcBatchGridEnv`)
+    - optional augmentation and curriculum
+  - This keeps the algorithm core environment-agnostic.
 
-   ```bash
-   python experiments/run_experiment.py \
-     --experiment stable_baseline \
-     --epochs 10 \
-     --config experiments/configs/experiments.yaml \
-     --base experiments/configs/base.yaml
-   ```
+- **Wrappers are the primary extension mechanism**
+  - `rlarcworld.environments.wrappers.*` contains pluggable wrappers (e.g. curriculum and reward-related wrappers).
+  - Because the underlying env is Gymnasium-compatible, adding wrappers follows the standard RL pattern.
 
-4. Override dataset path (optional)
+## Trainers and algorithms
 
-   ```bash
-   python experiments/run_experiment.py \
-     --experiment stable_baseline \
-     --epochs 10 \
-     --dataset /path/to/arc/dataset
-   ```
+This repo deliberately separates:
 
-5. Healthcheck (quick checkpoint save/load test)
+- **Algorithm-only logic ("Core")**
+- **Training-loop orchestration ("Trainer")**
+- **ARC-specific experiment wiring ("Experiment")**
 
-   ```bash
-   python experiments/run_experiment.py --healthcheck
-   ```
+### 1) Generic trainer (`Trainer`)
 
-### SageMaker
+`rlarcworld.trainers.core.Trainer` is a lightweight orchestration layer that:
 
-1. Install SageMaker dependencies locally
+- pulls transitions from a `train_step_stream_factory`
+- optionally stores/samples from a replay buffer
+- calls the algorithm core to compute updates and sync targets
+- triggers pluggable callbacks (logging, validation, checkpointing)
 
-   ```bash
-   python -m pip install -e ".[aws-sagemaker]"
-   ```
+It is designed to be reusable across multiple off-policy actor-critic methods.
 
-2. Upload a dataset tarball to S3
+### 2) D4PG implementation (`D4PGCore`)
 
-   SageMaker expects a single tarball in the train channel. You can create one from a text file listing JSON samples:
+`rlarcworld.algorithms.d4pg.D4PGCore` is the **environment-agnostic** algorithm core for D4PG:
 
-   - `dataset_ids.txt` in the repo is an example of a sample list file.
+- actor/critic + target networks
+- distributional critic updates (categorical projection)
+- optional entropy regularization / stability helpers
+- AMP support, gradient clipping, target soft-updates
 
-3. Launch a job
+### 3) ARC + D4PG experiment (`ArcD4PG`)
 
-   ```bash
-   python aws_sagemaker/launch.py \
-     --role-arn arn:aws:iam::<acct>:role/SageMakerExecRole \
-     --s3-train-tar s3://<bucket>/datasets/arc_train.tar.gz \
-     --experiment lr_3e4_nstep_1 \
-     --instance-type ml.g5.12xlarge \
-     --epochs 10
-   ```
+`rlarcworld.trainers.arc_d4pg.ArcD4PG` is the ARC-specific experiment orchestrator that wires:
 
-   - The container entrypoint is `aws_sagemaker/train.py`.
-   - SageMaker checkpoints are synced via `/opt/ml/checkpoints`.
-   - Logs stream to CloudWatch under `/aws/sagemaker/TrainingJobs`.
+- models (`rlarcworld.models.*`)
+- steppers (`PixelWiseArcStepper` for training/validation)
+- replay buffers (TorchRL replay buffer components)
+- the generic `Trainer`
+- checkpointing and TensorBoard callbacks
 
-For more details, see `aws_sagemaker/README.md`.
+Most practical usage starts here.
 
-## Table of Contents
+## Setup [uv](https://docs.astral.sh/uv/)
 
-- [Quickstart](#quickstart)
-  - [Local](#local)
-  - [SageMaker](#sagemaker)
-- [Infrastructure](#infrastructure)
-- [Installation](#installation)
-  - [Prerequisites](#prerequisites)
-  - [Setup](#setup)
-- [Project Structure](#project-structure)
-- [Configuration](#configuration)
-- [Training](#training)
-- [Monitoring with TensorBoard](#monitoring-with-tensorboard)
-  - [Starting TensorBoard](#starting-tensorboard)
-  - [Key Metrics Tracked](#key-metrics-tracked)
-  - [Viewing Specific Runs](#viewing-specific-runs)
-- [Evaluation](#evaluation)
-- [Contributing](#contributing)
-- [License](#license)
-- [Acknowledgments](#acknowledgments)
-- [Dataset](#dataset)
-- [Cloud Integration](#cloud-integration)
+This project uses `uv` for environment and dependency management.
 
-## Infrastructure
+```bash
+uv venv
+uv sync
+uv pip install -e .
+```
 
-TheProject is designed to run in containerized environments with support for GPU acceleration:
+Dependencies that are **not included by default**:
 
-- **Containerization**: Docker support with GPU capabilities
-- **Cloud Integration**: Compatible with GCP Vertex AI and Cloud Storage
-- **Environment**: Python 3.x with PyTorch and TorchRL
-- **Monitoring**: TensorBoard integration for experiment tracking
+- **Optional extra: `aws-sagemaker`**
+  - Install when you need SageMaker tooling.
+  - Example:
 
-Key components:
+    ```bash
+    uv sync --extra aws-sagemaker
+    ```
 
-- `aws_sagemaker/`: SageMaker launcher, entrypoint, and container image
-- `experiments/`: Experiment runner and YAML configs
-- `rlarcworld/`: Core library (env, models, algorithms, trainers)
+- **Dependency group: `dev`**
+  - Includes tooling like `pytest`, `pre-commit`, `mypy`, notebooks, etc.
+  - Example:
+
+    ```bash
+    uv sync --group dev
+    ```
+
+## Running experiments
+
+The main entry point is:
+
+```bash
+uv run python experiments/run_experiment.py --list
+uv run python experiments/run_experiment.py --experiment <name> --epochs 10
+```
+
+Experiment configuration is YAML-driven:
+
+- `experiments/configs/base.yaml` contains default values
+- `experiments/configs/*.yaml` override subsets for specific sweeps/ablations
+
+Important config groups:
+
+- `env`: `grid_size`, `color_values`, penalties, batch size
+- `d4pg`: learning rates, entropy knobs, target update frequencies, n-step settings
+- `distributional`: atoms / support ranges
+- `replay_buffer`, `training`, `checkpoint`, `logging`, `system`, `reproducibility`
 
 ## Installation
 
-### Prerequisites
+- Python: **3.12** (see `pyproject.toml`)
+- Package: `rlarcworld`
 
-- Python 3.12
-- (Optional) NVIDIA GPU + CUDA for faster training
-- (Optional) Docker for building the SageMaker training image (`aws_sagemaker/Dockerfile`)
+Install with your preferred workflow (e.g. `pip install -e .` in a virtual environment). Dependencies are declared in `pyproject.toml`.
 
-### Setup
+## Repository layout
 
-1. Clone the repository:
+- `rlarcworld/`
+  - `environments/`
+    - `arc_batch_grid_env.py`: Gymnasium env + pixel-level `Dict` action space
+    - `steppers/`: rollouts/episode simulation
+    - `wrappers/`: extensibility points (curriculum, reward shaping, etc.)
+  - `algorithms/`: algorithm cores (e.g. `d4pg.py`)
+  - `trainers/`: generic trainer + ARC-specific experiment runner(s)
+  - `models/`: ViT-based actor/critic and supporting modules
+  - `common/`: configs/enums/protocols
+  - `utils/`: checkpointing, device helpers, config loader, queues
+- `experiments/`
+  - `run_experiment.py`: CLI to run YAML-configured experiments
+  - `configs/`: experiment YAMLs
+- `tests/`: unit + integration tests
 
-   ```bash
-   git clone <repository-url>
-   cd RlArcProject
-   ```
+## Extending to other RL algorithms
 
-2. Install the package (editable mode):
+The easiest way to add a new algorithm is to follow the same three-layer split:
 
-   ```bash
-   python -m pip install -e .
-   ```
+1. **Implement a new `*Core`** in `rlarcworld/algorithms/`
+   - Keep it environment-agnostic.
+   - Consume batches in the same transition format produced by steppers (`TensorDict` with keys like state/action/reward/next_state/terminated).
+   - Expose the minimal API expected by `Trainer` (see protocols in `rlarcworld.common.protocols`).
 
-3. (Optional) Install SageMaker extras for launching jobs:
+2. **Reuse `Trainer`** in `rlarcworld/trainers/core.py`
+   - Plug your core in.
+   - Optionally plug in a replay buffer implementation and priority update function.
 
-   ```bash
-   python -m pip install -e ".[aws-sagemaker]"
-   ```
+3. **Create an ARC experiment wrapper** (like `ArcD4PG`)
+   - Wire networks, steppers, logging, checkpointing.
+   - Add a config dataclass (see `rlarcworld.common.configs.ArcD4PGConfig`) and a YAML schema under `experiments/configs/`.
 
-## Project Structure
-
-```text
-RlArcProject/
-├── rlarcworld/              # Core library (env/models/algorithms/trainers/logging)
-├── experiments/             # Local experiment runner + YAML configs
-│   ├── run_experiment.py
-│   └── configs/
-│       ├── base.yaml
-│       └── experiments.yaml
-├── aws_sagemaker/            # SageMaker launcher + training entrypoint + Dockerfile
-│   ├── launch.py
-│   ├── train.py
-│   └── lr_experiment/        # Example SageMaker experiment configs
-├── checkpoints/              # Default local checkpoint root (runs create subfolders)
-├── logs/                     # Default local logs
-└── tests/                    # Unit/integration tests
-```
-
-## Configuration
-
-The project uses YAML configuration files to manage hyperparameter and experiment settings. Key configurations include:
-
-- Environment parameter (grid size, color values)
-- D4PG hyperparameter (learning rates, gamma, etc.)
-- Training setting (batch sizes, buffer sizes)
-- Logging and validation frequency
-
-Example configurations:
-
-- `experiments/configs/base.yaml`
-- `experiments/configs/experiments.yaml`
-- `aws_sagemaker/lr_experiment/cloud_base.yaml`
-- `aws_sagemaker/lr_experiment/experiments.yaml`
-
-## Training
-
-To train the model:
-
-```bash
-python experiments/run_experiment.py \
-  --experiment stable_baseline \
-  --epochs 10
-```
-
-## Monitoring with TensorBoard
-
-This project uses TensorBoard for tracking and visualizing training progress, including metrics, model graphs, and other useful information.
-
-### Starting TensorBoard
-
-1. **Local Installation**:
-
-   If you have TensorBoard installed locally, you can start it with:
-
-   ```bash
-   tensorboard --logdir=/path/to/tensorboard/logs
-   ```
-
-   Then open your browser to `http://localhost:6006/`
-
-2. **Docker Container**:
-
-   If you're using the provided Docker setup, you can access TensorBoard by exposing the port in your `docker-compose.yml`:
-
-   ```yaml
-   ports:
-     - "6006:6006"
-   ```
-
-   Then start TensorBoard inside the container:
-
-   ```bash
-   tensorboard --logdir=/path/to/tensorboard/logs --host=0.0.0.0
-   ```
-
-   Access it at `http://localhost:6006/` from your host machine.
-
-### Key Metrics Tracked
-
-- **Training Loss**: Actor and critic losses over time
-- **Reward**: Training and validation rewards per episode
-- **Hyperparameter**: Learning rates and other training parameters
-- **Gradient**: Histograms of model gradients
-- **Model Graph**: Computation graphs of your models
-
-### Viewing Specific Runs
-
-If you have multiple runs, you can compare them by selecting which runs to display in the TensorBoard interface. The runs are automatically organized by their timestamp and configuration.
-
-## Evaluation
-
-The model can be evaluated using the validation set during training. The evaluation metrics are logged to TensorBoard for monitoring.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- The ARC Challenge by François Chollet
-- PyTorch and TorchRL communities
-- Google Cloud Platform
-
-## Dataset
-
-For development purposes, the test set consists of 80 files (20%) of the evaluation set (320 files) and the training set is composed of 400 files. The IDs of the files used are in [dataset_ids.txt](dataset_ids.txt).
-
-## Cloud Integration
-
-- [GCP Cloud Storage Convention](https://cloud.google.com/vertex-ai/docs/training/code-requirements#fuse)
-- [Environment variables for special Cloud Storage directories](https://cloud.google.com/vertex-ai/docs/training/code-requirements#environment-variables)
+Because the ARC environment uses Gymnasium and the pixel action space is explicit, algorithms that operate over **discrete multi-head actions** (or that can be adapted to them) can be integrated without rewriting the environment.

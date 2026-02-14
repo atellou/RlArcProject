@@ -1,4 +1,20 @@
-"""Core components for D4PG training (algorithm-only logic)."""
+"""Core components for D4PG training (algorithm-only logic).
+
+This implementation is primarily based on the D4PG algorithm, and optionally
+includes a CARSM-style policy gradient variant.
+
+References:
+    [1] Gabriel Barth-Maron, Matthew W. Hoffman, David Budden, Will Dabney,
+        Dan Horgan, Dhruva TB, Alistair Muldal, Nicolas Heess, and Timothy
+        Lillicrap. "Distributed Distributional Deterministic Policy Gradients."
+        arXiv:1804.08617v1, 2018. https://arxiv.org/abs/1804.08617v1
+
+    [2] Yuguang Yue, Yunhao Tang, Mingzhang Yin, and Mingyuan Zhou.
+        "Discrete Action On-Policy Learning with Action-Value Critic."
+        arXiv:2002.03534v2, 2020. https://arxiv.org/abs/2002.03534v2
+        (CARSM refers to the "Critic-ARSM (CARSM) policy gradient", improving
+        the augment-REINFORCE-swap-merge (ARSM) estimator.)
+"""
 
 import copy
 import logging
@@ -487,9 +503,9 @@ class D4PGCore:
         Returns:
             TensorDict: Actor loss.
         """
-        assert (
-            not self.carsm or target_q is not None
-        ), "target_q must be provided when using CARSM loss."
+        assert not self.carsm or target_q is not None, (
+            "target_q must be provided when using CARSM loss."
+        )
 
         # Action probabilities
         if action_probs is None:

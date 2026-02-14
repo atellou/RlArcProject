@@ -2,37 +2,35 @@
 # =============================================================================
 # REGULARIZATION EXPERIMENTS
 # =============================================================================
-
-# TODO: Add hyperparameter sweep from reward experiments selection
-no_entropy_regularization:
+en1_no_entropy_regularization:
   description: "Control: no entropy regularization (no coef, no floor)"
   d4pg:
     entropy_coef: 0.0
     entropy_floor_coef: 0.0
     min_entropy: 0.0
 
-entropy_floor_weak:
+en2_entropy_floor_weak:
   description: "Entropy floor (weak): delay collapse with minimal regularization"
   d4pg:
     entropy_coef: 0.0
     entropy_floor_coef: 0.01
     min_entropy: 0.1
 
-entropy_floor_base:
+en3_entropy_floor_base:
   description: "Entropy floor (base): current best performer (delays no-op collapse)"
   d4pg:
     entropy_coef: 0.0
     entropy_floor_coef: 0.02
     min_entropy: 0.2
 
-entropy_floor_strong:
+en4_entropy_floor_strong:
   description: "Entropy floor (strong): test if stronger floor further delays collapse"
   d4pg:
     entropy_coef: 0.0
     entropy_floor_coef: 0.05
     min_entropy: 0.3
 
-entropy_floor_base_plus_small_entropy_coef:
+en5_entropy_floor_base_plus_small_entropy_coef:
   description: "Entropy floor (base) + small entropy_coef (adds gentle exploration pressure)"
   d4pg:
     entropy_coef: 0.01
@@ -40,7 +38,7 @@ entropy_floor_base_plus_small_entropy_coef:
     entropy_floor_coef: 0.02
     min_entropy: 0.2
 
-ex16_entropy_floor_base_heads:
+en6_entropy_floor_base_heads:
   description: "Entropy floor (base) + small entropy_coef (adds gentle exploration pressure)"
   d4pg:
     entropy_floor_coef: 0.02
@@ -50,7 +48,7 @@ ex16_entropy_floor_base_heads:
     color_entropy_scale: 1.25
 
 # Base for the entropy experiments
-ex13_curriculum_mild_entropy_floor_with_heads_entropy:
+en7_curriculum_mild_entropy_floor_with_heads_entropy:
   description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
   env:
     wrong_submit_penalty: 1.0
@@ -72,12 +70,13 @@ ex13_curriculum_mild_entropy_floor_with_heads_entropy:
       on_train: 0.05
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
+
 # =============================================================================
 # CARSM EXPERIMENTS: Run after selecting from above
 # =============================================================================
 
-# Base: ex13_curriculum_mild_entropy_floor_with_heads_entropy
-ex18_add_carsm:
+# Base: en7_curriculum_mild_entropy_floor_with_heads_entropy
+ca1_add_carsm:
   description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
   env:
     wrong_submit_penalty: 1.0
@@ -101,8 +100,8 @@ ex18_add_carsm:
       episode_start_steps: 50
     curriculum_pixel_location_strategy: random
 
-# Base: ex13_curriculum_mild_entropy_floor_with_heads_entropy
-ex18_add_carsm_no_curriculum:
+# Base: en7_curriculum_mild_entropy_floor_with_heads_entropy
+ca2_add_carsm_no_curriculum:
   description: "ex13 reward base + mild curriculum + entropy floor (prevents sudden collapse)"
   env:
     wrong_submit_penalty: 1.0

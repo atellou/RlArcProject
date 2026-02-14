@@ -2,7 +2,7 @@
 # REWARD EXPERIMENTS: First Iteration
 # =============================================================================
 
-ex1_no_penalty:
+re1_no_penalty:
   description: "No penalties,lowest reward is 0 and highest is 2 (Improvement Or Submit)"
   env:
     wrong_submit_penalty: 0.0
@@ -22,7 +22,7 @@ ex1_no_penalty:
       pixel_wise: 2
       binary: 1
 
-ex2_wrong_submit_only:
+re2_wrong_submit_only:
   description: "Wrong-submit penalty only"
   env:
     wrong_submit_penalty: 1.0
@@ -42,7 +42,7 @@ ex2_wrong_submit_only:
       pixel_wise: 2
       binary: 1
 
-ex3_no_op_only:
+re3_no_op_only:
   description: "No-op penalty only (zero_improvement_penalty=0.25)"
   env:
     wrong_submit_penalty: 0.0
@@ -62,7 +62,7 @@ ex3_no_op_only:
       pixel_wise: 2
       binary: 1
 
-ex4_step_cost_only:
+re4_step_cost_only:
   description: "Step cost only (step_cost=0.01)"
   env:
     wrong_submit_penalty: 0.0
@@ -82,7 +82,7 @@ ex4_step_cost_only:
       pixel_wise: 2
       binary: 1
 
-ex5_wrong_submit_plus_no_op:
+re5_wrong_submit_plus_no_op:
   description: "Wrong-submit + no-op penalty"
   env:
     wrong_submit_penalty: 1.0
@@ -102,7 +102,7 @@ ex5_wrong_submit_plus_no_op:
       pixel_wise: 2
       binary: 1
 
-ex6_wrong_submit_plus_step_cost:
+re6_wrong_submit_plus_step_cost:
   description: "Wrong-submit + step cost"
   env:
     wrong_submit_penalty: 1.0
@@ -122,7 +122,7 @@ ex6_wrong_submit_plus_step_cost:
       pixel_wise: 2
       binary: 1
 
-ex7_perfect_no_submit_only:
+re7_perfect_no_submit_only:
   description: "Perfect-no-submit penalty only (coef=0.50)"
   env:
     wrong_submit_penalty: 0.0
@@ -142,7 +142,7 @@ ex7_perfect_no_submit_only:
       pixel_wise: 2
       binary: 1
 
-ex8_wrong_submit_plus_no_op_plus_step_cost:
+re8_wrong_submit_plus_no_op_plus_step_cost:
   description: "Wrong-submit + no-op penalty + step cost"
   env:
     wrong_submit_penalty: 1.0
@@ -162,7 +162,7 @@ ex8_wrong_submit_plus_no_op_plus_step_cost:
       pixel_wise: 2
       binary: 1
 
-ex9_wrong_submit_plus_no_op_plus_perfect_no_submit:
+re9_wrong_submit_plus_no_op_plus_perfect_no_submit:
   description: "Wrong-submit + no-op penalty + perfect-no-submit (coef=0.50)"
   env:
     wrong_submit_penalty: 1.0
@@ -182,7 +182,7 @@ ex9_wrong_submit_plus_no_op_plus_perfect_no_submit:
       pixel_wise: 2
       binary: 1
 
-ex10_all_penalties_plus_negative_shaping:
+re10_all_penalties_plus_negative_shaping:
   description: "All penalties + allow negative shaping (shaping_clamp_min=-0.25)"
   env:
     wrong_submit_penalty: 1.0
@@ -203,7 +203,7 @@ ex10_all_penalties_plus_negative_shaping:
       binary: 1
 
 
-ex11_all_penalties_plus_positive_shaping:
+re11_all_penalties_plus_positive_shaping:
   description: "All penalties + allow positive shaping (shaping_clamp_min=0.25)"
   env:
     wrong_submit_penalty: 1.0
@@ -223,7 +223,7 @@ ex11_all_penalties_plus_positive_shaping:
       pixel_wise: 2
       binary: 1
 
-ex12_all_penalties_plus_positive_shaping:
+re12_all_penalties_plus_positive_shaping:
   description: "All penalties (zero imp coef=0.75) + allow positive shaping (shaping_clamp_min=0.25)"
   env:
     wrong_submit_penalty: 1.0
@@ -243,7 +243,7 @@ ex12_all_penalties_plus_positive_shaping:
       pixel_wise: 2
       binary: 1
 
-ex13_all_penalties_plus_positive_shaping:
+re13_all_penalties_plus_positive_shaping:
   description: "All penalties (zero imp coef=0.1) + allow positive shaping (shaping_clamp_min=0.5)"
   env:
     wrong_submit_penalty: 1.0

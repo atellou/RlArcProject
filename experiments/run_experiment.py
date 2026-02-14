@@ -23,6 +23,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+EXPERIMENTS_ROOT = os.path.join(os.path.dirname(__file__), "configs")
+
 
 def _maybe_init_distributed() -> tuple[int, int]:
     """Initialize torch.distributed when launched via torchrun.
@@ -350,13 +352,22 @@ def main() -> None:
         if world_size > 1 and rank != 0:
             _maybe_destroy_distributed()
             return
-        experiments = list_experiments(args.config)
+
+        experiment_files = os.listdir(EXPERIMENTS_ROOT)
         print("\nAvailable experiments:")
-        print("-" * 60)
-        for name, description in experiments.items():
-            print(f"  {name:30s} - {description}")
-        print()
-        _maybe_destroy_distributed()
+        for experiment_file in experiment_files:
+            if "base.yaml" in experiment_file:
+                continue
+            experiments = list_experiments(
+                os.path.join(EXPERIMENTS_ROOT, experiment_file)
+            )
+            print("-" * 60)
+            print(f"Experiment file: {experiment_file}")
+            print("-" * 60)
+            for name, description in experiments.items():
+                print(f"  {name:30s} - {description}")
+            print()
+            _maybe_destroy_distributed()
         return
 
     if args.healthcheck:

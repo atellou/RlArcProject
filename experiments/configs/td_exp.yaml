@@ -1,13 +1,4 @@
-# Learning Rate V.S. Temporal Difference Learning Steps Analysis Experiments
-#
-# Model: ~1.3M trainable parameters
-# Grid: 30x30 = 900 cells (potential changes per episode)
-#
-# Learning Rate Rationale:
-#   - 1.0e-3: Aggressive, may be unstable but fast if it works
-#   - 3.0e-4: Standard for transformers with ~1M params
-#   - 1.0e-4: Conservative, slower but more stable
-#   - 3.0e-5: Very conservative, for fine-tuning or stability
+# Temporal Difference Learning Steps Analysis Experiments
 #
 # N-Step Rationale (grid is 30x30 = 900 cells):
 #   - 1: Standard TD(0), immediate credit assignment
@@ -15,10 +6,8 @@
 #   - 15: Medium horizon, covers small grid regions
 #   - 30: One row/column worth of changes
 #   - 50: Moderate lookahead for multi-step patterns
-#
-# Total: 1 LR × 5 n_steps = 5 experiments
 
-lr_base_nstep_5:
+ns_base_nstep_5:
   description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=5 - Short horizon"
   d4pg:
     policy_lr: 3.0e-4
@@ -37,7 +26,7 @@ lr_base_nstep_5:
       binary_n_reward: 31
 
 
-lr_base_nstep_15:
+ns_base_nstep_15:
   description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=15 - Medium horizon"
   d4pg:
     policy_lr: 3.0e-4
@@ -56,7 +45,7 @@ lr_base_nstep_15:
       binary_n_reward: 71
 
 
-lr_base_nstep_30:
+ns_base_nstep_30:
   description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=30 - Row-sized horizon"
   d4pg:
     policy_lr: 3.0e-4
@@ -75,7 +64,7 @@ lr_base_nstep_30:
       binary_n_reward: 71
 
 
-lr_base_nstep_50:
+ns_base_nstep_50:
   description: "Base LR (policy=3.0e-4, critic=3.0e-4), n_steps=50 - Moderate lookahead"
   d4pg:
     policy_lr: 3.0e-4
