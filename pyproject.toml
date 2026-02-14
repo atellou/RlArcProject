@@ -1,6 +1,6 @@
 [project]
 name = "rlarcworld"
-version = "0.1.0"
+version = "0.1.1"
 description = "An environment to train on arc dataset a model-based reinforcement learning agent"
 authors = [
     {name = "atellou", email = "andresfe.t.u@gmail.com"}
